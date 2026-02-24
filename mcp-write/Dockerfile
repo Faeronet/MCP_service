@@ -1,6 +1,4 @@
-# Use ghcr.io if Docker Hub is unreachable: --build-arg REGISTRY=ghcr.io/docker-library/
-ARG REGISTRY=
-FROM ${REGISTRY}python:3.12-slim
+FROM python:3.12-slim
 WORKDIR /app
 RUN pip install --no-cache-dir uv
 COPY mcp-write/requirements.txt .

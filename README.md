@@ -32,17 +32,17 @@ docker compose --profile gpu up -d
 docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POSTGRES_DSN:-postgres://postgres:postgres@localhost:5432/assistant?sslmode=disable}" -f "$f" 2>/dev/null || true; done
 ```
 
-### Если Docker Hub недоступен (таймаут auth.docker.io)
+### Если Docker Hub недоступен (таймаут auth.docker.io / 403)
 
-В `.env` задайте зеркало для базовых образов и соберите заново:
+Ошибка связана с сетью или DNS. Что сделать:
 
-```bash
-echo 'REGISTRY=ghcr.io/docker-library/' >> .env
-docker compose build --no-cache
-docker compose up -d
-```
-
-Варианты: `REGISTRY=ghcr.io/docker-library/` или `REGISTRY=mirror.gcr.io/library/`. Инфраструктурные образы (postgres, minio, rabbitmq и т.д.) по-прежнему тянутся с Docker Hub — при необходимости настройте зеркало в `/etc/docker/daemon.json` (registry-mirrors) или DNS (dns: ["8.8.8.8"]).
+1. **DNS в Docker** — в `/etc/docker/daemon.json` добавьте и перезапустите Docker (`sudo systemctl restart docker`):
+   ```json
+   { "dns": ["8.8.8.8", "8.8.4.4"] }
+   ```
+2. **Проверка доступа** — в терминале: `curl -sI https://auth.docker.io` или `ping registry-1.docker.io`.
+3. **Прокси/VPN** — если доступ в интернет только через прокси или VPN, настройте их для демона Docker.
+4. **Зеркало** — если в сети есть корпоративное зеркало Docker Hub, укажите его в `daemon.json` в `registry-mirrors`.
 
 ## Профили Docker Compose
 

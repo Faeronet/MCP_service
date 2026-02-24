@@ -134,8 +134,6 @@ services:
     build:
       context: .
       dockerfile: admin-backend/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
@@ -165,8 +163,6 @@ services:
     build:
       context: .
       dockerfile: admin-web-ui/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
     ports:
@@ -178,8 +174,6 @@ services:
     build:
       context: .
       dockerfile: bot-service/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
@@ -208,8 +202,6 @@ services:
     build:
       context: .
       dockerfile: mcp-read/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       QDRANT_URL: http://qdrant:6333
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
@@ -235,8 +227,6 @@ services:
     build:
       context: .
       dockerfile: mcp-write/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       QDRANT_URL: http://qdrant:6333
@@ -261,8 +251,6 @@ services:
     build:
       context: .
       dockerfile: ingestion-worker/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
@@ -277,8 +265,6 @@ services:
     build:
       context: .
       dockerfile: attachment-worker/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
@@ -296,8 +282,6 @@ services:
     build:
       context: .
       dockerfile: log-indexer/Dockerfile
-      args:
-        REGISTRY: ${REGISTRY:-}
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       LOKI_URL: http://loki:3100
