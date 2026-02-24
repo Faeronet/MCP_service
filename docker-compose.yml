@@ -159,10 +159,8 @@ services:
     build:
       context: .
       dockerfile: admin-web-ui/Dockerfile
-    environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
     ports:
-      - "5173:80"
+      - "0.0.0.0:5173:80"   # 0.0.0.0 — доступ с других устройств по IP:5173
     depends_on:
       - admin-backend
 

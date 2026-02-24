@@ -1,4 +1,10 @@
-const API_URL = import.meta.env.VITE_API_URL || ''
+// Пустая строка = тот же хост (nginx проксирует /api на backend). Для доступа с другого устройства используем origin.
+const API_URL = (() => {
+  const env = import.meta.env.VITE_API_URL
+  if (env && typeof env === 'string' && env.trim() !== '') return env.trim()
+  if (typeof window !== 'undefined') return window.location.origin
+  return ''
+})()
 
 function getToken(): string {
   return localStorage.getItem('token') || ''
