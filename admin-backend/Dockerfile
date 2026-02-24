@@ -5,8 +5,7 @@ RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum* ./
 COPY pkg/ ./pkg/
 COPY admin-backend/ ./admin-backend/
-RUN go mod download 2>/dev/null || true
-RUN go build -o /admin-backend ./admin-backend
+RUN go mod tidy && go build -o /admin-backend ./admin-backend
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates

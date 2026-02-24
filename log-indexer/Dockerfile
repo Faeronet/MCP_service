@@ -5,8 +5,7 @@ RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum* ./
 COPY pkg/ ./pkg/
 COPY log-indexer/ ./log-indexer/
-RUN go mod download 2>/dev/null || true
-RUN go build -o /log-indexer ./log-indexer
+RUN go mod tidy && go build -o /log-indexer ./log-indexer
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
