@@ -3,7 +3,8 @@ WORKDIR /app
 COPY admin-web-ui/package.json admin-web-ui/package-lock.json* admin-web-ui/ ./
 RUN npm install
 COPY admin-web-ui/ ./
-ARG VITE_API_URL=http://localhost:8080
+# Пустой URL = относительные запросы /api/..., nginx проксирует на admin-backend
+ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
