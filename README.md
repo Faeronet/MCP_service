@@ -32,6 +32,18 @@ docker compose --profile gpu up -d
 docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POSTGRES_DSN:-postgres://postgres:postgres@localhost:5432/assistant?sslmode=disable}" -f "$f" 2>/dev/null || true; done
 ```
 
+### Если Docker Hub недоступен (таймаут auth.docker.io)
+
+В `.env` задайте зеркало для базовых образов и соберите заново:
+
+```bash
+echo 'REGISTRY=ghcr.io/docker-library/' >> .env
+docker compose build --no-cache
+docker compose up -d
+```
+
+Варианты: `REGISTRY=ghcr.io/docker-library/` или `REGISTRY=mirror.gcr.io/library/`. Инфраструктурные образы (postgres, minio, rabbitmq и т.д.) по-прежнему тянутся с Docker Hub — при необходимости настройте зеркало в `/etc/docker/daemon.json` (registry-mirrors) или DNS (dns: ["8.8.8.8"]).
+
 ## Профили Docker Compose
 
 | Профиль | Описание |
