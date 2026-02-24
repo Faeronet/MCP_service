@@ -1,0 +1,63 @@
+const API_URL = import.meta.env.VITE_API_URL || ''
+
+function getToken(): string {
+  return localStorage.getItem('token') || ''
+}
+
+export async function login(username: string, password: string): Promise<{ token: string }> {
+  const r = await fetch(`${API_URL}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!r.ok) throw new Error('Login failed')
+  return r.json()
+}
+
+export async function uploadFile(file: File, name?: string): Promise<{ job_id: string; doc_id: string; status: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  if (name) form.append('name', name)
+  const r = await fetch(`${API_URL}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}` },
+    body: form,
+  })
+  if (!r.ok) throw new Error(await r.text())
+  return r.json()
+}
+
+export async function listDocs(): Promise<{ docs: Array<{ id: string; name: string; created_at: string; versions: unknown }> }> {
+  const r = await fetch(`${API_URL}/api/docs`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  if (!r.ok) throw new Error('Failed to load docs')
+  return r.json()
+}
+
+export async function listJobs(limit?: number): Promise<{ jobs: Array<Record<string, unknown>> }> {
+  const u = new URL(`${API_URL}/api/jobs`)
+  if (limit) u.searchParams.set('limit', String(limit))
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${getToken()}` } })
+  if (!r.ok) throw new Error('Failed to load jobs')
+  return r.json()
+}
+
+export async function getJob(id: string): Promise<Record<string, unknown>> {
+  const r = await fetch(`${API_URL}/api/jobs/${id}`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  if (!r.ok) throw new Error('Failed to load job')
+  return r.json()
+}
+
+export async function searchLogs(params: { service?: string; request_id?: string; level?: string; limit?: number }): Promise<{ logs: Array<Record<string, unknown>> }> {
+  const u = new URL(`${API_URL}/api/logs/search`)
+  if (params.service) u.searchParams.set('service', params.service)
+  if (params.request_id) u.searchParams.set('request_id', params.request_id)
+  if (params.level) u.searchParams.set('level', params.level)
+  if (params.limit) u.searchParams.set('limit', String(params.limit))
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${getToken()}` } })
+  if (!r.ok) throw new Error('Failed to search logs')
+  return r.json()
+}
+
+export function grafanaUrl(): string {
+  return `${API_URL}/api/grafana`
+}

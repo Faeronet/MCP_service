@@ -1,0 +1,298 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-assistant}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  loki:
+    image: grafana/loki:2.9.2
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./config/loki.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  promtail:
+    image: grafana/promtail:2.9.2
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./config/promtail.yml:/etc/promtail/config.yml
+      - /var/log:/var/log:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3001}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - loki
+    profiles:
+      - observability
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      MODEL_NAME: ${VLLM_MODEL_NAME:-}
+      MODEL_PATH: ${VLLM_MODEL_PATH:-}
+    ports:
+      - "8000:8000"
+    profiles:
+      - gpu
+
+  # --- Application services ---
+  admin-backend:
+    build:
+      context: .
+      dockerfile: admin-backend/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      MCP_WRITE_URL: http://mcp-write:8001
+      LOKI_URL: http://loki:3100
+      GRAFANA_URL: http://grafana:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  admin-web-ui:
+    build:
+      context: .
+      dockerfile: admin-web-ui/Dockerfile
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+    ports:
+      - "5173:80"
+    depends_on:
+      - admin-backend
+
+  bot-service:
+    build:
+      context: .
+      dockerfile: bot-service/Dockerfile
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      MCP_READ_URL: http://mcp-read:8082
+      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
+      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
+      PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      mcp-read: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mcp-read:
+    build:
+      context: .
+      dockerfile: mcp-read/Dockerfile
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      RERANK_MODEL: ${RERANK_MODEL:-}
+      REDIS_ADDR: redis:6379
+      RETRIEVAL_CACHE_TTL_SEC: ${MCP_READ_CACHE_TTL:-60}
+      EMBED_CACHE_TTL_SEC: ${EMBED_CACHE_TTL:-30}
+      MAX_INFLIGHT_RERANK: ${MAX_INFLIGHT_RERANK:-16}
+      MAX_INFLIGHT_EMBED: ${MAX_INFLIGHT_EMBED:-32}
+    ports:
+      - "8082:8082"
+    depends_on:
+      qdrant: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8082/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mcp-write:
+    build:
+      context: .
+      dockerfile: mcp-write/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      QDRANT_URL: http://qdrant:6333
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: ingestion-worker/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      MCP_WRITE_URL: http://mcp-write:8001
+      WORKER_CONCURRENCY: ${INGESTION_WORKER_CONCURRENCY:-4}
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      mcp-write: { condition: service_started }
+
+  attachment-worker:
+    build:
+      context: .
+      dockerfile: attachment-worker/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
+      WORKER_CONCURRENCY: ${ATTACHMENT_WORKER_CONCURRENCY:-4}
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  log-indexer:
+    build:
+      context: .
+      dockerfile: log-indexer/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      LOKI_URL: http://loki:3100
+      INDEX_INTERVAL_SEC: ${LOG_INDEX_INTERVAL_SEC:-30}
+    depends_on:
+      postgres: { condition: service_healthy }
+      loki: { condition: service_healthy }
+
+volumes:
+  postgres_data:
+  minio_data:
+  qdrant_data:
+  loki_data:
+  grafana_data:

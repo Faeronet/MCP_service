@@ -1,0 +1,5 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; background: #0f0f12; color: #e4e4e7; min-height: 100vh; }
+a { color: #818cf8; text-decoration: none; }
+a:hover { text-decoration: underline; }
+#root { min-height: 100vh; }

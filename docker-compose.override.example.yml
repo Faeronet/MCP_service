@@ -1,0 +1,7 @@
+# Optional: enable Grafana (observability profile)
+# docker compose --profile observability up -d
+# Then uncomment and add:
+#   profiles: []  to grafana service in main docker-compose to run by default
+
+# Optional: GPU profile for vLLM
+# docker compose --profile gpu up -d
