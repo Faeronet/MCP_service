@@ -160,7 +160,7 @@ services:
       context: .
       dockerfile: admin-web-ui/Dockerfile
     ports:
-      - "0.0.0.0:5173:80"   # 0.0.0.0 — доступ с других устройств по IP:5173
+      - "5173:80"
     depends_on:
       - admin-backend
 
