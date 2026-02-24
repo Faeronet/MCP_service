@@ -84,6 +84,7 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 	q := u.Query()
 	q.Set("query", `{job=~".+"}`)
 	q.Set("start", fmt.Sprintf("%d", start.UnixNano()))
+	q.Set("end", fmt.Sprintf("%d", end.UnixNano()))
 	q.Set("limit", "500")
 	u.RawQuery = q.Encode()
 
