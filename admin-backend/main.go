@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,8 +55,8 @@ func main() {
 	defer rmq.Close()
 
 	jwtSecret := config.LoadString("JWT_SECRET", "change-me")
-	adminUser := config.LoadString("ADMIN_USER", "admin")
-	adminPass := config.LoadString("ADMIN_PASSWORD", "admin")
+	adminUser := strings.TrimSpace(config.LoadString("ADMIN_USER", "admin"))
+	adminPass := strings.TrimSpace(config.LoadString("ADMIN_PASSWORD", "admin"))
 	if adminUser == "" {
 		adminUser = "admin"
 	}

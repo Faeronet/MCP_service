@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
 
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
@@ -57,11 +58,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 		return
 	}
-	if req.Username != h.AdminUser || req.Password != h.AdminPass {
+	user := strings.TrimSpace(req.Username)
+	pass := strings.TrimSpace(req.Password)
+	if user != h.AdminUser || pass != h.AdminPass {
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
-	claims := jwt.MapClaims{"sub": req.Username, "exp": time.Now().Add(24 * time.Hour).Unix()}
+	claims := jwt.MapClaims{"sub": user, "exp": time.Now().Add(24 * time.Hour).Unix()}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokStr, err := token.SignedString(h.JWTSecret)
 	if err != nil {
