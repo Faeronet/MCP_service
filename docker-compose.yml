@@ -65,11 +65,7 @@ services:
       - "6333:6333"
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:6333/readyz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    # healthcheck не задан: образ без wget/curl/bash; зависимости используют condition: service_started
 
   loki:
     image: grafana/loki:2.9.2
@@ -215,7 +211,7 @@ services:
     ports:
       - "8082:8082"
     depends_on:
-      qdrant: { condition: service_healthy }
+      qdrant: { condition: service_started }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8082/healthz"]
@@ -239,7 +235,7 @@ services:
       - "8001:8001"
     depends_on:
       postgres: { condition: service_healthy }
-      qdrant: { condition: service_healthy }
+      qdrant: { condition: service_started }
       minio: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8001/healthz"]

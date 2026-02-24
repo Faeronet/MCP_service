@@ -56,6 +56,12 @@ func main() {
 	jwtSecret := config.LoadString("JWT_SECRET", "change-me")
 	adminUser := config.LoadString("ADMIN_USER", "admin")
 	adminPass := config.LoadString("ADMIN_PASSWORD", "admin")
+	if adminUser == "" {
+		adminUser = "admin"
+	}
+	if adminPass == "" {
+		adminPass = "admin"
+	}
 	mcpWriteURL := config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001")
 	lokiURL := config.LoadString("LOKI_URL", "http://loki:3100")
 
@@ -81,7 +87,7 @@ func main() {
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
 	mux.Handle("/api/grafana/", authMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
-	srv := &http.Server{Addr: ":8080", Handler: requestIDMiddleware(mux), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":8080", Handler: corsMiddleware(requestIDMiddleware(mux)), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error(ctx, "http serve", logging.KV{"error", err})
@@ -95,6 +101,23 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requestIDMiddleware(next http.Handler) http.Handler {
