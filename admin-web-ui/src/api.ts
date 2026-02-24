@@ -11,13 +11,21 @@ function getToken(): string {
 }
 
 export async function login(username: string, password: string): Promise<{ token: string }> {
-  const r = await fetch(`${API_URL}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  })
-  if (!r.ok) throw new Error('Login failed')
-  return r.json()
+  let r: Response
+  try {
+    r = await fetch(`${API_URL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    })
+  } catch (e) {
+    throw new Error('CONNECTION_ERROR')
+  }
+  if (r.status === 401) throw new Error('INVALID_CREDENTIALS')
+  if (!r.ok) throw new Error(`SERVER_ERROR:${r.status}`)
+  const data = await r.json()
+  if (!data || typeof data.token !== 'string') throw new Error('INVALID_RESPONSE')
+  return data
 }
 
 export async function uploadFile(file: File, name?: string): Promise<{ job_id: string; doc_id: string; status: string }> {
