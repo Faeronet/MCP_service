@@ -53,9 +53,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	rmq, err := queue.New(ctx, config.LoadRabbitMQ().URL)
-	if err != nil {
-		log.Error(ctx, "rabbitmq connect", logging.KV{"error", err})
+	var rmq *queue.Client
+	rmqURL := config.LoadRabbitMQ().URL
+	for i := 0; i < 30; i++ {
+		rmq, err = queue.New(ctx, rmqURL)
+		if err == nil {
+			break
+		}
+		log.Warn(ctx, "rabbitmq connect retry", logging.KV{"error", err}, logging.KV{"attempt", i + 1})
+		time.Sleep(2 * time.Second)
+	}
+	if rmq == nil {
+		log.Error(ctx, "rabbitmq connect failed after retries", logging.KV{"error", err})
 		os.Exit(1)
 	}
 	defer rmq.Close()

@@ -23,7 +23,16 @@ WORKER_CONCURRENCY = int(os.getenv("WORKER_CONCURRENCY", "4"))
 
 def main():
     params = pika.URLParameters(RABBITMQ_URL)
-    conn = pika.BlockingConnection(params)
+    conn = None
+    for attempt in range(30):
+        try:
+            conn = pika.BlockingConnection(params)
+            break
+        except Exception as e:
+            log.warning("rabbitmq connect attempt %s: %s", attempt + 1, e)
+            time.sleep(2)
+    if conn is None:
+        raise RuntimeError("rabbitmq connect failed after retries")
     ch = conn.channel()
     ch.queue_declare("ingestion_jobs", durable=True)
     ch.basic_qos(prefetch_count=1)

@@ -47,9 +47,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	rmq, err := queue.New(ctx, config.LoadRabbitMQ().URL)
-	if err != nil {
-		log.Error(ctx, "rabbitmq connect", logging.KV{"error", err})
+	// RabbitMQ может стартовать позже — повторяем попытки
+	var rmq *queue.Client
+	rmqURL := config.LoadRabbitMQ().URL
+	for i := 0; i < 30; i++ {
+		rmq, err = queue.New(ctx, rmqURL)
+		if err == nil {
+			break
+		}
+		log.Warn(ctx, "rabbitmq connect retry", logging.KV{"error", err}, logging.KV{"attempt", i + 1})
+		time.Sleep(2 * time.Second)
+	}
+	if rmq == nil {
+		log.Error(ctx, "rabbitmq connect failed after retries", logging.KV{"error", err})
 		os.Exit(1)
 	}
 	defer rmq.Close()
@@ -80,6 +90,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/api/login", handler.Login)
+	mux.HandleFunc("/api/login/", handler.Login)
 	mux.Handle("/api/upload", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Upload)))
 	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListDocs)))
 	mux.Handle("/api/jobs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListJobs)))
@@ -87,6 +98,14 @@ func main() {
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
 	mux.Handle("/api/grafana/", authMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
+
+	// Логируем необработанные запросы (404)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "" {
+			log.Warn(r.Context(), "not found", logging.KV{"method", r.Method}, logging.KV{"path", r.URL.Path})
+		}
+		http.NotFound(w, r)
+	})
 
 	srv := &http.Server{Addr: ":8080", Handler: corsMiddleware(requestIDMiddleware(mux)), ReadHeaderTimeout: 10 * time.Second}
 	go func() {

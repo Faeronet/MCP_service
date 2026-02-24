@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import PointStruct, VectorParams, Distance
+from qdrant_client.http.exceptions import UnexpectedResponse
 from minio import Minio
 
 # Config from env
@@ -41,14 +42,15 @@ async def lifespan(app: FastAPI):
         secret_key=MINIO_SECRET,
         secure=False,
     )
-    # Ensure collection exists
+    # Ensure collection exists (create_collection is idempotent: 409 = already exists)
     try:
-        qdrant.get_collection(COLLECTION)
-    except Exception:
         qdrant.create_collection(
             COLLECTION,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
+    except UnexpectedResponse as e:
+        if e.status_code != 409:
+            raise
     yield
     qdrant.close()
 
