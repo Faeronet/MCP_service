@@ -35,20 +35,38 @@ export function Login({ onLogin }: LoginProps) {
   }
 
   return (
-    <div style={{ maxWidth: 400, margin: '80px auto', padding: 24 }}>
-      <h1>Admin Login</h1>
-      <form onSubmit={submit}>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', marginBottom: 4 }}>Username</label>
-          <input type="text" value={user} onChange={e => setUser(e.target.value)} required style={{ width: '100%', padding: 8 }} />
+    <div className="login-page">
+      <div className="login-top-bar" aria-hidden="true" />
+      <div className="login-center">
+        <div className="login-card">
+          <h1>Admin Login</h1>
+          <form onSubmit={submit}>
+            <label htmlFor="login-user">Username</label>
+            <input
+              id="login-user"
+              type="text"
+              value={user}
+              onChange={e => setUser(e.target.value)}
+              required
+              autoComplete="username"
+            />
+            <label htmlFor="login-pass">Password</label>
+            <input
+              id="login-pass"
+              type="password"
+              value={pass}
+              onChange={e => setPass(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+            {err && <p className="text-error">{err}</p>}
+            <button type="submit" className="btn-primary" disabled={!!err}>
+              Login
+            </button>
+          </form>
         </div>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', marginBottom: 4 }}>Password</label>
-          <input type="password" value={pass} onChange={e => setPass(e.target.value)} required style={{ width: '100%', padding: 8 }} />
-        </div>
-        {err && <p style={{ color: '#f87171', marginBottom: 16 }}>{err}</p>}
-        <button type="submit" style={{ padding: '10px 24px', cursor: 'pointer' }} disabled={!!err}>Login</button>
-      </form>
+      </div>
+      <div className="login-bottom-bar" aria-hidden="true" />
     </div>
   )
 }

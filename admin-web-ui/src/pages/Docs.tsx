@@ -37,31 +37,37 @@ export function Docs() {
 
   return (
     <div>
-      <h1>Documents</h1>
-      <div style={{ marginBottom: 16 }}>
-        <input type="file" onChange={onFile} disabled={uploading} />
-        {uploading && <span style={{ marginLeft: 8 }}>Uploading…</span>}
+      <h1 className="page-title">Documents</h1>
+      <div className="content-card">
+        <div className="input-line">
+          <input type="file" onChange={onFile} disabled={uploading} />
+          {uploading && <span className="text-muted">Uploading…</span>}
+        </div>
+        {error && <p className="text-error">{error}</p>}
       </div>
-      {error && <p style={{ color: '#f87171' }}>{error}</p>}
-      {loading ? <p>Loading…</p> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #27272a' }}>
-              <th style={{ textAlign: 'left', padding: 8 }}>Name</th>
-              <th style={{ textAlign: 'left', padding: 8 }}>ID</th>
-              <th style={{ textAlign: 'left', padding: 8 }}>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(docs ?? []).map(d => (
-              <tr key={d.id} style={{ borderBottom: '1px solid #27272a' }}>
-                <td style={{ padding: 8 }}>{d.name}</td>
-                <td style={{ padding: 8, fontFamily: 'monospace', fontSize: 12 }}>{d.id}</td>
-                <td style={{ padding: 8 }}>{new Date(d.created_at).toLocaleString()}</td>
+      {loading ? (
+        <p className="text-muted">Loading…</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>ID</th>
+                <th>Created</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(docs ?? []).map(d => (
+                <tr key={d.id}>
+                  <td>{d.name}</td>
+                  <td className="mono">{d.id}</td>
+                  <td>{new Date(d.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

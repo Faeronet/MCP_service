@@ -1,27 +1,50 @@
-import { Outlet, Link, useNavigate } from 'react-router-dom'
+import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
 
 export function Layout() {
   const navigate = useNavigate()
+  const location = useLocation()
   const logout = () => {
     localStorage.removeItem('token')
     window.dispatchEvent(new Event('auth-change'))
     navigate('/login')
   }
+
+  const nav = [
+    { to: '/docs', label: 'Docs' },
+    { to: '/jobs', label: 'Jobs' },
+    { to: '/logs', label: 'Logs' },
+    { to: '/grafana', label: 'Grafana' },
+  ]
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      <nav style={{ width: 200, padding: 24, borderRight: '1px solid #27272a', background: '#18181b' }}>
-        <h2 style={{ margin: '0 0 24px 0', fontSize: 18 }}>Admin</h2>
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          <li style={{ marginBottom: 8 }}><Link to="/docs">Docs</Link></li>
-          <li style={{ marginBottom: 8 }}><Link to="/jobs">Jobs</Link></li>
-          <li style={{ marginBottom: 8 }}><Link to="/logs">Logs</Link></li>
-          <li style={{ marginBottom: 8 }}><Link to="/grafana">Grafana</Link></li>
-        </ul>
-        <button onClick={logout} style={{ marginTop: 24, padding: '8px 16px', cursor: 'pointer' }}>Logout</button>
-      </nav>
-      <main style={{ flex: 1, padding: 24 }}>
-        <Outlet />
-      </main>
+    <div className="app-layout">
+      <header className="top-bar">
+        <h1>Admin</h1>
+      </header>
+      <div className="middle">
+        <aside className="sidebar">
+          <nav>
+            <ul>
+              {nav.map(({ to, label }) => (
+                <li key={to}>
+                  <Link to={to} className={location.pathname === to ? 'active' : ''}>
+                    {label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <div className="logout-wrap">
+            <button type="button" className="btn-logout" onClick={logout}>
+              Logout
+            </button>
+          </div>
+        </aside>
+        <main className="content-panel">
+          <Outlet />
+        </main>
+      </div>
+      <footer className="bottom-bar" aria-hidden="true" />
     </div>
   )
 }
