@@ -178,7 +178,9 @@ func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 			tokenStr = r.URL.Query().Get("token")
 		}
 		if tokenStr == "" {
-			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"missing authorization","hint":"Open Grafana from the admin panel (log in first, then open Grafana in the menu)"}`))
 			return
 		}
 		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
