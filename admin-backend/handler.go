@@ -379,7 +379,24 @@ func (h *Handler) GrafanaProxy() http.Handler {
 			return
 		}
 		defer resp.Body.Close()
+		token := r.URL.Query().Get("token")
 		for k, v := range resp.Header {
+			if strings.ToLower(k) == "location" {
+				for _, vv := range v {
+					if vv != "" && vv[0] == '/' && !strings.HasPrefix(vv, "//") {
+						vv = "/api/grafana" + vv
+						if token != "" {
+							if strings.Contains(vv, "?") {
+								vv += "&token=" + url.QueryEscape(token)
+							} else {
+								vv += "?token=" + url.QueryEscape(token)
+							}
+						}
+					}
+					w.Header().Add(k, vv)
+				}
+				continue
+			}
 			for _, vv := range v {
 				w.Header().Add(k, vv)
 			}

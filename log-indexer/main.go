@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -129,6 +130,10 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 			if message == "" && line != "" {
 				message = line
 			}
+			parseKeyValueLine(line, &parsed.Level, &parsed.RequestID, &parsed.Service)
+			if parsed.Service != "" {
+				service = parsed.Service
+			}
 			var ts time.Time
 			if ns, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
 				ts = time.Unix(0, ns)
@@ -145,4 +150,35 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 		}
 	}
 	return nil
+}
+
+var (
+	reLevel     = regexp.MustCompile(`level=(\S+)`)
+	reTraceID   = regexp.MustCompile(`traceID=([a-zA-Z0-9]+)`)
+	reComponent = regexp.MustCompile(`component=(\S+)`)
+	reService   = regexp.MustCompile(`service=(\S+)`)
+)
+
+// parseKeyValueLine извлекает level, traceID (request_id), service/component из строки в формате key=value (логи Loki, Go и т.д.).
+func parseKeyValueLine(line string, level, requestID, service *string) {
+	if line == "" {
+		return
+	}
+	if level != nil && *level == "" {
+		if m := reLevel.FindStringSubmatch(line); len(m) > 1 {
+			*level = m[1]
+		}
+	}
+	if requestID != nil && *requestID == "" {
+		if m := reTraceID.FindStringSubmatch(line); len(m) > 1 {
+			*requestID = m[1]
+		}
+	}
+	if service != nil && *service == "" {
+		if m := reService.FindStringSubmatch(line); len(m) > 1 {
+			*service = m[1]
+		} else if m := reComponent.FindStringSubmatch(line); len(m) > 1 {
+			*service = m[1]
+		}
+	}
 }

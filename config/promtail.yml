@@ -6,16 +6,24 @@ positions:
 clients:
   - url: http://loki:3100/loki/api/v1/push
 scrape_configs:
-  # Логи контейнеров Docker (файлы json-file на хосте)
-  - job_name: containers
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: containerlogs
-          __path__: /var/lib/docker/containers/*/*-json.log
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Путь к файлу логов контейнера (обязательно для чтения)
+      - source_labels: ['__meta_docker_container_id']
+        regex: '(.+)'
+        target_label: '__path__'
+        replacement: '/var/lib/docker/containers/$1/$1-json.log'
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
     pipeline_stages:
-      # Формат Docker json-file: {"log":"...","stream":"stdout|stderr","time":"..."}
       - json:
           expressions:
             output: log
@@ -26,11 +34,5 @@ scrape_configs:
           format: RFC3339Nano
       - labels:
           stream:
-      - regex:
-          expression: "^/var/lib/docker/containers/(?P<container_id>[0-9a-f]{12}).+/.+-json.log$"
-          source: filename
-      - labels:
-          container_id:
-      # Отправить в Loki содержимое поля log (сама строка лога)
       - output:
           source: output
