@@ -33,9 +33,9 @@ export function Logs() {
   useEffect(() => { load() }, [])
 
   return (
-    <div>
-      <h1 className="page-title">Logs</h1>
-      <div className="content-card">
+    <div className="page-layout">
+      <div className="page-header">
+        <h1 className="page-title">Logs</h1>
         <div className="input-line">
           <input placeholder="Service" value={service} onChange={e => setService(e.target.value)} />
           <input placeholder="Request ID" value={requestId} onChange={e => setRequestId(e.target.value)} />
@@ -46,45 +46,47 @@ export function Logs() {
         </div>
         <p className="text-muted">Индекс из Postgres (таблица obs.logs_index). Для сырых запросов к Loki — Grafana.</p>
       </div>
-      {loading ? (
-        <p className="text-muted">Loading…</p>
-      ) : (
-        <>
-          {!(logs ?? []).length && (
-            <p className="text-muted" style={{ marginTop: 16 }}>
-              Записей нет. Запустите <code style={{ background: 'var(--card-bg)', padding: '2px 6px', borderRadius: 4 }}>docker compose up -d log-indexer promtail</code>. Проверьте: <code style={{ background: 'var(--card-bg)', padding: '2px 6px', borderRadius: 4 }}>docker compose ps log-indexer</code>, логи: <code style={{ background: 'var(--card-bg)', padding: '2px 6px', borderRadius: 4 }}>docker compose logs log-indexer --tail 30</code>.
-            </p>
-          )}
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Level</th>
-                  <th>Service</th>
-                  <th>Request ID</th>
-                  <th>Message</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(logs ?? []).map((l, i) => (
-                  <tr key={i}>
-                    <td>{l.ts ? new Date(String(l.ts)).toISOString() : ''}</td>
-                    <td>
-                      <span className={`badge ${levelClass(String(l.level || ''))}`}>
-                        {String(l.level || 'info')}
-                      </span>
-                    </td>
-                    <td className="mono">{String(l.service || '')}</td>
-                    <td className="mono">{String(l.request_id || '')}</td>
-                    <td style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(l.message || '')}</td>
+      <div className="content-panel">
+        {loading ? (
+          <p className="text-muted">Loading…</p>
+        ) : (
+          <>
+            {!(logs ?? []).length && (
+              <p className="text-muted" style={{ marginTop: 0 }}>
+                Записей нет. Запустите <code style={{ background: 'var(--card-bg)', padding: '2px 6px', borderRadius: 4 }}>docker compose up -d log-indexer promtail</code>. Проверьте: <code style={{ background: 'var(--card-bg)', padding: '2px 6px', borderRadius: 4 }}>docker compose ps log-indexer</code>, логи: <code style={{ background: 'var(--card-bg)', padding: '2px 6px', borderRadius: 4 }}>docker compose logs log-indexer --tail 30</code>.
+              </p>
+            )}
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Level</th>
+                    <th>Service</th>
+                    <th>Request ID</th>
+                    <th>Message</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+                </thead>
+                <tbody>
+                  {(logs ?? []).map((l, i) => (
+                    <tr key={i}>
+                      <td>{l.ts ? new Date(String(l.ts)).toISOString() : ''}</td>
+                      <td>
+                        <span className={`badge ${levelClass(String(l.level || ''))}`}>
+                          {String(l.level || 'info')}
+                        </span>
+                      </td>
+                      <td className="mono">{String(l.service || '')}</td>
+                      <td className="mono">{String(l.request_id || '')}</td>
+                      <td style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(l.message || '')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

@@ -36,39 +36,41 @@ export function Docs() {
   }
 
   return (
-    <div>
-      <h1 className="page-title">Documents</h1>
-      <div className="content-card">
+    <div className="page-layout">
+      <div className="page-header">
+        <h1 className="page-title">Documents</h1>
         <div className="input-line">
           <input type="file" onChange={onFile} disabled={uploading} />
           {uploading && <span className="text-muted">Uploading…</span>}
         </div>
-        {error && <p className="text-error">{error}</p>}
+        {error && <p className="text-error" style={{ marginBottom: 0 }}>{error}</p>}
       </div>
-      {loading ? (
-        <p className="text-muted">Loading…</p>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>ID</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(docs ?? []).map(d => (
-                <tr key={d.id}>
-                  <td>{d.name}</td>
-                  <td className="mono">{d.id}</td>
-                  <td>{new Date(d.created_at).toLocaleString()}</td>
+      <div className="content-panel">
+        {loading ? (
+          <p className="text-muted">Loading…</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>ID</th>
+                  <th>Created</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {(docs ?? []).map(d => (
+                  <tr key={d.id}>
+                    <td>{d.name}</td>
+                    <td className="mono">{d.id}</td>
+                    <td>{new Date(d.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -200,7 +200,7 @@ table.data-table code, .mono { font-family: ui-monospace, monospace; font-size: 
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #020818;
+  background: #030130;
 }
 .login-top-bar, .login-bottom-bar {
   height: var(--top-bar-height);

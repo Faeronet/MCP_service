@@ -40,7 +40,7 @@ export function Layout() {
             </button>
           </div>
         </aside>
-        <main className="content-panel">
+        <main className="main-column">
           <Outlet />
         </main>
       </div>
