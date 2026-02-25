@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -73,6 +75,14 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(LoginResponse{Token: tokStr})
+}
+
+func fileHash(r io.Reader) (string, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +367,8 @@ func (h *Handler) LogsRaw(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+const grafanaProxyPrefix = "/api/grafana"
+
 func (h *Handler) GrafanaProxy() http.Handler {
 	grafanaURL := config.LoadString("GRAFANA_URL", "http://grafana:3000")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -383,8 +395,8 @@ func (h *Handler) GrafanaProxy() http.Handler {
 		for k, v := range resp.Header {
 			if strings.ToLower(k) == "location" {
 				for _, vv := range v {
-					if vv != "" && vv[0] == '/' && !strings.HasPrefix(vv, "//") && !strings.HasPrefix(vv, "/api/grafana") {
-						vv = "/api/grafana" + vv
+					if vv != "" && vv[0] == '/' && !strings.HasPrefix(vv, "//") && !strings.HasPrefix(vv, grafanaProxyPrefix) {
+						vv = grafanaProxyPrefix + vv
 						if token != "" {
 							if strings.Contains(vv, "?") {
 								vv += "&token=" + url.QueryEscape(token)
@@ -397,13 +409,42 @@ func (h *Handler) GrafanaProxy() http.Handler {
 				}
 				continue
 			}
+			if strings.ToLower(k) == "content-length" {
+				continue
+			}
 			for _, vv := range v {
 				w.Header().Add(k, vv)
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		body, _ := io.ReadAll(resp.Body)
+		ct := resp.Header.Get("Content-Type")
+		if (strings.Contains(ct, "text/html") || strings.Contains(ct, "javascript")) && len(body) > 0 {
+			body = grafanaRewriteStaticPaths(body)
+		}
+		w.Write(body)
 	})
+}
+
+// grafanaRewriteStaticPaths fixes asset paths when Grafana root_url has no subpath (e.g. localhost:3001).
+// So the browser requests /api/grafana/public/... instead of /public/...
+func grafanaRewriteStaticPaths(b []byte) []byte {
+	s := string(b)
+	// Paths that must be under our proxy prefix so the backend receives them
+	replacements := []string{
+		`"/public/`, `"` + grafanaProxyPrefix + `/public/`,
+		`'/public/`, `'` + grafanaProxyPrefix + `/public/`,
+		`"/img/`, `"` + grafanaProxyPrefix + `/img/`,
+		`'/img/`, `'` + grafanaProxyPrefix + `/img/`,
+		`href="/public/`, `href="` + grafanaProxyPrefix + `/public/`,
+		`href='/public/`, `href='` + grafanaProxyPrefix + `/public/`,
+		`src="/public/`, `src="` + grafanaProxyPrefix + `/public/`,
+		`src='/public/`, `src='` + grafanaProxyPrefix + `/public/`,
+	}
+	for i := 0; i < len(replacements); i += 2 {
+		s = strings.ReplaceAll(s, replacements[i], replacements[i+1])
+	}
+	return []byte(s)
 }
 
 func mustJSON(v interface{}) []byte {

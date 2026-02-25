@@ -1,0 +1,24 @@
+{
+  "id": null,
+  "uid": "default",
+  "title": "Overview",
+  "tags": [],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "type": "text",
+      "title": "Welcome",
+      "options": {
+        "content": "## Добро пожаловать\n\nLoki уже подключён. В **Explore** (иконка компаса слева) можно смотреть логи.",
+        "mode": "markdown"
+      }
+    }
+  ],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" }
+}

@@ -85,13 +85,13 @@ type lokiResponse struct {
 }
 
 func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
-	// Query last 2 minutes of logs
-	start := time.Now().Add(-2 * time.Minute)
+	// Окно 30 минут: Loki может отдавать данные с задержкой (flush), плюс возможен сдвиг времени
+	start := time.Now().Add(-30 * time.Minute)
 	end := time.Now()
 	u, _ := url.Parse(baseURL + "/loki/api/v1/query_range")
 	q := u.Query()
-	// Loki не принимает пустой {} — нужен хотя бы один матчер. Promtail даёт job=docker и др.
-	q.Set("query", `{job=~".+"}`)
+	// Loki не принимает пустой {}. Используем container — он всегда есть у Promtail (docker_sd).
+	q.Set("query", `{container=~".+"}`)
 	q.Set("start", fmt.Sprintf("%d", start.UnixNano()))
 	q.Set("end", fmt.Sprintf("%d", end.UnixNano()))
 	q.Set("limit", "500")
@@ -159,9 +159,8 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 			nInserted++
 		}
 	}
-	if nStreams > 0 || nInserted > 0 {
-		log.Info(ctx, "index run", logging.KV{"streams", nStreams}, logging.KV{"inserted", nInserted})
-	}
+	// Логируем каждый прогон: при 0 видно, что Loki пустой; при >0 — что данные пошли в Postgres
+	log.Info(ctx, "index run", logging.KV{"streams", nStreams}, logging.KV{"inserted", nInserted})
 	return nil
 }
 
