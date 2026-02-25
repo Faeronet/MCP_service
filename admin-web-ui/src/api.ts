@@ -10,6 +10,13 @@ function getToken(): string {
   return localStorage.getItem('token') || ''
 }
 
+function checkAuth(r: Response): void {
+  if (r.status === 401) {
+    localStorage.removeItem('token')
+    window.dispatchEvent(new Event('auth-change'))
+  }
+}
+
 export async function login(username: string, password: string): Promise<{ token: string }> {
   let r: Response
   try {
@@ -68,10 +75,13 @@ export async function searchLogs(params: { service?: string; request_id?: string
   if (params.level) u.searchParams.set('level', params.level)
   if (params.limit) u.searchParams.set('limit', String(params.limit))
   const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
   if (!r.ok) throw new Error('Failed to search logs')
   return r.json()
 }
 
 export function grafanaUrl(): string {
-  return `${API_URL}/api/grafana`
+  const base = `${API_URL}/api/grafana/`
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base
 }

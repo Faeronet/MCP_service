@@ -4,6 +4,7 @@ export function Layout() {
   const navigate = useNavigate()
   const logout = () => {
     localStorage.removeItem('token')
+    window.dispatchEvent(new Event('auth-change'))
     navigate('/login')
   }
   return (

@@ -97,7 +97,7 @@ func main() {
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
-	mux.Handle("/api/grafana/", authMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
+	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
 	// Логируем необработанные запросы (404)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +155,29 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 func authMiddleware(secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.Header.Get("Authorization")
+		if tokenStr == "" {
+			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
+			return
+		}
+		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
+			tokenStr = tokenStr[7:]
+		}
+		_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) { return secret, nil })
+		if err != nil {
+			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// grafanaAuthMiddleware accepts JWT from Authorization header or from ?token= (for iframe).
+func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tokenStr := r.Header.Get("Authorization")
+		if tokenStr == "" {
+			tokenStr = r.URL.Query().Get("token")
+		}
 		if tokenStr == "" {
 			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 			return

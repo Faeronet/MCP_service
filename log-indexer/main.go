@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -124,13 +125,21 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 			if parsed.Service != "" {
 				service = parsed.Service
 			}
-			ts, _ := time.Parse(time.RFC3339Nano, tsStr)
+			message := parsed.Message
+			if message == "" && line != "" {
+				message = line
+			}
+			var ts time.Time
+			if ns, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
+				ts = time.Unix(0, ns)
+			} else {
+				ts, _ = time.Parse(time.RFC3339Nano, tsStr)
+			}
 			_, err := pool.Exec(ctx, `
 				INSERT INTO obs.logs_index (ts, level, service, request_id, message, log_id)
 				VALUES ($1, $2, $3, $4, $5, $6)
-			`, ts, parsed.Level, service, parsed.RequestID, parsed.Message, uuid.New().String())
+			`, ts, parsed.Level, service, parsed.RequestID, message, uuid.New().String())
 			if err != nil {
-				// duplicate or constraint - skip
 				continue
 			}
 		}

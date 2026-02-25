@@ -7,19 +7,21 @@ import { Jobs } from './pages/Jobs'
 import { Logs } from './pages/Logs'
 import { Grafana } from './pages/Grafana'
 
-function App() {
-  const [token, setToken] = useState(() => localStorage.getItem('token'))
+export default function App() {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+
   useEffect(() => {
     const onAuthChange = () => setToken(localStorage.getItem('token'))
     window.addEventListener('auth-change', onAuthChange)
     return () => window.removeEventListener('auth-change', onAuthChange)
   }, [])
+
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login onLogin={() => setToken(localStorage.getItem('token'))} />} />
-        <Route path="/" element={token ? <Layout /> : <Navigate to="/login" />}>
-          <Route index element={<Navigate to="/docs" />} />
+        <Route path="/" element={token ? <Layout /> : <Navigate to="/login" replace />}>
+          <Route index element={<Navigate to="/docs" replace />} />
           <Route path="docs" element={<Docs />} />
           <Route path="jobs" element={<Jobs />} />
           <Route path="logs" element={<Logs />} />
@@ -29,5 +31,3 @@ function App() {
     </BrowserRouter>
   )
 }
-
-export default App

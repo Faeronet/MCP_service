@@ -10,7 +10,7 @@ export function Docs() {
   const load = async () => {
     try {
       const { docs: d } = await listDocs()
-      setDocs(d)
+      setDocs(Array.isArray(d) ? d : [])
     } catch (e) {
       setError(String(e))
     } finally {
@@ -53,7 +53,7 @@ export function Docs() {
             </tr>
           </thead>
           <tbody>
-            {docs.map(d => (
+            {(docs ?? []).map(d => (
               <tr key={d.id} style={{ borderBottom: '1px solid #27272a' }}>
                 <td style={{ padding: 8 }}>{d.name}</td>
                 <td style={{ padding: 8, fontFamily: 'monospace', fontSize: 12 }}>{d.id}</td>

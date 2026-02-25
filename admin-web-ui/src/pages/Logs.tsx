@@ -17,7 +17,7 @@ export function Logs() {
         level: level || undefined,
         limit: 100,
       })
-      setLogs(l)
+      setLogs(Array.isArray(l) ? l : [])
     } finally {
       setLoading(false)
     }
@@ -34,20 +34,26 @@ export function Logs() {
         <input placeholder="Level" value={level} onChange={e => setLevel(e.target.value)} style={{ padding: 8 }} />
         <button type="button" onClick={load} style={{ padding: '8px 16px', cursor: 'pointer' }}>Search</button>
       </div>
-      <p style={{ fontSize: 12, color: '#71717a' }}>Index from Postgres. For raw Loki query use Grafana.</p>
+      <p style={{ fontSize: 12, color: '#71717a' }}>Индекс из Postgres (таблица obs.logs_index). Для сырых запросов к Loki — Grafana.</p>
       {loading ? <p>Loading…</p> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #27272a' }}>
-              <th style={{ textAlign: 'left', padding: 8 }}>Time</th>
-              <th style={{ textAlign: 'left', padding: 8 }}>Level</th>
-              <th style={{ textAlign: 'left', padding: 8 }}>Service</th>
-              <th style={{ textAlign: 'left', padding: 8 }}>Request ID</th>
-              <th style={{ textAlign: 'left', padding: 8 }}>Message</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((l, i) => (
+        <>
+          {!(logs ?? []).length && (
+            <p style={{ color: '#a1a1aa', marginTop: 16 }}>
+              Записей нет. Нужны <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>log-indexer</code> и <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>promtail</code> (с томом <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>/var/lib/docker/containers</code>). Проверьте: <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose ps log-indexer promtail</code>, затем <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose up -d promtail</code>.
+            </p>
+          )}
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #27272a' }}>
+                <th style={{ textAlign: 'left', padding: 8 }}>Time</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>Level</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>Service</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>Request ID</th>
+                <th style={{ textAlign: 'left', padding: 8 }}>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(logs ?? []).map((l, i) => (
               <tr key={i} style={{ borderBottom: '1px solid #27272a' }}>
                 <td style={{ padding: 8 }}>{l.ts ? new Date(String(l.ts)).toISOString() : ''}</td>
                 <td style={{ padding: 8 }}>{String(l.level || '')}</td>
@@ -58,6 +64,7 @@ export function Logs() {
             ))}
           </tbody>
         </table>
+        </>
       )}
     </div>
   )

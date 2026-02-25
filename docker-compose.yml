@@ -15,6 +15,21 @@ services:
       timeout: 3s
       retries: 5
 
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGDATABASE: ${POSTGRES_DB:-assistant}
+    volumes:
+      - ./migrations:/migrations:ro
+    command: >
+      sh -c "for f in /migrations/*.up.sql; do [ -f \"$$f\" ] || continue; echo Applying $$f...; psql -f \"$$f\" || true; done"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
   minio:
     image: minio/minio:latest
     command: server /data
@@ -87,6 +102,9 @@ services:
     volumes:
       - ./config/promtail.yml:/etc/promtail/config.yml
       - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Доступ к логам контейнеров (без этого Loki остаётся пустым)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     depends_on:
       - loki
 
@@ -147,6 +165,7 @@ services:
       - "8080:8080"
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
     healthcheck:
@@ -183,6 +202,7 @@ services:
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       mcp-read: { condition: service_started }
@@ -233,6 +253,7 @@ services:
       - "8001:8001"
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       qdrant: { condition: service_started }
       minio: { condition: service_healthy }
     healthcheck:
@@ -252,6 +273,7 @@ services:
       WORKER_CONCURRENCY: ${INGESTION_WORKER_CONCURRENCY:-4}
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
       mcp-write: { condition: service_started }
 
@@ -269,6 +291,7 @@ services:
       WORKER_CONCURRENCY: ${ATTACHMENT_WORKER_CONCURRENCY:-4}
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
 
@@ -282,6 +305,7 @@ services:
       INDEX_INTERVAL_SEC: ${LOG_INDEX_INTERVAL_SEC:-30}
     depends_on:
       postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       loki: { condition: service_healthy }
 
 volumes:

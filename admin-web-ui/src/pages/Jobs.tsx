@@ -9,7 +9,7 @@ export function Jobs() {
   const load = async () => {
     try {
       const { jobs: j } = await listJobs(100)
-      setJobs(j)
+      setJobs(Array.isArray(j) ? j : [])
     } finally {
       setLoading(false)
     }
@@ -41,7 +41,7 @@ export function Jobs() {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((j: Record<string, unknown>) => (
+              {(jobs ?? []).map((j: Record<string, unknown>) => (
                 <tr key={String(j.id)} style={{ borderBottom: '1px solid #27272a' }}>
                   <td style={{ padding: 8 }}>
                     <button type="button" onClick={() => openJob(String(j.id))} style={{ background: 'none', border: 'none', color: '#818cf8', cursor: 'pointer', textDecoration: 'underline' }}>

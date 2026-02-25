@@ -362,7 +362,9 @@ func (h *Handler) GrafanaProxy() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := url.Parse(grafanaURL)
 		u.Path = r.URL.Path
-		u.RawQuery = r.URL.RawQuery
+		q := r.URL.Query()
+		q.Del("token")
+		u.RawQuery = q.Encode()
 		proxyReq, _ := http.NewRequestWithContext(r.Context(), r.Method, u.String(), r.Body)
 		for k, v := range r.Header {
 			if strings.ToLower(k) == "host" {
