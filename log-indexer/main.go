@@ -36,6 +36,7 @@ func main() {
 	if interval < time.Second {
 		interval = 30 * time.Second
 	}
+	log.Info(ctx, "log-indexer started", logging.KV{"loki", lokiURL}, logging.KV{"interval_sec", int(interval.Seconds())})
 
 	// Ensure schema and table (на случай если migrate не создал obs)
 	_, _ = pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS obs;`)
@@ -112,6 +113,8 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 		return err
 	}
 
+	nStreams := len(data.Data.Result)
+	nInserted := 0
 	for _, stream := range data.Data.Result {
 		service := stream.Stream["service"]
 		if service == "" {
@@ -153,7 +156,11 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 			if err != nil {
 				continue
 			}
+			nInserted++
 		}
+	}
+	if nStreams > 0 || nInserted > 0 {
+		log.Info(ctx, "index run", logging.KV{"streams", nStreams}, logging.KV{"inserted", nInserted})
 	}
 	return nil
 }

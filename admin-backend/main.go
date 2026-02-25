@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
-	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,7 +45,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// RabbitMQ может стартовать позже — повторяем попытки
 	var rmq *queue.Client
 	rmqURL := config.LoadRabbitMQ().URL
 	for i := 0; i < 30; i++ {
@@ -64,27 +61,25 @@ func main() {
 	}
 	defer rmq.Close()
 
-	jwtSecret := config.LoadString("JWT_SECRET", "change-me")
-	adminUser := strings.TrimSpace(config.LoadString("ADMIN_USER", "admin"))
-	adminPass := strings.TrimSpace(config.LoadString("ADMIN_PASSWORD", "admin"))
-	if adminUser == "" {
-		adminUser = "admin"
+	jwtSecret := config.LoadString("JWT_SECRET", "change-me-in-production")
+	if jwtSecret == "change-me-in-production" {
+		log.Warn(ctx, "JWT_SECRET is default; set in production")
 	}
-	if adminPass == "" {
-		adminPass = "admin"
+	secretBytes := []byte(jwtSecret)
+	if len(secretBytes) < 32 {
+		hash := sha256.Sum256([]byte(jwtSecret))
+		secretBytes = hash[:]
 	}
-	mcpWriteURL := config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001")
-	lokiURL := config.LoadString("LOKI_URL", "http://loki:3100")
 
 	handler := NewHandler(HandlerDeps{
-		Pool:       pool,
-		MinIO:      minioClient,
-		Queue:      rmq,
-		JWTSecret:  []byte(jwtSecret),
-		AdminUser:  adminUser,
-		AdminPass:  adminPass,
-		MCPWriteURL: mcpWriteURL,
-		LokiURL:    lokiURL,
+		Pool:        pool,
+		MinIO:       minioClient,
+		Queue:       rmq,
+		JWTSecret:   secretBytes,
+		AdminUser:   config.LoadString("ADMIN_USER", "admin"),
+		AdminPass:   config.LoadString("ADMIN_PASSWORD", "admin"),
+		MCPWriteURL: config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001"),
+		LokiURL:     config.LoadString("LOKI_URL", "http://loki:3100"),
 	})
 
 	mux := http.NewServeMux()
@@ -97,8 +92,9 @@ func main() {
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
-	// Передаём в Grafana путь с префиксом /api/grafana — при serve_from_sub_path=true она так и ожидает
-	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, handler.GrafanaProxy()))
+	// Прокси в Grafana: StripPrefix убирает /api/grafana, Grafana получает / и /public/...
+	// root_url в Grafana задаёт префикс в ссылках, чтобы браузер запрашивал /api/grafana/public/...
+	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
 	// Логируем необработанные запросы (404)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -172,8 +168,8 @@ func authMiddleware(secret []byte, next http.Handler) http.Handler {
 	})
 }
 
-// grafanaAuthMiddleware accepts JWT from Authorization header or from ?token= (for iframe).
-// Статика /api/grafana/public/ пускается без JWT (страница Grafana уже открыта по токену).
+// grafanaAuthMiddleware принимает JWT из Authorization или ?token= (для iframe).
+// Статика /api/grafana/public/ и /api/grafana/img/ пускается без JWT.
 func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/grafana/public/") || strings.HasPrefix(r.URL.Path, "/api/grafana/img/") {
@@ -198,12 +194,4 @@ func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func fileHash(r io.Reader) (string, error) {
-	h := sha256.New()
-	if _, err := io.Copy(h, r); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
