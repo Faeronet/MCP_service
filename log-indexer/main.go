@@ -37,7 +37,8 @@ func main() {
 		interval = 30 * time.Second
 	}
 
-	// Ensure table
+	// Ensure schema and table (на случай если migrate не создал obs)
+	_, _ = pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS obs;`)
 	_, _ = pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS obs.logs_index (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -53,6 +54,10 @@ func main() {
 		CREATE INDEX IF NOT EXISTS idx_logs_index_ts ON obs.logs_index(ts);
 	`)
 
+	// Первый прогон сразу, чтобы логи появились в панели без ожидания interval
+	if err := indexLoki(ctx, pool, lokiURL); err != nil {
+		log.Warn(ctx, "index run (startup)", logging.KV{"error", err})
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -84,7 +89,8 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 	end := time.Now()
 	u, _ := url.Parse(baseURL + "/loki/api/v1/query_range")
 	q := u.Query()
-	q.Set("query", `{job=~".+"}`)
+	// Любой stream (Promtail может слать job=docker или иные метки)
+	q.Set("query", `{}`)
 	q.Set("start", fmt.Sprintf("%d", start.UnixNano()))
 	q.Set("end", fmt.Sprintf("%d", end.UnixNano()))
 	q.Set("limit", "500")

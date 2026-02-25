@@ -97,7 +97,8 @@ services:
       retries: 5
 
   promtail:
-    image: grafana/promtail:2.9.2
+    # 2.9.2 использует Docker API 1.42; демон требует 1.44 — нужен образ 3.x
+    image: grafana/promtail:3.0.0
     command: -config.file=/etc/promtail/config.yml
     volumes:
       - ./config/promtail.yml:/etc/promtail/config.yml
@@ -114,7 +115,10 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3001}
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Доступ через прокси admin-backend: JWT проверяется на прокси, в Grafana пускаем как анонимный Viewer
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
@@ -123,8 +127,6 @@ services:
       - "3001:3000"
     depends_on:
       - loki
-    profiles:
-      - observability
 
   vllm:
     image: vllm/vllm-openai:latest

@@ -5,7 +5,7 @@ export function Grafana() {
   return (
     <div>
       <h1>Grafana</h1>
-      <p style={{ marginBottom: 16, color: '#71717a' }}>Embedded via admin-backend proxy. Log in with Grafana admin credentials if prompted.</p>
+      <p style={{ marginBottom: 16, color: '#71717a' }}>Через прокси админки (анонимный просмотр). Если пусто — убедитесь, что контейнер <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>grafana</code> запущен: <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose ps grafana</code>.</p>
       <iframe
         title="Grafana"
         src={url}
