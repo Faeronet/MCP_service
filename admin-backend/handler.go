@@ -383,7 +383,7 @@ func (h *Handler) GrafanaProxy() http.Handler {
 		for k, v := range resp.Header {
 			if strings.ToLower(k) == "location" {
 				for _, vv := range v {
-					if vv != "" && vv[0] == '/' && !strings.HasPrefix(vv, "//") {
+					if vv != "" && vv[0] == '/' && !strings.HasPrefix(vv, "//") && !strings.HasPrefix(vv, "/api/grafana") {
 						vv = "/api/grafana" + vv
 						if token != "" {
 							if strings.Contains(vv, "?") {

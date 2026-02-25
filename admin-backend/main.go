@@ -97,7 +97,8 @@ func main() {
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
-	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
+	// Передаём в Grafana путь с префиксом /api/grafana — при serve_from_sub_path=true она так и ожидает
+	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, handler.GrafanaProxy()))
 
 	// Логируем необработанные запросы (404)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -172,8 +173,13 @@ func authMiddleware(secret []byte, next http.Handler) http.Handler {
 }
 
 // grafanaAuthMiddleware accepts JWT from Authorization header or from ?token= (for iframe).
+// Статика /api/grafana/public/ пускается без JWT (страница Grafana уже открыта по токену).
 func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/grafana/public/") || strings.HasPrefix(r.URL.Path, "/api/grafana/img/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		tokenStr := r.Header.Get("Authorization")
 		if tokenStr == "" {
 			tokenStr = r.URL.Query().Get("token")

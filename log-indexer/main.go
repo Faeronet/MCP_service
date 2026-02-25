@@ -56,13 +56,13 @@ func main() {
 
 	// Первый прогон сразу, чтобы логи появились в панели без ожидания interval
 	if err := indexLoki(ctx, pool, lokiURL); err != nil {
-		log.Warn(ctx, "index run (startup)", logging.KV{"error", err})
+		log.Warn(ctx, "index run (startup)", logging.KV{"error", err.Error()})
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
 		if err := indexLoki(ctx, pool, lokiURL); err != nil {
-			log.Warn(ctx, "index run", logging.KV{"error", err})
+			log.Warn(ctx, "index run", logging.KV{"error", err.Error()})
 		}
 	}
 }
@@ -89,8 +89,8 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 	end := time.Now()
 	u, _ := url.Parse(baseURL + "/loki/api/v1/query_range")
 	q := u.Query()
-	// Любой stream (Promtail может слать job=docker или иные метки)
-	q.Set("query", `{}`)
+	// Loki не принимает пустой {} — нужен хотя бы один матчер. Promtail даёт job=docker и др.
+	q.Set("query", `{job=~".+"}`)
 	q.Set("start", fmt.Sprintf("%d", start.UnixNano()))
 	q.Set("end", fmt.Sprintf("%d", end.UnixNano()))
 	q.Set("limit", "500")

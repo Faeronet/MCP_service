@@ -39,7 +39,7 @@ export function Logs() {
         <>
           {!(logs ?? []).length && (
             <p style={{ color: '#a1a1aa', marginTop: 16 }}>
-              Записей нет. Нужны <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>log-indexer</code> и <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>promtail</code> (с томом <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>/var/lib/docker/containers</code>). Проверьте: <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose ps log-indexer promtail</code>, затем <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose up -d promtail</code>.
+              Записей нет. Запустите <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose up -d log-indexer promtail</code>. Проверьте: <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose ps log-indexer</code>, логи: <code style={{ background: '#27272a', padding: '2px 6px', borderRadius: 4 }}>docker compose logs log-indexer --tail 30</code>.
             </p>
           )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
