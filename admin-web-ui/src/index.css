@@ -381,3 +381,121 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 /* iframe full height in content panel */
 .grafana-iframe-wrap { height: calc(100vh - var(--top-bar-height) - var(--bottom-bar-height) - 120px); min-height: 400px; }
 .grafana-iframe-wrap iframe { width: 100%; height: 100%; border: 1px solid var(--content-border); border-radius: 8px; }
+
+/* ----- Monitor: компактные спидометры в ряд, кнопки как в Logs ----- */
+.monitor-type-toggle {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.monitor-type-toggle .btn-primary {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-monitor-inactive {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.btn-monitor-inactive:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border-color: var(--content-border);
+}
+
+.monitor-gauges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  justify-content: flex-start;
+  margin-bottom: 28px;
+}
+.speedometer-gauge {
+  background: var(--card-bg);
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  text-align: center;
+  min-width: 100px;
+}
+.speedometer-svg {
+  width: 100%;
+  max-width: 88px;
+  height: auto;
+  display: block;
+  margin: 0 auto 6px;
+}
+.speedometer-value {
+  fill: #fff;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1rem;
+  font-weight: 400;
+}
+.speedometer-label {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 0.875rem;
+  color: #fff;
+  font-weight: 400;
+  text-align: center;
+}
+
+.monitor-chart-panel {
+  background: #23282b59;
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+  padding: 20px;
+}
+.monitor-chart-title {
+  margin: 0 0 12px 0;
+  font-size: 1rem;
+  color: var(--link);
+  font-weight: 600;
+}
+.monitor-chart-wrap {
+  position: relative;
+}
+.monitor-chart-legend {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 16px;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.monitor-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.monitor-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.monitor-chart-svg {
+  width: 100%;
+  max-width: 800px;
+  height: auto;
+  min-height: 220px;
+}
+.monitor-grid-line {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+.monitor-area { opacity: 0.85; }
+.monitor-line { stroke-linecap: round; stroke-linejoin: round; }
+.monitor-axis-label {
+  fill: var(--text-muted);
+  font-size: 0.75rem;
+}

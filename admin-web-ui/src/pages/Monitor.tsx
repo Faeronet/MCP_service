@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { getMonitorMetrics, type MonitorMetricsResponse } from '../api'
-import { SpeedometerGauge, DualBandGauge } from '../components/SpeedometerGauge'
+import { SpeedometerGauge } from '../components/SpeedometerGauge'
 
 type MonitorType = 'system' | 'gpu'
 
@@ -105,7 +105,7 @@ export function Monitor() {
   )
 }
 
-const CHART_COLORS = { cpu: '#22c55e', ram: '#3b82f6', disk_io: '#3b82f6', gpu: '#22c55e', vram: '#3b82f6' }
+const CHART_COLORS = { cpu: '#22c55e', ram: '#3b82f6', disk_io: '#3b82f6', gpu: '#06b6d4', vram: '#eab308' }
 
 function MonitorTimeChart({
   data,
@@ -209,19 +209,11 @@ function MonitorTimeChart({
             className="monitor-grid-line"
           />
         ))}
-        {/* area paths */}
         {keys.map(k => (
-          <path key={k} d={paths[k]} fill={`url(#grad-${k})`} className="monitor-area" />
+          <path key={`area-${k}`} d={areaPaths[k]} fill={`url(#grad-${k})`} className="monitor-area" />
         ))}
         {keys.map(k => (
-          <path
-            key={k}
-            d={paths[k]?.replace(/ L \d+\.?\d* \d+\.?\d* Z$/, '').replace(/^M [\d.]+ [\d.]+/, 'M')?.replace(/ L ([\d.]+) ([\d.]+) L [\d.]+ [\d.]+ L [\d.]+ [\d.]+ Z/, '')}
-            fill="none"
-            stroke={series[k]?.color}
-            strokeWidth={2}
-            className="monitor-line"
-          />
+          <path key={`line-${k}`} d={linePaths[k]} fill="none" stroke={series[k]?.color} strokeWidth={2} className="monitor-line" />
         ))}
         <text x={width / 2} y={height - 6} textAnchor="middle" className="monitor-axis-label">
           {timeLabel}
