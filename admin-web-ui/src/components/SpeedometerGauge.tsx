@@ -21,9 +21,11 @@ interface SpeedometerGaugeProps {
   className?: string
   /** Цвет дуги нагрузки (по умолчанию cyan). Для VRAM — жёлтый. */
   fillColor?: string
+  /** Если задано, показывается вместо value+unit в центре (например "4.2 / 26 GiB"). */
+  valueLabel?: string
 }
 
-export function SpeedometerGauge({ value, max = 100, label, unit = '%', className, fillColor }: SpeedometerGaugeProps) {
+export function SpeedometerGauge({ value, max = 100, label, unit = '%', className, fillColor, valueLabel }: SpeedometerGaugeProps) {
   const r = 28
   const cx = 32
   const cy = 32
@@ -34,14 +36,20 @@ export function SpeedometerGauge({ value, max = 100, label, unit = '%', classNam
   const valuePath = describeArc(cx, cy, r, START_ANGLE, endAngle)
   const displayVal = max === 100 ? Math.round(value) : value
   const strokeColor = fillColor ?? 'var(--gauge-fill)'
+  const centerText = valueLabel != null ? valueLabel : `${displayVal}${unit}`
 
   return (
     <div className={`speedometer-gauge ${className ?? ''}`}>
       <svg viewBox="0 0 64 52" className="speedometer-svg">
         <path d={bgPath} fill="none" stroke="var(--gauge-bg)" strokeWidth={stroke} strokeLinecap="round" />
         <path d={valuePath} fill="none" stroke={strokeColor} strokeWidth={stroke} strokeLinecap="round" />
-        <text x={cx} y={cy + 2} textAnchor="middle" className="speedometer-value">
-          {displayVal}{unit}
+        <text
+          x={cx}
+          y={cy + 2}
+          textAnchor="middle"
+          className={valueLabel != null ? 'speedometer-value speedometer-value--gb' : 'speedometer-value'}
+        >
+          {centerText}
         </text>
       </svg>
       <div className="speedometer-label">{label}</div>

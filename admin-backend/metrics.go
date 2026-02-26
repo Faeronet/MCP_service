@@ -1,5 +1,3 @@
-// +build linux
-
 package main
 
 import (
@@ -8,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,15 +17,19 @@ import (
 const metricsHistorySize = 60
 
 type GPUMetrics struct {
-	Name    string  `json:"name"`
-	GPUPct  int     `json:"gpu_pct"`
-	VRAMPct int     `json:"vram_pct"`
+	Name        string  `json:"name"`
+	GPUPct      int     `json:"gpu_pct"`
+	VRAMPct     int     `json:"vram_pct"`
+	VRAMUsedGB  float64 `json:"vram_used_gb"`
+	VRAMTotalGB float64 `json:"vram_total_gb"`
 }
 
 type SystemMetrics struct {
-	CPUPct   int `json:"cpu_pct"`
-	RAMPct   int `json:"ram_pct"`
-	DiskIOK  int `json:"disk_io_k"`
+	CPUPct      int     `json:"cpu_pct"`
+	RAMPct     int     `json:"ram_pct"`
+	RamUsedGB  float64 `json:"ram_used_gb"`
+	RamTotalGB float64 `json:"ram_total_gb"`
+	DiskIOK     int     `json:"disk_io_k"`
 }
 
 type HistoryPoint struct {
@@ -45,16 +48,23 @@ type GPUHistoryPt struct {
 }
 
 type metricsState struct {
-	mu        sync.Mutex
-	lastCPU   cpuSample
-	lastDisk  diskSample
-	history   []HistoryPoint
-	lastGPUs  []GPUMetrics
+	mu          sync.Mutex
+	lastCPU     cpuSample
+	lastCgroup  cgroupCPUSample
+	lastDisk    diskSample
+	history     []HistoryPoint
+	lastGPUs    []GPUMetrics
 }
 
 type cpuSample struct {
 	total, idle uint64
 	at          time.Time
+}
+
+type cgroupCPUSample struct {
+	usageUsec     uint64
+	systemJiffies uint64
+	at            time.Time
 }
 
 type diskSample struct {
@@ -89,6 +99,80 @@ func readProcStatCPU() (total, idle uint64, err error) {
 	return 0, 0, fmt.Errorf("cpu line not found")
 }
 
+// getProcStatTotalJiffies returns the sum of all "cpu " line fields (total jiffies across all cores).
+func getProcStatTotalJiffies() (uint64, error) {
+	total, _, err := readProcStatCPU()
+	return total, err
+}
+
+// readCgroupCPUUsageV2 reads usage_usec from cgroup v2 cpu.stat (container CPU).
+func readCgroupCPUUsageV2() (usageUsec uint64, ok bool) {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return 0, false
+	}
+	var cgroupPath string
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "0::") {
+			cgroupPath = strings.TrimPrefix(line, "0::")
+			break
+		}
+	}
+	if cgroupPath == "" {
+		return 0, false
+	}
+	cgroupPath = strings.TrimPrefix(cgroupPath, "/")
+	statPath := filepath.Join("/sys/fs/cgroup", cgroupPath, "cpu.stat")
+	statData, err := os.ReadFile(statPath)
+	if err != nil {
+		return 0, false
+	}
+	sc = bufio.NewScanner(bytes.NewReader(statData))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "usage_usec ") {
+			fmt.Sscanf(line, "usage_usec %d", &usageUsec)
+			return usageUsec, true
+		}
+	}
+	return 0, false
+}
+
+// readCgroupCPUUsageV1 reads cpuacct.usage (nanoseconds) from cgroup v1.
+func readCgroupCPUUsageV1() (usageNsec uint64, ok bool) {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return 0, false
+	}
+	var cpuPath string
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.Contains(line, ":cpuacct,") || strings.Contains(line, ":cpu,") {
+			parts := strings.SplitN(line, ":", 3)
+			if len(parts) >= 3 {
+				cpuPath = strings.TrimPrefix(parts[2], "/")
+				break
+			}
+		}
+	}
+	if cpuPath == "" {
+		return 0, false
+	}
+	for _, root := range []string{"/sys/fs/cgroup/cpu,cpuacct", "/sys/fs/cgroup/cpuacct", "/sys/fs/cgroup/cpu"} {
+		usagePath := filepath.Join(root, cpuPath, "cpuacct.usage")
+		b, err := os.ReadFile(usagePath)
+		if err != nil {
+			continue
+		}
+		fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &usageNsec)
+		return usageNsec, true
+	}
+	return 0, false
+}
+
 func readProcMeminfo() (totalKB, availableKB uint64, err error) {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -121,7 +205,7 @@ func readProcDiskstats() (readSectors, writeSectors uint64, err error) {
 		var major, minor, rdCount, rdSectors, wrCount, wrSectors uint64
 		var name string
 		n, _ := fmt.Sscanf(sc.Text(), "%d %d %s %d %*d %d %*d %d %*d %d", &major, &minor, &name, &rdCount, &rdSectors, &wrCount, &wrSectors)
-		if n >= 7 && (strings.HasPrefix(name, "sd") || strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "vd")) {
+		if n >= 7 && (strings.HasPrefix(name, "sd") || strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "vd") || strings.HasPrefix(name, "xvd")) {
 			totalRead += rdSectors
 			totalWrite += wrSectors
 		}
@@ -129,19 +213,67 @@ func readProcDiskstats() (readSectors, writeSectors uint64, err error) {
 	return totalRead, totalWrite, nil
 }
 
-func collectCPU(prev *cpuSample) (pct int, next cpuSample) {
+const jiffiesToUsec = 10000 // USER_HZ=100 => 1 jiffy = 10ms = 10000 usec
+
+func collectCPU(prev *cpuSample, prevCgroup *cgroupCPUSample) (pct int, next cpuSample, nextCgroup cgroupCPUSample) {
+	now := time.Now()
+	systemJiffies, _ := getProcStatTotalJiffies()
+
+	// Prefer cgroup (container) CPU when available — reflects this process/container, not the whole host.
+	if usageUsec, ok := readCgroupCPUUsageV2(); ok {
+		nextCgroup = cgroupCPUSample{usageUsec: usageUsec, systemJiffies: systemJiffies, at: now}
+		if !prevCgroup.at.IsZero() && prevCgroup.systemJiffies > 0 {
+			deltaUsec := int64(usageUsec - prevCgroup.usageUsec)
+			deltaJiffies := int64(systemJiffies - prevCgroup.systemJiffies)
+			if deltaJiffies > 0 && deltaUsec >= 0 {
+				// container usage as % of total system CPU
+				pctVal := (float64(deltaUsec) * 100) / (float64(deltaJiffies) * float64(jiffiesToUsec))
+				if pctVal < 0 {
+					pctVal = 0
+				}
+				if pctVal > 100 {
+					pctVal = 100
+				}
+				pct = int(pctVal + 0.5)
+				return pct, *prev, nextCgroup
+			}
+		}
+		return 0, *prev, nextCgroup
+	}
+	if usageNsec, ok := readCgroupCPUUsageV1(); ok {
+		usageUsec := usageNsec / 1000
+		nextCgroup = cgroupCPUSample{usageUsec: usageUsec, systemJiffies: systemJiffies, at: now}
+		if !prevCgroup.at.IsZero() && prevCgroup.systemJiffies > 0 {
+			deltaUsec := int64(usageUsec - prevCgroup.usageUsec)
+			deltaJiffies := int64(systemJiffies - prevCgroup.systemJiffies)
+			if deltaJiffies > 0 && deltaUsec >= 0 {
+				pctVal := (float64(deltaUsec) * 100) / (float64(deltaJiffies) * float64(jiffiesToUsec))
+				if pctVal < 0 {
+					pctVal = 0
+				}
+				if pctVal > 100 {
+					pctVal = 100
+				}
+				pct = int(pctVal + 0.5)
+				return pct, *prev, nextCgroup
+			}
+		}
+		return 0, *prev, nextCgroup
+	}
+
+	// Fallback: host CPU from /proc/stat
 	total, idle, err := readProcStatCPU()
 	if err != nil {
-		return 0, *prev
+		return 0, *prev, nextCgroup
 	}
-	next = cpuSample{total: total, idle: idle, at: time.Now()}
+	next = cpuSample{total: total, idle: idle, at: now}
 	if prev.at.IsZero() || prev.total == 0 {
-		return 0, next
+		return 0, next, nextCgroup
 	}
 	dt := total - prev.total
 	di := idle - prev.idle
 	if dt == 0 {
-		return 0, next
+		return 0, next, nextCgroup
 	}
 	usage := (float64(dt-di) / float64(dt)) * 100
 	if usage < 0 {
@@ -150,20 +282,22 @@ func collectCPU(prev *cpuSample) (pct int, next cpuSample) {
 	if usage > 100 {
 		usage = 100
 	}
-	return int(usage + 0.5), next
+	return int(usage + 0.5), next, nextCgroup
 }
 
-func collectRAM() int {
+func collectRAM() (pct int, usedGB, totalGB float64) {
 	total, available, err := readProcMeminfo()
 	if err != nil || total == 0 {
-		return 0
+		return 0, 0, 0
 	}
 	used := total - available
-	pct := (float64(used) / float64(total)) * 100
-	if pct > 100 {
-		pct = 100
+	totalGB = float64(total) / (1024 * 1024)
+	usedGB = float64(used) / (1024 * 1024)
+	pctVal := (float64(used) / float64(total)) * 100
+	if pctVal > 100 {
+		pctVal = 100
 	}
-	return int(pct + 0.5)
+	return int(pctVal + 0.5), usedGB, totalGB
 }
 
 func collectDiskIO(prev *diskSample) (ioK int, next diskSample) {
@@ -188,8 +322,24 @@ func collectDiskIO(prev *diskSample) (ioK int, next diskSample) {
 	return int(bytesPerSec / 1024), next
 }
 
+func nvidiaSmiPath() string {
+	if p := os.Getenv("NVIDIA_SMI_PATH"); p != "" {
+		return p
+	}
+	if p, err := exec.LookPath("nvidia-smi"); err == nil {
+		return p
+	}
+	for _, p := range []string{"/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "nvidia-smi"
+}
+
 func collectGPUs() []GPUMetrics {
-	cmd := exec.Command("nvidia-smi", "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
+	path := nvidiaSmiPath()
+	cmd := exec.Command(path, "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -223,7 +373,9 @@ func collectGPUs() []GPUMetrics {
 		if gpuPct > 100 {
 			gpuPct = 100
 		}
-		gpus = append(gpus, GPUMetrics{Name: name, GPUPct: gpuPct, VRAMPct: vramPct})
+		vramUsedGB := memUsed / 1024
+		vramTotalGB := memTotal / 1024
+		gpus = append(gpus, GPUMetrics{Name: name, GPUPct: gpuPct, VRAMPct: vramPct, VRAMUsedGB: vramUsedGB, VRAMTotalGB: vramTotalGB})
 	}
 	return gpus
 }
@@ -247,20 +399,24 @@ func mockMetrics(now time.Time) (SystemMetrics, []GPUMetrics, []HistoryPoint) {
 	if vram > 100 {
 		vram = 100
 	}
-	system := SystemMetrics{CPUPct: cpu, RAMPct: ram, DiskIOK: diskIO}
-	gpus := []GPUMetrics{{Name: "N/A", GPUPct: gpu, VRAMPct: vram}}
+	ramUsedGB := float64(ram) / 100 * 26
+	ramTotalGB := 26.0
+	system := SystemMetrics{CPUPct: cpu, RAMPct: ram, RamUsedGB: ramUsedGB, RamTotalGB: ramTotalGB, DiskIOK: diskIO}
+	vramUsedGB := float64(vram) / 100 * 12
+	vramTotalGB := 12.0
+	gpus := []GPUMetrics{{Name: "N/A", GPUPct: gpu, VRAMPct: vram, VRAMUsedGB: vramUsedGB, VRAMTotalGB: vramTotalGB}}
 	var history []HistoryPoint
 	for i := 59; i >= 0; i-- {
 		t := now.Add(-time.Duration(i) * time.Second)
 		ht := t.Unix()
 		history = append(history, HistoryPoint{
 			TS:     t.Format(time.RFC3339),
-			CPU:    15 + (ht % 45),
-			RAM:    30 + (ht % 40),
-			DiskIO: 1000 + (ht % 3000),
-			GPU:    5 + (ht % 60),
-			VRAM:   20 + (ht % 50),
-			GPUs:   []GPUHistoryPt{{GPUPct: 5 + (ht % 60), VRAMPct: 20 + (ht % 50)}},
+			CPU:    int(15 + (ht % 45)),
+			RAM:    int(30 + (ht % 40)),
+			DiskIO: int(1000 + (ht % 3000)),
+			GPU:    int(5 + (ht % 60)),
+			VRAM:   int(20 + (ht % 50)),
+			GPUs:   []GPUHistoryPt{{GPUPct: int(5 + (ht % 60)), VRAMPct: int(20 + (ht % 50))}},
 		})
 	}
 	return system, gpus, history
@@ -280,15 +436,15 @@ func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []Histor
 	metricsStore.mu.Lock()
 	defer metricsStore.mu.Unlock()
 
-	system.CPUPct, metricsStore.lastCPU = collectCPU(&metricsStore.lastCPU)
-	system.RAMPct = collectRAM()
+	system.CPUPct, metricsStore.lastCPU, metricsStore.lastCgroup = collectCPU(&metricsStore.lastCPU, &metricsStore.lastCgroup)
+	system.RAMPct, system.RamUsedGB, system.RamTotalGB = collectRAM()
 	system.DiskIOK, metricsStore.lastDisk = collectDiskIO(&metricsStore.lastDisk)
 
 	gpus = collectGPUs()
 	if len(gpus) == 0 {
 		gpus = metricsStore.lastGPUs
 		if gpus == nil {
-			gpus = []GPUMetrics{{Name: "N/A", GPUPct: 0, VRAMPct: 0}}
+			gpus = []GPUMetrics{{Name: "N/A", GPUPct: 0, VRAMPct: 0, VRAMUsedGB: 0, VRAMTotalGB: 12}}
 		}
 	} else {
 		metricsStore.lastGPUs = gpus

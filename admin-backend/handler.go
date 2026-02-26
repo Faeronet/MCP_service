@@ -376,16 +376,20 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 	system, gpus, history := CollectMetrics()
 
 	systemMap := map[string]interface{}{
-		"cpu_pct":   system.CPUPct,
-		"ram_pct":   system.RAMPct,
-		"disk_io_k": system.DiskIOK,
+		"cpu_pct":     system.CPUPct,
+		"ram_pct":     system.RAMPct,
+		"ram_used_gb": system.RamUsedGB,
+		"ram_total_gb": system.RamTotalGB,
+		"disk_io_k":   system.DiskIOK,
 	}
 	gpusMap := make([]map[string]interface{}, len(gpus))
 	for i, g := range gpus {
 		gpusMap[i] = map[string]interface{}{
-			"name":     g.Name,
-			"gpu_pct":  g.GPUPct,
-			"vram_pct": g.VRAMPct,
+			"name":          g.Name,
+			"gpu_pct":       g.GPUPct,
+			"vram_pct":      g.VRAMPct,
+			"vram_used_gb":  g.VRAMUsedGB,
+			"vram_total_gb": g.VRAMTotalGB,
 		}
 	}
 	historyMap := make([]map[string]interface{}, len(history))

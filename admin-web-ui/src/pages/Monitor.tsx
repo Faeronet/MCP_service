@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics } from '../api'
 import { SpeedometerGauge } from '../components/SpeedometerGauge'
 
@@ -81,7 +81,16 @@ export function Monitor() {
           <>
             <div className="monitor-gauges">
               <SpeedometerGauge value={data.system.cpu_pct} label="CPU" unit="%" />
-              <SpeedometerGauge value={data.system.ram_pct} label="RAM" unit="%" />
+              <SpeedometerGauge
+                value={data.system.ram_pct}
+                label="RAM"
+                unit="%"
+                valueLabel={
+                  data.system.ram_used_gb != null && data.system.ram_total_gb != null
+                    ? `${data.system.ram_used_gb.toFixed(1)} / ${data.system.ram_total_gb.toFixed(1)} GiB`
+                    : undefined
+                }
+              />
               <SpeedometerGauge value={data.system.disk_io_k} max={8000} label="Disk I/O" unit="k" />
             </div>
             <div className="monitor-chart-panel monitor-chart-panel--normal">
@@ -105,7 +114,17 @@ export function Monitor() {
                 <h3 className="gpu-card-title">{card.name}</h3>
                 <div className="monitor-gauges">
                   <SpeedometerGauge value={card.gpu_pct} label="GPU" unit="%" />
-                  <SpeedometerGauge value={card.vram_pct} label="VRAM" unit="%" fillColor="var(--gauge-fill-vram)" />
+                  <SpeedometerGauge
+                    value={card.vram_pct}
+                    label="VRAM"
+                    unit="%"
+                    fillColor="#eab308"
+                    valueLabel={
+                      card.vram_used_gb != null && card.vram_total_gb != null
+                        ? `${card.vram_used_gb.toFixed(2)} / ${card.vram_total_gb.toFixed(1)} GiB`
+                        : undefined
+                    }
+                  />
                 </div>
                 <div className="monitor-chart-panel monitor-chart-panel--normal">
                   <h3 className="monitor-chart-title">GPU / VRAM</h3>
@@ -188,7 +207,7 @@ function MonitorTimeChart({
   const { areaPaths, linePaths } = useMemo(() => {
     const area: string[] = []
     const line: string[] = []
-    series.forEach((s, k) => {
+    series.forEach((s) => {
       if (!s.values.length) return
       const maxV = s.scale
       let linePath = `M ${xScale(0)} ${yScale(s.values[0], maxV)}`

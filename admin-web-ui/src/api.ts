@@ -90,10 +90,18 @@ export interface GPUMetrics {
   name: string
   gpu_pct: number
   vram_pct: number
+  vram_used_gb?: number
+  vram_total_gb?: number
 }
 
 export interface MonitorMetricsResponse {
-  system: { cpu_pct: number; ram_pct: number; disk_io_k: number }
+  system: {
+    cpu_pct: number
+    ram_pct: number
+    ram_used_gb?: number
+    ram_total_gb?: number
+    disk_io_k: number
+  }
   gpu?: { gpu_pct: number; vram_pct: number }
   gpus: GPUMetrics[]
   history: Array<{
