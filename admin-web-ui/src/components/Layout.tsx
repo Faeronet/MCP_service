@@ -19,11 +19,9 @@ export function Layout() {
 
   return (
     <div className="app-layout">
-      <header className="top-bar">
-        <h1>Admin</h1>
-      </header>
       <div className="middle">
         <aside className="sidebar">
+          <div className="sidebar-title">Admin</div>
           <nav>
             <ul>
               {nav.map(({ to, label, icon: Icon }) => (

@@ -3,7 +3,7 @@
 :root {
   --bar-bg: #181a1b;
   --content-bg: #092a69;
-  --content-border: rgba(6, 182, 212, 0.25);
+  --content-border: rgba(255, 0, 203, 0.33);
   --text: #e4e4e7;
   --text-muted: #a1a1aa;
   --link: #67e8f9;
@@ -35,28 +35,12 @@ a {
 }
 a:hover { color: var(--link-hover); text-decoration: underline; }
 
-/* ----- Layout: fixed top/bottom bars, scrollable content ----- */
+/* ----- Layout: sidebar + main content (без верхнего хедера) ----- */
 .app-layout {
   display: flex;
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-}
-
-.top-bar {
-  height: var(--top-bar-height);
-  background: var(--bar-bg);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--content-border);
-}
-.top-bar h1 {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--link);
 }
 
 .middle {
@@ -74,6 +58,14 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
   border-right: 1px solid var(--content-border);
   display: flex;
   flex-direction: column;
+}
+.sidebar-title {
+  margin: 0;
+  padding: 16px 12px 12px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--link);
+  flex-shrink: 0;
 }
 .sidebar nav { flex: 1; }
 .sidebar ul { list-style: none; margin: 0; padding: 0 12px; }
