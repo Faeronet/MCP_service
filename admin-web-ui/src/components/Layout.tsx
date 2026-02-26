@@ -1,4 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
+import { FileText, Briefcase, ScrollText, BarChart3, LogOut } from 'lucide-react'
 
 export function Layout() {
   const navigate = useNavigate()
@@ -10,10 +11,10 @@ export function Layout() {
   }
 
   const nav = [
-    { to: '/docs', label: 'Docs' },
-    { to: '/jobs', label: 'Jobs' },
-    { to: '/logs', label: 'Logs' },
-    { to: '/grafana', label: 'Grafana' },
+    { to: '/docs', label: 'Docs', icon: FileText },
+    { to: '/jobs', label: 'Jobs', icon: Briefcase },
+    { to: '/logs', label: 'Logs', icon: ScrollText },
+    { to: '/grafana', label: 'Grafana', icon: BarChart3 },
   ]
 
   return (
@@ -25,9 +26,10 @@ export function Layout() {
         <aside className="sidebar">
           <nav>
             <ul>
-              {nav.map(({ to, label }) => (
+              {nav.map(({ to, label, icon: Icon }) => (
                 <li key={to}>
                   <Link to={to} className={location.pathname === to ? 'active' : ''}>
+                    <Icon className="sidebar-nav-icon" aria-hidden />
                     {label}
                   </Link>
                 </li>
@@ -36,6 +38,7 @@ export function Layout() {
           </nav>
           <div className="logout-wrap">
             <button type="button" className="btn-logout" onClick={logout}>
+              <LogOut className="sidebar-nav-icon" aria-hidden />
               Logout
             </button>
           </div>
@@ -44,7 +47,6 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
-      <footer className="bottom-bar" aria-hidden="true" />
     </div>
   )
 }

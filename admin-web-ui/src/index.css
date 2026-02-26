@@ -1,8 +1,8 @@
 * { box-sizing: border-box; }
 
 :root {
-  --bar-bg: #04024f;
-  --content-bg: #02465e;
+  --bar-bg: #181a1b;
+  --content-bg: #092a69;
   --content-border: rgba(6, 182, 212, 0.25);
   --text: #e4e4e7;
   --text-muted: #a1a1aa;
@@ -21,8 +21,8 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, sans-serif;
-  background: #020818;
+  font-family: #181a26; sans-serif;
+  background: #181a26;
   color: var(--text);
   min-height: 100vh;
 }
@@ -79,22 +79,34 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
 .sidebar ul { list-style: none; margin: 0; padding: 0 12px; }
 .sidebar li { margin-bottom: 4px; }
 .sidebar a, .sidebar .nav-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border-radius: 8px;
   color: var(--text-muted);
   transition: background 0.2s, color 0.2s;
+  text-decoration: none;
+}
+.sidebar .sidebar-nav-icon {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
 }
 .sidebar a:hover, .sidebar .nav-link:hover {
   background: rgba(255,255,255,0.06);
   color: var(--text);
 }
 .sidebar a.active, .sidebar .nav-link.active {
-  background: rgba(6, 182, 212, 0.15);
+  background: rgba(6, 30, 109, 0.459);
   color: var(--link);
 }
 .sidebar .logout-wrap { padding: 12px; border-top: 1px solid var(--content-border); }
 .sidebar .btn-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
   padding: 10px 12px;
   border-radius: 8px;
@@ -107,12 +119,47 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
 }
 .sidebar .btn-logout:hover { background: rgba(248, 113, 113, 0.2); }
 
+/* Правая колонка: одна зона для Outlet (страница сама даёт page-header + content-panel) */
+.main-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: #181a26;
+}
+
+/* Блок с названием страницы и поиском — не листается, цвет как у верхней плашки */
+.page-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-header {
+  flex-shrink: 0;
+  margin: 10px 12px 0 12px;
+  padding: 20px 24px;
+  background: #181a1b;
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+}
+.page-header .page-title { margin: 0 0 16px 0; font-size: 1.5rem; color: var(--text); }
+.page-header .input-line { margin-bottom: 12px; }
+.page-header .input-line:last-of-type { margin-bottom: 0; }
+.page-header .text-muted { margin: 8px 0 0 0; }
+
+/* Только эта панель листается */
 .content-panel {
   flex: 1;
-  background: var(--content-bg);
+  min-height: 0;
+  margin: 0 12px 12px 12px;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 24px;
+  border-radius: 12px;
 }
 
 .bottom-bar {
@@ -131,25 +178,36 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
   padding: 20px;
   margin-bottom: 20px;
 }
-.table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--content-border); }
+/* Таблица логов — цвет как у хедера (#04024f) */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--content-border);
+  background: #181a284d;
+}
 table.data-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0 10px;
   font-size: 0.875rem;
+  background: transparent;
 }
 table.data-table th {
   text-align: left;
   padding: 12px 16px;
-  background: rgba(6, 182, 212, 0.1);
+  background: #181a1b;
   color: var(--link);
   font-weight: 600;
   border-bottom: 1px solid var(--content-border);
 }
 table.data-table td {
   padding: 10px 16px;
-  border-bottom: 1px solid rgba(6, 182, 212, 0.1);
+  border-bottom: none;
+  background: #181a1b;
 }
-table.data-table tbody tr:hover { background: rgba(6, 182, 212, 0.05); }
+table.data-table tbody td:first-child { border-radius: 15px 0 0 15px; }
+table.data-table tbody td:last-child { border-radius: 0 15px 15px 0; }
+table.data-table tbody tr:hover td { background: #12879c44; }
 table.data-table code, .mono { font-family: ui-monospace, monospace; font-size: 0.8125rem; }
 
 .input-line {
