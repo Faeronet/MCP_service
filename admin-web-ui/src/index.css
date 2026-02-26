@@ -499,3 +499,35 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   fill: var(--text-muted);
   font-size: 0.75rem;
 }
+.monitor-axis-y-label {
+  fill: var(--text-muted);
+  font-size: 0.7rem;
+}
+.monitor-chart-panel--normal {
+  background: #1e2226;
+  margin-bottom: 20px;
+}
+.monitor-chart-wrap--normal .monitor-chart-legend {
+  position: static;
+  margin-bottom: 8px;
+}
+.monitor-grid-line--normal {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+}
+.monitor-chart-svg--normal .monitor-area {
+  opacity: 0.6;
+}
+.gpu-card-frame {
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  background: var(--card-bg);
+}
+.gpu-card-title {
+  margin: 0 0 16px 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}

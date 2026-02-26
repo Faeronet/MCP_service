@@ -367,57 +367,52 @@ func (h *Handler) LogsRaw(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
-// MonitorMetrics returns current and recent metrics from AI model containers (mock; plug real docker/cgroups later).
+// MonitorMetrics returns current and recent metrics (real from /proc and nvidia-smi on Linux, mock otherwise).
 func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	now := time.Now()
-	// Mock: plausible values. Replace with real container stats (docker stats / cgroups / nvidia-smi).
-	cpu := 20 + int(now.Unix()%40)
-	ram := 35 + int(now.Unix()%30)
-	diskIO := 1500 + int(now.Unix()%2000)
-	gpu := 10 + int(now.Unix()%50)
-	vram := 25 + int(now.Unix()%35)
-	if cpu > 100 {
-		cpu = 100
+	system, gpus, history := CollectMetrics()
+
+	systemMap := map[string]interface{}{
+		"cpu_pct":   system.CPUPct,
+		"ram_pct":   system.RAMPct,
+		"disk_io_k": system.DiskIOK,
 	}
-	if ram > 100 {
-		ram = 100
+	gpusMap := make([]map[string]interface{}, len(gpus))
+	for i, g := range gpus {
+		gpusMap[i] = map[string]interface{}{
+			"name":     g.Name,
+			"gpu_pct":  g.GPUPct,
+			"vram_pct": g.VRAMPct,
+		}
 	}
-	if gpu > 100 {
-		gpu = 100
+	historyMap := make([]map[string]interface{}, len(history))
+	for i, hp := range history {
+		historyMap[i] = map[string]interface{}{
+			"ts":      hp.TS,
+			"cpu":     hp.CPU,
+			"ram":     hp.RAM,
+			"disk_io": hp.DiskIO,
+			"gpu":     hp.GPU,
+			"vram":    hp.VRAM,
+		}
+		if len(hp.GPUs) > 0 {
+			gpuHist := make([]map[string]interface{}, len(hp.GPUs))
+			for j, gh := range hp.GPUs {
+				gpuHist[j] = map[string]interface{}{"gpu_pct": gh.GPUPct, "vram_pct": gh.VRAMPct}
+			}
+			historyMap[i]["gpus"] = gpuHist
+		}
 	}
-	if vram > 100 {
-		vram = 100
-	}
-	var history []map[string]interface{}
-	for i := 59; i >= 0; i-- {
-		t := now.Add(-time.Duration(i) * time.Second)
-		ht := t.Unix()
-		history = append(history, map[string]interface{}{
-			"ts":      t.Format(time.RFC3339),
-			"cpu":     15 + (ht % 45),
-			"ram":     30 + (ht % 40),
-			"disk_io": 1000 + (ht % 3000),
-			"gpu":     5 + (ht % 60),
-			"vram":    20 + (ht % 50),
-		})
+
+	payload := map[string]interface{}{"system": systemMap, "gpus": gpusMap, "history": historyMap}
+	if len(gpus) > 0 {
+		payload["gpu"] = map[string]interface{}{"gpu_pct": gpus[0].GPUPct, "vram_pct": gpus[0].VRAMPct}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"system": map[string]interface{}{
-			"cpu_pct":    cpu,
-			"ram_pct":    ram,
-			"disk_io_k":  diskIO,
-		},
-		"gpu": map[string]interface{}{
-			"gpu_pct":  gpu,
-			"vram_pct": vram,
-		},
-		"history": history,
-	})
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 const grafanaProxyPrefix = "/api/grafana"

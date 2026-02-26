@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
-import { getMonitorMetrics, type MonitorMetricsResponse } from '../api'
+import React, { useState, useEffect, useMemo } from 'react'
+import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics } from '../api'
 import { SpeedometerGauge } from '../components/SpeedometerGauge'
 
 type MonitorType = 'system' | 'gpu'
@@ -33,6 +33,12 @@ export function Monitor() {
   }, [])
 
   const chartData = useMemo(() => (data?.history ?? []).slice(-MAX_HISTORY), [data?.history])
+  const gpus = useMemo((): GPUMetrics[] => {
+    if (!data) return []
+    if (data.gpus?.length) return data.gpus
+    if (data.gpu) return [{ name: 'GPU', gpu_pct: data.gpu.gpu_pct, vram_pct: data.gpu.vram_pct }]
+    return []
+  }, [data])
 
   if (loading && !data) {
     return (
@@ -55,14 +61,14 @@ export function Monitor() {
         <div className="monitor-type-toggle">
           <button
             type="button"
-            className={mode === 'system' ? 'active' : ''}
+            className={mode === 'system' ? 'btn-primary' : 'btn-monitor-inactive'}
             onClick={() => setMode('system')}
           >
             CPU, RAM, Disk I/O
           </button>
           <button
             type="button"
-            className={mode === 'gpu' ? 'active' : ''}
+            className={mode === 'gpu' ? 'btn-primary' : 'btn-monitor-inactive'}
             onClick={() => setMode('gpu')}
           >
             GPU, VRAM
@@ -78,26 +84,35 @@ export function Monitor() {
               <SpeedometerGauge value={data.system.ram_pct} label="RAM" unit="%" />
               <SpeedometerGauge value={data.system.disk_io_k} max={8000} label="Disk I/O" unit="k" />
             </div>
-            <div className="monitor-chart-panel">
-              <h3 className="monitor-chart-title">System</h3>
-              <MonitorTimeChart data={chartData} type="system" />
+            <div className="monitor-chart-panel monitor-chart-panel--normal">
+              <h3 className="monitor-chart-title">CPU</h3>
+              <MonitorTimeChart data={chartData} type="cpu" />
+            </div>
+            <div className="monitor-chart-panel monitor-chart-panel--normal">
+              <h3 className="monitor-chart-title">RAM</h3>
+              <MonitorTimeChart data={chartData} type="ram" />
+            </div>
+            <div className="monitor-chart-panel monitor-chart-panel--normal">
+              <h3 className="monitor-chart-title">Disk I/O</h3>
+              <MonitorTimeChart data={chartData} type="disk_io" />
             </div>
           </>
         )}
-        {mode === 'gpu' && data && (
+        {mode === 'gpu' && data && gpus.length > 0 && (
           <>
-            <div className="monitor-gauges monitor-gauges-single">
-              <DualBandGauge
-                innerValue={data.gpu.gpu_pct}
-                outerValue={data.gpu.vram_pct}
-                innerLabel="GPU"
-                outerLabel="VRAM"
-              />
-            </div>
-            <div className="monitor-chart-panel">
-              <h3 className="monitor-chart-title">GPU / VRAM</h3>
-              <MonitorTimeChart data={chartData} type="gpu" />
-            </div>
+            {gpus.map((card, idx) => (
+              <div key={idx} className="gpu-card-frame">
+                <h3 className="gpu-card-title">{card.name}</h3>
+                <div className="monitor-gauges">
+                  <SpeedometerGauge value={card.gpu_pct} label="GPU" unit="%" />
+                  <SpeedometerGauge value={card.vram_pct} label="VRAM" unit="%" fillColor="var(--gauge-fill-vram)" />
+                </div>
+                <div className="monitor-chart-panel monitor-chart-panel--normal">
+                  <h3 className="monitor-chart-title">GPU / VRAM</h3>
+                  <MonitorTimeChart data={chartData} type="gpu" gpuIndex={idx} />
+                </div>
+              </div>
+            ))}
           </>
         )}
       </div>
@@ -105,115 +120,149 @@ export function Monitor() {
   )
 }
 
-const CHART_COLORS = { cpu: '#22c55e', ram: '#3b82f6', disk_io: '#3b82f6', gpu: '#06b6d4', vram: '#eab308' }
+const CHART_COLORS = { cpu: '#22c55e', ram: '#3b82f6', disk_io: '#6366f1', gpu: '#06b6d4', vram: '#eab308' }
 
 function MonitorTimeChart({
   data,
   type,
+  gpuIndex = 0,
 }: {
   data: MonitorMetricsResponse['history']
-  type: 'system' | 'gpu'
+  type: 'cpu' | 'ram' | 'disk_io' | 'gpu'
+  gpuIndex?: number
 }) {
   const width = 800
   const height = 220
-  const padding = { top: 20, right: 50, bottom: 32, left: 44 }
+  const padding = { top: 20, right: 44, bottom: 32, left: 48 }
   const innerW = width - padding.left - padding.right
   const innerH = height - padding.top - padding.bottom
 
-  const series = useMemo(() => {
-    if (type === 'system') {
-      const cpu = data.map(d => d.cpu)
-      const ram = data.map(d => d.ram)
-      const disk = data.map(d => d.disk_io)
-      const maxVal = Math.max(100, ...cpu, ...ram, Math.max(...disk) / 1000)
+  const { series, yTicks, yAxisLabel } = useMemo(() => {
+    if (type === 'cpu') {
+      const values = data.map(d => d.cpu)
+      const maxVal = Math.max(100, ...values)
       return {
-        cpu: { values: cpu, color: CHART_COLORS.cpu, scale: maxVal },
-        ram: { values: ram, color: CHART_COLORS.ram, scale: maxVal },
-        disk_io: { values: disk.map(d => d / 1000), color: CHART_COLORS.disk_io, scale: Math.max(maxVal, 8) },
+        series: [{ values, color: CHART_COLORS.cpu, scale: maxVal }],
+        yTicks: [0, 25, 50, 75, 100],
+        yAxisLabel: '%',
       }
     }
-    const gpu = data.map(d => d.gpu)
-    const vram = data.map(d => d.vram)
+    if (type === 'ram') {
+      const values = data.map(d => d.ram)
+      const maxVal = Math.max(100, ...values)
+      return {
+        series: [{ values, color: CHART_COLORS.ram, scale: maxVal }],
+        yTicks: [0, 25, 50, 75, 100],
+        yAxisLabel: '%',
+      }
+    }
+    if (type === 'disk_io') {
+      const values = data.map(d => d.disk_io)
+      const maxVal = Math.max(1, ...values)
+      const step = maxVal <= 4 ? 1 : Math.ceil(maxVal / 4)
+      const ticks = [0, step, step * 2, step * 3, Math.ceil(maxVal)]
+      return {
+        series: [{ values, color: CHART_COLORS.disk_io, scale: maxVal }],
+        yTicks: ticks,
+        yAxisLabel: 'k',
+      }
+    }
+    const gpu = data.map(d => (d.gpus?.[gpuIndex] ? d.gpus[gpuIndex].gpu_pct : d.gpu))
+    const vram = data.map(d => (d.gpus?.[gpuIndex] ? d.gpus[gpuIndex].vram_pct : d.vram))
     const maxVal = Math.max(100, ...gpu, ...vram)
     return {
-      gpu: { values: gpu, color: CHART_COLORS.gpu, scale: maxVal },
-      vram: { values: vram, color: CHART_COLORS.vram, scale: maxVal },
+      series: [
+        { values: gpu, color: CHART_COLORS.gpu, scale: maxVal },
+        { values: vram, color: CHART_COLORS.vram, scale: maxVal },
+      ],
+      yTicks: [0, 25, 50, 75, 100],
+      yAxisLabel: '%',
     }
-  }, [data, type])
+  }, [data, type, gpuIndex])
 
-  const keys = type === 'system' ? (['cpu', 'ram', 'disk_io'] as const) : (['gpu', 'vram'] as const)
   const n = data.length
   const xScale = (i: number) => (n <= 1 ? padding.left : padding.left + (i / Math.max(1, n - 1)) * innerW)
   const yScale = (val: number, maxV: number) =>
     padding.top + innerH - (maxV ? (val / maxV) * innerH : 0)
 
-  const paths = useMemo(() => {
-    const out: Record<string, string> = {}
-    keys.forEach(key => {
-      const s = series[key as keyof typeof series]
-      if (!s || !s.values.length) return
+  const { areaPaths, linePaths } = useMemo(() => {
+    const area: string[] = []
+    const line: string[] = []
+    series.forEach((s, k) => {
+      if (!s.values.length) return
       const maxV = s.scale
-      let path = `M ${xScale(0)} ${yScale(s.values[0], maxV)}`
+      let linePath = `M ${xScale(0)} ${yScale(s.values[0], maxV)}`
       for (let i = 1; i < s.values.length; i++) {
-        path += ` L ${xScale(i)} ${yScale(s.values[i], maxV)}`
+        linePath += ` L ${xScale(i)} ${yScale(s.values[i], maxV)}`
       }
-      path += ` L ${xScale(s.values.length - 1)} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`
-      out[key] = path
+      line.push(linePath)
+      area.push(linePath + ` L ${xScale(s.values.length - 1)} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`)
     })
-    return out
-  }, [series, keys, width, height])
+    return { areaPaths: area, linePaths: line }
+  }, [series])
 
-  const labels = type === 'system'
-    ? { cpu: 'CPU', ram: 'RAM', disk_io: 'Disk I/O (k)' }
-    : { gpu: 'GPU', vram: 'VRAM' }
   const lastTs = data.length ? data[data.length - 1]?.ts : ''
   const timeLabel = lastTs ? new Date(lastTs).toLocaleString() : ''
+  const keys = type === 'gpu' ? ['GPU', 'VRAM'] : [type === 'cpu' ? 'CPU' : type === 'ram' ? 'RAM' : 'Disk I/O']
 
   return (
-    <div className="monitor-chart-wrap">
+    <div className="monitor-chart-wrap monitor-chart-wrap--normal">
       <div className="monitor-chart-legend">
-        {keys.map(k => (
+        {series.map((s, k) => (
           <span key={k} className="monitor-legend-item">
-            <span className="monitor-legend-dot" style={{ background: series[k]?.color }} />
-            {labels[k]}
+            <span className="monitor-legend-dot" style={{ background: s.color }} />
+            {keys[k]}
           </span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="monitor-chart-svg">
+      <svg viewBox={`0 0 ${width} ${height}`} className="monitor-chart-svg monitor-chart-svg--normal">
         <defs>
-          {keys.map(k => (
-            <linearGradient key={k} id={`grad-${k}`} x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stopColor={series[k]?.color} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={series[k]?.color} stopOpacity={0.05} />
+          {series.map((s, k) => (
+            <linearGradient key={k} id={`grad-${type}-${gpuIndex}-${k}`} x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor={s.color} stopOpacity={0.25} />
+              <stop offset="100%" stopColor={s.color} stopOpacity={0.02} />
             </linearGradient>
           ))}
         </defs>
-        {/* grid */}
-        {[1, 2, 3, 4, 5].map(i => (
+        {/* Y-axis labels */}
+        {yTicks.map((tick, i) => (
+          <text
+            key={i}
+            x={padding.left - 6}
+            y={padding.top + innerH - (tick / (yTicks[yTicks.length - 1] || 1)) * innerH}
+            textAnchor="end"
+            dominantBaseline="middle"
+            className="monitor-axis-y-label"
+          >
+            {tick}{yAxisLabel}
+          </text>
+        ))}
+        {/* Grid lines */}
+        {yTicks.slice(1, -1).map((_, i) => (
           <line
             key={i}
             x1={padding.left}
-            y1={padding.top + (innerH * i) / 5}
+            y1={padding.top + (innerH * (i + 1)) / yTicks.length}
             x2={width - padding.right}
-            y2={padding.top + (innerH * i) / 5}
-            className="monitor-grid-line"
+            y2={padding.top + (innerH * (i + 1)) / yTicks.length}
+            className="monitor-grid-line monitor-grid-line--normal"
           />
         ))}
-        {[1, 2, 3, 4].map(i => (
+        {[1, 2, 3].map(i => (
           <line
             key={i}
             x1={padding.left + (innerW * i) / 4}
             y1={padding.top}
             x2={padding.left + (innerW * i) / 4}
             y2={height - padding.bottom}
-            className="monitor-grid-line"
+            className="monitor-grid-line monitor-grid-line--normal"
           />
         ))}
-        {keys.map(k => (
-          <path key={`area-${k}`} d={areaPaths[k]} fill={`url(#grad-${k})`} className="monitor-area" />
+        {areaPaths.map((d, k) => (
+          <path key={`area-${k}`} d={d} fill={`url(#grad-${type}-${gpuIndex}-${k})`} className="monitor-area" />
         ))}
-        {keys.map(k => (
-          <path key={`line-${k}`} d={linePaths[k]} fill="none" stroke={series[k]?.color} strokeWidth={2} className="monitor-line" />
+        {linePaths.map((d, k) => (
+          <path key={`line-${k}`} d={d} fill="none" stroke={series[k].color} strokeWidth={2} className="monitor-line" />
         ))}
         <text x={width / 2} y={height - 6} textAnchor="middle" className="monitor-axis-label">
           {timeLabel}

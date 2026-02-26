@@ -86,9 +86,16 @@ export function grafanaUrl(): string {
   return token ? `${base}?token=${encodeURIComponent(token)}` : base
 }
 
+export interface GPUMetrics {
+  name: string
+  gpu_pct: number
+  vram_pct: number
+}
+
 export interface MonitorMetricsResponse {
   system: { cpu_pct: number; ram_pct: number; disk_io_k: number }
-  gpu: { gpu_pct: number; vram_pct: number }
+  gpu?: { gpu_pct: number; vram_pct: number }
+  gpus: GPUMetrics[]
   history: Array<{
     ts: string
     cpu: number
@@ -96,6 +103,7 @@ export interface MonitorMetricsResponse {
     disk_io: number
     gpu: number
     vram: number
+    gpus?: Array<{ gpu_pct: number; vram_pct: number }>
   }>
 }
 
