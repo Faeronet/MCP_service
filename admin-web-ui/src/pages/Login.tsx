@@ -36,7 +36,6 @@ export function Login({ onLogin }: LoginProps) {
 
   return (
     <div className="login-page">
-      <div className="login-top-bar" aria-hidden="true" />
       <div className="login-center">
         <div className="login-card">
           <h1>Admin Login</h1>
@@ -66,7 +65,6 @@ export function Login({ onLogin }: LoginProps) {
           </form>
         </div>
       </div>
-      <div className="login-bottom-bar" aria-hidden="true" />
     </div>
   )
 }

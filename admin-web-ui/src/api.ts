@@ -85,3 +85,25 @@ export function grafanaUrl(): string {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''
   return token ? `${base}?token=${encodeURIComponent(token)}` : base
 }
+
+export interface MonitorMetricsResponse {
+  system: { cpu_pct: number; ram_pct: number; disk_io_k: number }
+  gpu: { gpu_pct: number; vram_pct: number }
+  history: Array<{
+    ts: string
+    cpu: number
+    ram: number
+    disk_io: number
+    gpu: number
+    vram: number
+  }>
+}
+
+export async function getMonitorMetrics(): Promise<MonitorMetricsResponse> {
+  const r = await fetch(`${API_URL}/api/monitor/metrics`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load monitor metrics')
+  return r.json()
+}

@@ -2,8 +2,8 @@
 
 :root {
   --bar-bg: #181a1b;
-  --content-bg: #092a69;
-  --content-border: rgba(255, 0, 203, 0.33);
+  --content-bg: #181a1b;
+  --content-border: rgba(6, 182, 212, .3);
   --text: #e4e4e7;
   --text-muted: #a1a1aa;
   --link: #67e8f9;
@@ -14,6 +14,9 @@
   --level-info: #67e8f9;
   --level-warning: #fbbf24;
   --level-error: #f87171;
+  --gauge-bg: rgba(255, 255, 255, 0.12);
+  --gauge-fill: #06b6d4;
+  --gauge-fill-outer: #3b82f6;
   --sidebar-width: 200px;
   --top-bar-height: 56px;
   --bottom-bar-height: 40px;
@@ -170,12 +173,27 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
   padding: 20px;
   margin-bottom: 20px;
 }
-/* Таблица логов — цвет как у хедера (#04024f) */
+/* Таблица логов: высота 850px, плашка не скроллится — скролл только у table-body-wrap */
 .table-wrap {
-  overflow-x: auto;
+  display: flex;
+  flex-direction: column;
+  height: 850px;
+  min-height: 850px;
   border-radius: 8px;
   border: 1px solid var(--content-border);
-  background: #181a284d;
+  background: #23282b59;
+  overflow: hidden;
+}
+.table-header-wrap {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--content-border);
+  background: #181a1b;
+}
+.table-body-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #23282b59;
 }
 table.data-table {
   width: 100%;
@@ -183,24 +201,91 @@ table.data-table {
   border-spacing: 0 10px;
   font-size: 0.875rem;
   background: transparent;
+  table-layout: fixed;
+}
+table.data-table-header {
+  border-spacing: 0;
 }
 table.data-table th {
   text-align: left;
   padding: 12px 16px;
-  background: #181a1b;
   color: var(--link);
   font-weight: 600;
-  border-bottom: 1px solid var(--content-border);
+  border-bottom: none;
+  background: #181a1b;
+}
+table.data-table-body tbody td {
+  background: #181a1b;
+}
+table.data-table th .th-sort-btn {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  margin: -6px -10px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.2s, color 0.2s;
+  text-decoration: none;
+}
+table.data-table th .th-sort-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
 }
 table.data-table td {
   padding: 10px 16px;
   border-bottom: none;
   background: #181a1b;
 }
+table.data-table-body tbody td,
+table.data-table tbody td {
+  border: 1px solid var(--content-border);
+}
+table.data-table tbody td + td {
+  border-left: none;
+}
+table.data-table tbody td:not(:last-child) {
+  border-right: none;
+}
 table.data-table tbody td:first-child { border-radius: 15px 0 0 15px; }
 table.data-table tbody td:last-child { border-radius: 0 15px 15px 0; }
 table.data-table tbody tr:hover td { background: #12879c44; }
-table.data-table code, .mono { font-family: ui-monospace, monospace; font-size: 0.8125rem; }
+table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospace, monospace; font-size: 0.8125rem; }
+
+/* Пустое состояние — внутри table-body-wrap, по центру */
+.table-body-wrap .table-empty {
+  height: 100%;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #23282b59;
+}
+.table-empty-msg {
+  margin: 0 0 12px 0;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.table-empty-hint {
+  margin: 0;
+  text-align: center;
+  max-width: 520px;
+}
+.table-empty-hint code {
+  background: var(--card-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+}
 
 .input-line {
   display: flex;
@@ -250,7 +335,7 @@ table.data-table code, .mono { font-family: ui-monospace, monospace; font-size: 
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #030130;
+  background: #181a26
 }
 .login-top-bar, .login-bottom-bar {
   height: var(--top-bar-height);

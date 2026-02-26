@@ -367,6 +367,59 @@ func (h *Handler) LogsRaw(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+// MonitorMetrics returns current and recent metrics from AI model containers (mock; plug real docker/cgroups later).
+func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	now := time.Now()
+	// Mock: plausible values. Replace with real container stats (docker stats / cgroups / nvidia-smi).
+	cpu := 20 + int(now.Unix()%40)
+	ram := 35 + int(now.Unix()%30)
+	diskIO := 1500 + int(now.Unix()%2000)
+	gpu := 10 + int(now.Unix()%50)
+	vram := 25 + int(now.Unix()%35)
+	if cpu > 100 {
+		cpu = 100
+	}
+	if ram > 100 {
+		ram = 100
+	}
+	if gpu > 100 {
+		gpu = 100
+	}
+	if vram > 100 {
+		vram = 100
+	}
+	var history []map[string]interface{}
+	for i := 59; i >= 0; i-- {
+		t := now.Add(-time.Duration(i) * time.Second)
+		ht := t.Unix()
+		history = append(history, map[string]interface{}{
+			"ts":      t.Format(time.RFC3339),
+			"cpu":     15 + (ht % 45),
+			"ram":     30 + (ht % 40),
+			"disk_io": 1000 + (ht % 3000),
+			"gpu":     5 + (ht % 60),
+			"vram":    20 + (ht % 50),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"system": map[string]interface{}{
+			"cpu_pct":    cpu,
+			"ram_pct":    ram,
+			"disk_io_k":  diskIO,
+		},
+		"gpu": map[string]interface{}{
+			"gpu_pct":  gpu,
+			"vram_pct": vram,
+		},
+		"history": history,
+	})
+}
+
 const grafanaProxyPrefix = "/api/grafana"
 
 func (h *Handler) GrafanaProxy() http.Handler {
