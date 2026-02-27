@@ -36,7 +36,11 @@ func main() {
 	if interval < time.Second {
 		interval = 30 * time.Second
 	}
-	log.Info(ctx, "log-indexer started", logging.KV{"loki", lokiURL}, logging.KV{"interval_sec", int(interval.Seconds())})
+	retentionPerService := config.LoadInt("LOGS_RETENTION_PER_SERVICE", 50)
+	if retentionPerService < 1 {
+		retentionPerService = 50
+	}
+	log.Info(ctx, "log-indexer started", logging.KV{"loki", lokiURL}, logging.KV{"interval_sec", int(interval.Seconds())}, logging.KV{"retention_per_service", retentionPerService})
 
 	// Ensure schema and table (на случай если migrate не создал obs)
 	_, _ = pool.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS obs;`)
@@ -59,12 +63,14 @@ func main() {
 	if err := indexLoki(ctx, pool, lokiURL); err != nil {
 		log.Warn(ctx, "index run (startup)", logging.KV{"error", err.Error()})
 	}
+	trimLogsPerService(ctx, pool, retentionPerService)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
 		if err := indexLoki(ctx, pool, lokiURL); err != nil {
 			log.Warn(ctx, "index run", logging.KV{"error", err.Error()})
 		}
+		trimLogsPerService(ctx, pool, retentionPerService)
 	}
 }
 
@@ -162,6 +168,27 @@ func indexLoki(ctx context.Context, pool *pgxpool.Pool, baseURL string) error {
 	// Логируем каждый прогон: при 0 видно, что Loki пустой; при >0 — что данные пошли в Postgres
 	log.Info(ctx, "index run", logging.KV{"streams", nStreams}, logging.KV{"inserted", nInserted})
 	return nil
+}
+
+// trimLogsPerService оставляет в obs.logs_index не более keepPerService записей на каждый service (по ts DESC), остальные удаляет.
+func trimLogsPerService(ctx context.Context, pool *pgxpool.Pool, keepPerService int) {
+	cmd := `
+	DELETE FROM obs.logs_index a
+	WHERE a.id IN (
+		SELECT r.id FROM (
+			SELECT id, ROW_NUMBER() OVER (PARTITION BY COALESCE(service, '') ORDER BY ts DESC) AS rn
+			FROM obs.logs_index
+		) r
+		WHERE r.rn > $1
+	)`
+	ct, err := pool.Exec(ctx, cmd, keepPerService)
+	if err != nil {
+		log.Warn(ctx, "trim logs", logging.KV{"error", err.Error()})
+		return
+	}
+	if ct.RowsAffected() > 0 {
+		log.Info(ctx, "trim logs", logging.KV{"deleted", ct.RowsAffected()})
+	}
 }
 
 var (

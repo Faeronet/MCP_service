@@ -245,11 +245,24 @@ func readCgroupMemoryV1() (usedBytes, limitBytes uint64, ok bool) {
 }
 
 func readProcMeminfo() (totalKB, availableKB uint64, err error) {
-	data, err := os.ReadFile("/proc/meminfo")
+	total, _, free, buf, cached, err := readProcMeminfoFull()
 	if err != nil {
 		return 0, 0, err
 	}
-	var total, available uint64
+	// MemAvailable is more accurate for "available"; fallback: total - used
+	availableKB = free + buf + cached
+	if availableKB > total {
+		availableKB = total
+	}
+	return total, availableKB, nil
+}
+
+// readProcMeminfoFull returns MemTotal, MemAvailable, MemFree, Buffers, Cached (all KB).
+func readProcMeminfoFull() (total, available, free, buffers, cached uint64, err error) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	for sc.Scan() {
 		line := sc.Text()
@@ -257,12 +270,18 @@ func readProcMeminfo() (totalKB, availableKB uint64, err error) {
 			fmt.Sscanf(line, "MemTotal:%d", &total)
 		} else if strings.HasPrefix(line, "MemAvailable:") {
 			fmt.Sscanf(line, "MemAvailable:%d", &available)
+		} else if strings.HasPrefix(line, "MemFree:") {
+			fmt.Sscanf(line, "MemFree:%d", &free)
+		} else if strings.HasPrefix(line, "Buffers:") {
+			fmt.Sscanf(line, "Buffers:%d", &buffers)
+		} else if strings.HasPrefix(line, "Cached:") {
+			fmt.Sscanf(line, "Cached:%d", &cached)
 		}
 	}
 	if total == 0 {
-		return 0, 0, fmt.Errorf("MemTotal not found")
+		return 0, 0, 0, 0, 0, fmt.Errorf("MemTotal not found")
 	}
-	return total, available, nil
+	return total, available, free, buffers, cached, nil
 }
 
 func readProcDiskstats() (readSectors, writeSectors uint64, err error) {
@@ -403,15 +422,18 @@ func collectRAM() (pct int, usedGB, totalGB float64) {
 		}
 		return pct, usedGB, totalGB
 	}
-	// Fallback: host memory from /proc/meminfo
-	total, available, err := readProcMeminfo()
+	// Fallback: host memory — used = MemTotal - MemFree - Buffers - Cached (как в htop/btm)
+	total, _, free, buffers, cached, err := readProcMeminfoFull()
 	if err != nil || total == 0 {
 		return 0, 0, 0
 	}
-	used := total - available
+	usedKB := total - free - buffers - cached
+	if free+buffers+cached > total {
+		usedKB = 0
+	}
 	totalGB = float64(total) / (1024 * 1024)
-	usedGB = float64(used) / (1024 * 1024)
-	pctVal := (float64(used) / float64(total)) * 100
+	usedGB = float64(usedKB) / (1024 * 1024)
+	pctVal := (float64(usedKB) / float64(total)) * 100
 	if pctVal > 100 {
 		pctVal = 100
 	}
@@ -455,32 +477,61 @@ func nvidiaSmiPath() string {
 	return "nvidia-smi"
 }
 
+// parseGPUCSVLine разбирает строку nvidia-smi csv: имя (может быть в кавычках и с запятыми), затем 3 числа.
+func parseGPUCSVLine(line string) (name string, gpuPct int, memUsed, memTotal float64, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", 0, 0, 0, false
+	}
+	var rest string
+	if strings.HasPrefix(line, "\"") {
+		end := strings.Index(line[1:], "\"")
+		if end < 0 {
+			return "", 0, 0, 0, false
+		}
+		name = strings.TrimSpace(line[1 : 1+end])
+		rest = strings.TrimSpace(line[1+end+1:])
+		if strings.HasPrefix(rest, ",") {
+			rest = strings.TrimSpace(rest[1:])
+		}
+	} else {
+		// Имя без кавычек — берём до последних трёх полей (utilization, memory.used, memory.total)
+		parts := strings.Split(line, ",")
+		if len(parts) < 4 {
+			return "", 0, 0, 0, false
+		}
+		lastThree := strings.TrimSpace(parts[len(parts)-3]) + "," + strings.TrimSpace(parts[len(parts)-2]) + "," + strings.TrimSpace(parts[len(parts)-1])
+		name = strings.TrimSpace(strings.Join(parts[:len(parts)-3], ","))
+		rest = lastThree
+	}
+	parts := strings.SplitN(rest, ",", 3)
+	if len(parts) < 3 {
+		return name, 0, 0, 0, false
+	}
+	gpuPct, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	memUsedStr := strings.TrimSpace(parts[1])
+	memTotalStr := strings.TrimSpace(parts[2])
+	memUsedStr = strings.TrimSuffix(memUsedStr, " MiB")
+	memTotalStr = strings.TrimSuffix(memTotalStr, " MiB")
+	memUsed, _ = strconv.ParseFloat(memUsedStr, 64)
+	memTotal, _ = strconv.ParseFloat(memTotalStr, 64)
+	return name, gpuPct, memUsed, memTotal, true
+}
+
 func collectGPUs() []GPUMetrics {
 	path := nvidiaSmiPath()
 	cmd := exec.Command(path, "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return tryGPUsFromList(path)
 	}
 	var gpus []GPUMetrics
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		name, gpuPct, memUsed, memTotal, ok := parseGPUCSVLine(line)
+		if !ok || name == "" {
 			continue
 		}
-		parts := strings.SplitN(line, ",", 4)
-		if len(parts) < 4 {
-			continue
-		}
-		name := strings.Trim(strings.TrimSpace(parts[0]), "\"")
-		gpuPct, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-		memUsedStr := strings.TrimSpace(parts[2])
-		memTotalStr := strings.TrimSpace(parts[3])
-		memUsedStr = strings.TrimSuffix(memUsedStr, " MiB")
-		memTotalStr = strings.TrimSuffix(memTotalStr, " MiB")
-		memUsed, _ := strconv.ParseFloat(memUsedStr, 64)
-		memTotal, _ := strconv.ParseFloat(memTotalStr, 64)
 		vramPct := 0
 		if memTotal > 0 {
 			vramPct = int((memUsed / memTotal) * 100)
@@ -494,6 +545,37 @@ func collectGPUs() []GPUMetrics {
 		vramUsedGB := memUsed / 1024
 		vramTotalGB := memTotal / 1024
 		gpus = append(gpus, GPUMetrics{Name: name, GPUPct: gpuPct, VRAMPct: vramPct, VRAMUsedGB: vramUsedGB, VRAMTotalGB: vramTotalGB})
+	}
+	if len(gpus) == 0 {
+		return tryGPUsFromList(path)
+	}
+	return gpus
+}
+
+// tryGPUsFromList вызывает nvidia-smi -L и возвращает список GPU с именами (метрики 0).
+func tryGPUsFromList(nvidiaSmiPath string) []GPUMetrics {
+	cmd := exec.Command(nvidiaSmiPath, "-L")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var gpus []GPUMetrics
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// "GPU 0: NVIDIA GeForce RTX 3080 (UUID: ...)" -> "NVIDIA GeForce RTX 3080"
+		if idx := strings.Index(line, ": "); idx >= 0 {
+			name := strings.TrimSpace(line[idx+2:])
+			if end := strings.Index(name, " ("); end >= 0 {
+				name = strings.TrimSpace(name[:end])
+			}
+			if name != "" {
+				gpus = append(gpus, GPUMetrics{Name: name, GPUPct: 0, VRAMPct: 0, VRAMUsedGB: 0, VRAMTotalGB: 0})
+			}
+		}
 	}
 	return gpus
 }

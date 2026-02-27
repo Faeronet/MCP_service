@@ -24,17 +24,22 @@ function cycleSort(current: SortDir): SortDir {
   return null
 }
 
+const PAGE_SIZE = 50
+
 export function Logs() {
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [service, setService] = useState('')
   const [requestId, setRequestId] = useState('')
   const [level, setLevel] = useState('')
+  const [page, setPage] = useState(1)
   const [timeSort, setTimeSort] = useState<SortDir>(null)
   const [levelSort, setLevelSort] = useState<SortDir>(null)
 
   const onTimeSortClick = () => setTimeSort(cycleSort(timeSort))
   const onLevelSortClick = () => setLevelSort(cycleSort(levelSort))
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const sortedLogs = useMemo(() => {
     const list = [...(logs ?? [])]

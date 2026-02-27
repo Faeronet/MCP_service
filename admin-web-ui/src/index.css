@@ -287,6 +287,26 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   font-size: 0.8125rem;
 }
 
+.logs-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--content-border);
+}
+.logs-pagination-total { color: var(--text-muted); font-size: 0.875rem; }
+.logs-pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.logs-pagination-pages { display: flex; gap: 4px; }
+.logs-pagination-buttons button { min-width: 32px; padding: 6px 10px; }
+.logs-pagination-info { color: var(--text-muted); font-size: 0.875rem; }
+
 .input-line {
   display: flex;
   gap: 12px;
@@ -550,6 +570,8 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 }
 .monitor-area { opacity: 0.85; }
 .monitor-line { stroke-linecap: round; stroke-linejoin: round; }
+.monitor-point { cursor: pointer; stroke: rgba(0,0,0,0.3); stroke-width: 1; }
+.monitor-tooltip { pointer-events: auto; }
 .monitor-axis-label {
   fill: var(--text-muted);
   font-size: 0.75rem;

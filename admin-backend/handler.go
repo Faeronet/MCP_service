@@ -286,35 +286,49 @@ func (h *Handler) LogsSearch(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	requestID := r.URL.Query().Get("request_id")
 	level := r.URL.Query().Get("level")
-	limit := 100
+	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if i, _ := strconv.Atoi(l); i > 0 && i <= 500 {
 			limit = i
 		}
 	}
-	q := `SELECT ts, level, service, request_id, message, log_id FROM obs.logs_index WHERE 1=1`
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if i, _ := strconv.Atoi(o); i > 0 {
+			offset = i
+		}
+	}
+	where := `WHERE 1=1`
 	args := []interface{}{}
 	n := 0
 	if service != "" {
 		n++
-		q += ` AND service = $` + strconv.Itoa(n)
+		where += ` AND service = $` + strconv.Itoa(n)
 		args = append(args, service)
 	}
 	if requestID != "" {
 		n++
-		q += ` AND request_id = $` + strconv.Itoa(n)
+		where += ` AND request_id = $` + strconv.Itoa(n)
 		args = append(args, requestID)
 	}
 	if level != "" {
 		n++
-		q += ` AND level = $` + strconv.Itoa(n)
+		where += ` AND level = $` + strconv.Itoa(n)
 		args = append(args, level)
 	}
-	n++
-	q += ` ORDER BY ts DESC LIMIT $` + strconv.Itoa(n)
-	args = append(args, limit)
 
-	rows, err := h.Pool.Query(ctx, q, args...)
+	// total count
+	var total int64
+	countQ := `SELECT COUNT(*) FROM obs.logs_index ` + where
+	if err := h.Pool.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		http.Error(w, `{"error":"count"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// data with offset/limit (n = number of filter args, so OFFSET=$n+1 LIMIT=$n+2)
+	dataQ := `SELECT ts, level, service, request_id, message, log_id FROM obs.logs_index ` + where + ` ORDER BY ts DESC OFFSET $` + strconv.Itoa(n+1) + ` LIMIT $` + strconv.Itoa(n+2)
+	args = append(args, offset, limit)
+	rows, err := h.Pool.Query(ctx, dataQ, args...)
 	if err != nil {
 		http.Error(w, `{"error":"query"}`, http.StatusInternalServerError)
 		return
@@ -344,7 +358,7 @@ func (h *Handler) LogsSearch(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"logs": entries})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"logs": entries, "total": total})
 }
 
 func (h *Handler) LogsRaw(w http.ResponseWriter, r *http.Request) {

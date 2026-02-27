@@ -68,12 +68,13 @@ export async function getJob(id: string): Promise<Record<string, unknown>> {
   return r.json()
 }
 
-export async function searchLogs(params: { service?: string; request_id?: string; level?: string; limit?: number }): Promise<{ logs: Array<Record<string, unknown>> }> {
+export async function searchLogs(params: { service?: string; request_id?: string; level?: string; limit?: number; offset?: number }): Promise<{ logs: Array<Record<string, unknown>>; total: number }> {
   const u = new URL(`${API_URL}/api/logs/search`)
   if (params.service) u.searchParams.set('service', params.service)
   if (params.request_id) u.searchParams.set('request_id', params.request_id)
   if (params.level) u.searchParams.set('level', params.level)
-  if (params.limit) u.searchParams.set('limit', String(params.limit))
+  if (params.limit != null) u.searchParams.set('limit', String(params.limit))
+  if (params.offset != null) u.searchParams.set('offset', String(params.offset))
   const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${getToken()}` } })
   checkAuth(r)
   if (!r.ok) throw new Error('Failed to search logs')
