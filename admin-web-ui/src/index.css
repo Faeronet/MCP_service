@@ -383,10 +383,62 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 .grafana-iframe-wrap iframe { width: 100%; height: 100%; border: 1px solid var(--content-border); border-radius: 8px; }
 
 /* ----- Monitor: компактные спидометры в ряд, кнопки как в Logs ----- */
+.page-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 14px;
+}
+.monitor-uptime {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.monitor-section-frame {
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  background: var(--card-bg);
+  width: fit-content;
+  max-width: 100%;
+}
+.monitor-section-title {
+  margin: 0 0 16px 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.monitor-chart-mode-toggle {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.monitor-chart-block {
+  width: fit-content;
+  max-width: 100%;
+}
+.monitor-chart-wrap--compact {
+  width: fit-content;
+}
+.monitor-chart-panel--compact {
+  width: fit-content;
+  margin-bottom: 16px;
+  background: #1e2226;
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.monitor-chart-panel--compact:last-child {
+  margin-bottom: 0;
+}
+.monitor-chart-panel--compact .monitor-chart-title {
+  margin-bottom: 8px;
+  font-size: 0.9375rem;
+}
 .monitor-type-toggle {
   display: flex;
   gap: 10px;
-  margin-top: 14px;
 }
 .monitor-type-toggle .btn-primary {
   padding: 10px 20px;

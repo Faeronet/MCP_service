@@ -86,8 +86,8 @@ export function Monitor() {
                 label="RAM"
                 unit="%"
                 valueLabel={
-                  data.system.ram_used_gb != null && data.system.ram_total_gb != null
-                    ? `${data.system.ram_used_gb.toFixed(1)} / ${data.system.ram_total_gb.toFixed(1)} GiB`
+                  data.system.ram_used_gb != null
+                    ? `${data.system.ram_used_gb.toFixed(1)} GB`
                     : undefined
                 }
               />
@@ -120,8 +120,8 @@ export function Monitor() {
                     unit="%"
                     fillColor="#eab308"
                     valueLabel={
-                      card.vram_used_gb != null && card.vram_total_gb != null
-                        ? `${card.vram_used_gb.toFixed(2)} / ${card.vram_total_gb.toFixed(1)} GiB`
+                      card.vram_used_gb != null
+                        ? `${card.vram_used_gb.toFixed(2)} GB`
                         : undefined
                     }
                   />
@@ -278,7 +278,7 @@ function MonitorTimeChart({
           />
         ))}
         {areaPaths.map((d, k) => (
-          <path key={`area-${k}`} d={d} fill={`url(#grad-${type}-${gpuIndex}-${k})`} className="monitor-area" />
+          <path key={`area-${k}`} d={d} fill={`url(#grad-${type}-${gpuIndex}-${k}-${gpuSeries ?? ''})`} className="monitor-area" />
         ))}
         {linePaths.map((d, k) => (
           <path key={`line-${k}`} d={d} fill="none" stroke={series[k].color} strokeWidth={2} className="monitor-line" />

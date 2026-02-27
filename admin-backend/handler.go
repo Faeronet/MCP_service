@@ -411,7 +411,12 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	payload := map[string]interface{}{"system": systemMap, "gpus": gpusMap, "history": historyMap}
+	payload := map[string]interface{}{
+		"system":     systemMap,
+		"gpus":       gpusMap,
+		"history":    historyMap,
+		"uptime_sec": GetUptimeSec(),
+	}
 	if len(gpus) > 0 {
 		payload["gpu"] = map[string]interface{}{"gpu_pct": gpus[0].GPUPct, "vram_pct": gpus[0].VRAMPct}
 	}

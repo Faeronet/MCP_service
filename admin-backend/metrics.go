@@ -107,29 +107,16 @@ func getProcStatTotalJiffies() (uint64, error) {
 
 // readCgroupCPUUsageV2 reads usage_usec from cgroup v2 cpu.stat (container CPU).
 func readCgroupCPUUsageV2() (usageUsec uint64, ok bool) {
-	data, err := os.ReadFile("/proc/self/cgroup")
-	if err != nil {
-		return 0, false
-	}
-	var cgroupPath string
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, "0::") {
-			cgroupPath = strings.TrimPrefix(line, "0::")
-			break
-		}
-	}
+	cgroupPath := getCgroupPathV2()
 	if cgroupPath == "" {
 		return 0, false
 	}
-	cgroupPath = strings.TrimPrefix(cgroupPath, "/")
 	statPath := filepath.Join("/sys/fs/cgroup", cgroupPath, "cpu.stat")
 	statData, err := os.ReadFile(statPath)
 	if err != nil {
 		return 0, false
 	}
-	sc = bufio.NewScanner(bytes.NewReader(statData))
+	sc := bufio.NewScanner(bytes.NewReader(statData))
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.HasPrefix(line, "usage_usec ") {
@@ -171,6 +158,90 @@ func readCgroupCPUUsageV1() (usageNsec uint64, ok bool) {
 		return usageNsec, true
 	}
 	return 0, false
+}
+
+// getCgroupPathV2 returns the cgroup path from "0::/path" in /proc/self/cgroup, or "" if not v2.
+func getCgroupPathV2() string {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return ""
+	}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "0::") {
+			p := strings.TrimPrefix(line, "0::")
+			p = strings.TrimPrefix(p, "/")
+			return p
+		}
+	}
+	return ""
+}
+
+// readCgroupMemoryV2 reads memory.current and memory.max from cgroup v2 (container RAM).
+func readCgroupMemoryV2() (usedBytes, limitBytes uint64, ok bool) {
+	path := getCgroupPathV2()
+	if path == "" {
+		return 0, 0, false
+	}
+	base := filepath.Join("/sys/fs/cgroup", path)
+	currentPath := filepath.Join(base, "memory.current")
+	maxPath := filepath.Join(base, "memory.max")
+	bCurrent, err := os.ReadFile(currentPath)
+	if err != nil {
+		return 0, 0, false
+	}
+	usedBytes, _ = strconv.ParseUint(strings.TrimSpace(string(bCurrent)), 10, 64)
+	bMax, err := os.ReadFile(maxPath)
+	if err != nil {
+		return usedBytes, 0, true
+	}
+	maxStr := strings.TrimSpace(string(bMax))
+	if maxStr == "max" {
+		limitBytes = 0
+	} else {
+		limitBytes, _ = strconv.ParseUint(maxStr, 10, 64)
+	}
+	return usedBytes, limitBytes, true
+}
+
+// readCgroupMemoryV1 reads memory.usage_in_bytes and memory.limit_in_bytes from cgroup v1.
+func readCgroupMemoryV1() (usedBytes, limitBytes uint64, ok bool) {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return 0, 0, false
+	}
+	var memPath string
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.Contains(line, ":memory:") {
+			parts := strings.SplitN(line, ":", 3)
+			if len(parts) >= 3 {
+				memPath = strings.TrimPrefix(parts[2], "/")
+				break
+			}
+		}
+	}
+	if memPath == "" {
+		return 0, 0, false
+	}
+	for _, root := range []string{"/sys/fs/cgroup/memory", "/sys/fs/cgroup/memory,cgroup"} {
+		usagePath := filepath.Join(root, memPath, "memory.usage_in_bytes")
+		limitPath := filepath.Join(root, memPath, "memory.limit_in_bytes")
+		bUsage, err := os.ReadFile(usagePath)
+		if err != nil {
+			continue
+		}
+		usedBytes, _ = strconv.ParseUint(strings.TrimSpace(string(bUsage)), 10, 64)
+		bLimit, err := os.ReadFile(limitPath)
+		if err != nil {
+			return usedBytes, 0, true
+		}
+		limitBytes, _ = strconv.ParseUint(strings.TrimSpace(string(bLimit)), 10, 64)
+		return usedBytes, limitBytes, true
+	}
+	return 0, 0, false
 }
 
 func readProcMeminfo() (totalKB, availableKB uint64, err error) {
@@ -286,6 +357,53 @@ func collectCPU(prev *cpuSample, prevCgroup *cgroupCPUSample) (pct int, next cpu
 }
 
 func collectRAM() (pct int, usedGB, totalGB float64) {
+	const bytesToGB = 1024 * 1024 * 1024
+	// Prefer cgroup (container) memory when available.
+	if usedB, limitB, ok := readCgroupMemoryV2(); ok {
+		usedGB = float64(usedB) / bytesToGB
+		if limitB > 0 {
+			totalGB = float64(limitB) / bytesToGB
+			pctVal := (float64(usedB) / float64(limitB)) * 100
+			if pctVal > 100 {
+				pctVal = 100
+			}
+			pct = int(pctVal + 0.5)
+		} else {
+			total, _, _ := readProcMeminfo()
+			if total > 0 {
+				totalGB = float64(total) / (1024 * 1024)
+				pctVal := (float64(usedB) / (float64(total) * 1024)) * 100
+				if pctVal > 100 {
+					pctVal = 100
+				}
+				pct = int(pctVal + 0.5)
+			}
+		}
+		return pct, usedGB, totalGB
+	}
+	if usedB, limitB, ok := readCgroupMemoryV1(); ok {
+		usedGB = float64(usedB) / bytesToGB
+		if limitB > 0 {
+			totalGB = float64(limitB) / bytesToGB
+			pctVal := (float64(usedB) / float64(limitB)) * 100
+			if pctVal > 100 {
+				pctVal = 100
+			}
+			pct = int(pctVal + 0.5)
+		} else {
+			total, _, _ := readProcMeminfo()
+			if total > 0 {
+				totalGB = float64(total) / (1024 * 1024)
+				pctVal := (float64(usedB) / (float64(total) * 1024)) * 100
+				if pctVal > 100 {
+					pctVal = 100
+				}
+				pct = int(pctVal + 0.5)
+			}
+		}
+		return pct, usedGB, totalGB
+	}
+	// Fallback: host memory from /proc/meminfo
 	total, available, err := readProcMeminfo()
 	if err != nil || total == 0 {
 		return 0, 0, 0
@@ -422,6 +540,20 @@ func mockMetrics(now time.Time) (SystemMetrics, []GPUMetrics, []HistoryPoint) {
 	return system, gpus, history
 }
 
+// GetUptimeSec returns system uptime in seconds (from /proc/uptime on Linux, 0 otherwise).
+func GetUptimeSec() float64 {
+	if runtime.GOOS != "linux" {
+		return 0
+	}
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0
+	}
+	var uptime, idle float64
+	fmt.Sscanf(string(data), "%f %f", &uptime, &idle)
+	return uptime
+}
+
 // CollectMetrics gathers current system and GPU metrics and appends to history.
 // On non-Linux or when /proc is unavailable, returns mock data.
 func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []HistoryPoint) {
@@ -448,6 +580,12 @@ func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []Histor
 		}
 	} else {
 		metricsStore.lastGPUs = gpus
+	}
+	// Если nvidia-smi недоступен в контейнере, имя карты можно задать через GPU_NAME
+	if len(gpus) > 0 {
+		if name := strings.TrimSpace(os.Getenv("GPU_NAME")); name != "" && (gpus[0].Name == "" || gpus[0].Name == "N/A") {
+			gpus[0].Name = name
+		}
 	}
 
 	hp := HistoryPoint{

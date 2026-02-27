@@ -104,6 +104,7 @@ export interface MonitorMetricsResponse {
   }
   gpu?: { gpu_pct: number; vram_pct: number }
   gpus: GPUMetrics[]
+  uptime_sec?: number
   history: Array<{
     ts: string
     cpu: number
