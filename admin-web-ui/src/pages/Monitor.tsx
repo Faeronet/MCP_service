@@ -151,7 +151,7 @@ export function Monitor() {
           <>
             {gpus.map((card, idx) => (
               <div key={idx} className="monitor-section-frame">
-                <h3 className="monitor-section-title">{card.name}</h3>
+                <h3 className="monitor-section-title">{card.name?.trim() || `GPU ${idx}`}</h3>
                 <div className="monitor-gauges">
                   <SpeedometerGauge value={card.gpu_pct} label="GPU" unit="%" />
                   <SpeedometerGauge

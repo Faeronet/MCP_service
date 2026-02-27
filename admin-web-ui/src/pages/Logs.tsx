@@ -57,22 +57,25 @@ export function Logs() {
     })
   }, [logs, timeSort, levelSort])
 
-  const load = async () => {
+  const load = async (pageNum: number = page) => {
     setLoading(true)
     try {
-      const { logs: l } = await searchLogs({
+      const { logs: l, total: t } = await searchLogs({
         service: service || undefined,
         request_id: requestId || undefined,
         level: level || undefined,
-        limit: 100,
+        limit: PAGE_SIZE,
+        offset: (pageNum - 1) * PAGE_SIZE,
       })
       setLogs(Array.isArray(l) ? l : [])
+      setTotal(typeof t === 'number' ? t : 0)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(page) }, [page])
+  const onSearch = () => { setPage(1); load(1) }
 
   return (
     <div className="page-layout">
@@ -82,8 +85,8 @@ export function Logs() {
           <input placeholder="Level" value={level} onChange={e => setLevel(e.target.value)} />
           <input placeholder="Service" value={service} onChange={e => setService(e.target.value)} />
           <input placeholder="Request ID" value={requestId} onChange={e => setRequestId(e.target.value)} />
-          <button type="button" className="btn-primary" onClick={load}>
-            Search
+          <button type="button" className="btn-primary" onClick={onSearch}>
+            Поиск
           </button>
         </div>
         <p className="text-muted">Индекс из Postgres (таблица obs.logs_index). Для сырых запросов к Loki — Grafana.</p>
@@ -142,6 +145,30 @@ export function Logs() {
                 </table>
               )}
             </div>
+          </div>
+        )}
+        {!loading && total > 0 && (
+          <div className="logs-pagination">
+            <span className="logs-pagination-total">Всего: {total} записей</span>
+            <div className="logs-pagination-buttons">
+              <button type="button" className="btn-monitor-inactive" disabled={page <= 1} onClick={() => setPage(1)} title="Первая">«</button>
+              <button type="button" className="btn-monitor-inactive" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} title="Назад">‹</button>
+              <span className="logs-pagination-pages">
+                {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+                  let p: number
+                  if (totalPages <= 7) p = i + 1
+                  else if (page <= 4) p = i + 1
+                  else if (page >= totalPages - 3) p = totalPages - 6 + i
+                  else p = page - 3 + i
+                  return (
+                    <button key={p} type="button" className={p === page ? 'btn-primary' : 'btn-monitor-inactive'} onClick={() => setPage(p)}>{p}</button>
+                  )
+                })}
+              </span>
+              <button type="button" className="btn-monitor-inactive" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} title="Вперёд">›</button>
+              <button type="button" className="btn-monitor-inactive" disabled={page >= totalPages} onClick={() => setPage(totalPages)} title="Последняя">»</button>
+            </div>
+            <span className="logs-pagination-info">Страница {page} из {totalPages}</span>
           </div>
         )}
       </div>

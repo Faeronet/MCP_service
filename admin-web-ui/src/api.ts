@@ -88,7 +88,7 @@ export function grafanaUrl(): string {
 }
 
 export interface GPUMetrics {
-  name: string
+  name?: string
   gpu_pct: number
   vram_pct: number
   vram_used_gb?: number

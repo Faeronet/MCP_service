@@ -518,6 +518,32 @@ func parseGPUCSVLine(line string) (name string, gpuPct int, memUsed, memTotal fl
 	return name, gpuPct, memUsed, memTotal, true
 }
 
+// getGPUNamesFromList возвращает имена GPU по порядку из nvidia-smi -L (для подстановки при пустом name из CSV).
+func getGPUNamesFromList(nvidiaSmiPath string) []string {
+	cmd := exec.Command(nvidiaSmiPath, "-L")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if idx := strings.Index(line, ": "); idx >= 0 {
+			name := strings.TrimSpace(line[idx+2:])
+			if end := strings.Index(name, " ("); end >= 0 {
+				name = strings.TrimSpace(name[:end])
+			}
+			if name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
 func collectGPUs() []GPUMetrics {
 	path := nvidiaSmiPath()
 	cmd := exec.Command(path, "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
@@ -529,7 +555,7 @@ func collectGPUs() []GPUMetrics {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for _, line := range lines {
 		name, gpuPct, memUsed, memTotal, ok := parseGPUCSVLine(line)
-		if !ok || name == "" {
+		if !ok {
 			continue
 		}
 		vramPct := 0
@@ -548,6 +574,15 @@ func collectGPUs() []GPUMetrics {
 	}
 	if len(gpus) == 0 {
 		return tryGPUsFromList(path)
+	}
+	// Подставить имена из nvidia-smi -L для карт с пустым или N/A именем
+	namesFromList := getGPUNamesFromList(path)
+	for i := range gpus {
+		if gpus[i].Name == "" || gpus[i].Name == "N/A" {
+			if i < len(namesFromList) {
+				gpus[i].Name = namesFromList[i]
+			}
+		}
 	}
 	return gpus
 }
@@ -663,8 +698,17 @@ func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []Histor
 	} else {
 		metricsStore.lastGPUs = gpus
 	}
-	// Если nvidia-smi недоступен в контейнере, имя карты можно задать через GPU_NAME
-	if len(gpus) > 0 {
+	// Переопределение имён через env: GPU_NAMES="Карта 1, Карта 2" или GPU_NAME для первой (обратная совместимость).
+	if namesEnv := strings.TrimSpace(os.Getenv("GPU_NAMES")); namesEnv != "" {
+		namesList := strings.Split(namesEnv, ",")
+		for i := range gpus {
+			if i < len(namesList) {
+				if n := strings.TrimSpace(namesList[i]); n != "" {
+					gpus[i].Name = n
+				}
+			}
+		}
+	} else if len(gpus) > 0 {
 		if name := strings.TrimSpace(os.Getenv("GPU_NAME")); name != "" && (gpus[0].Name == "" || gpus[0].Name == "N/A") {
 			gpus[0].Name = name
 		}

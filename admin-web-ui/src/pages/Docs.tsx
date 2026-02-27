@@ -1,11 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { listDocs, uploadFile } from '../api'
+
+const PAGE_SIZE = 50
 
 export function Docs() {
   const [docs, setDocs] = useState<Array<{ id: string; name: string; created_at: string; versions: unknown }>>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [page, setPage] = useState(1)
+  const [fileName, setFileName] = useState('')
 
   const load = async () => {
     try {
@@ -20,9 +24,17 @@ export function Docs() {
 
   useEffect(() => { load() }, [])
 
+  const total = docs.length
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const paginatedDocs = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return docs.slice(start, start + PAGE_SIZE)
+  }, [docs, page])
+
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    setFileName(file.name)
     setUploading(true)
     setError('')
     try {
@@ -33,6 +45,7 @@ export function Docs() {
     } finally {
       setUploading(false)
     }
+    e.target.value = ''
   }
 
   return (
@@ -40,8 +53,17 @@ export function Docs() {
       <div className="page-header">
         <h1 className="page-title">Documents</h1>
         <div className="input-line">
-          <input type="file" onChange={onFile} disabled={uploading} />
-          {uploading && <span className="text-muted">Uploading…</span>}
+          <label className="file-input-wrap">
+            <span className="file-input-btn">Обзор…</span>
+            <span className="file-input-label">{fileName || 'Файл не выбран.'}</span>
+            <input
+              type="file"
+              className="file-input-hidden"
+              onChange={onFile}
+              disabled={uploading}
+            />
+          </label>
+          {uploading && <span className="text-muted">Загрузка…</span>}
         </div>
         {error && <p className="text-error" style={{ marginBottom: 0 }}>{error}</p>}
       </div>
@@ -49,26 +71,52 @@ export function Docs() {
         {loading ? (
           <p className="text-muted">Loading…</p>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>ID</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(docs ?? []).map(d => (
-                  <tr key={d.id}>
-                    <td>{d.name}</td>
-                    <td className="mono">{d.id}</td>
-                    <td>{new Date(d.created_at).toLocaleString()}</td>
+          <>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>ID</th>
+                    <th>Created</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {(paginatedDocs ?? []).map(d => (
+                    <tr key={d.id}>
+                      <td>{d.name}</td>
+                      <td className="mono">{d.id}</td>
+                      <td>{new Date(d.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {total > 0 && (
+              <div className="logs-pagination">
+                <span className="logs-pagination-total">Всего: {total}</span>
+                <div className="logs-pagination-buttons">
+                  <button type="button" className="btn-monitor-inactive" disabled={page <= 1} onClick={() => setPage(1)} title="Первая">«</button>
+                  <button type="button" className="btn-monitor-inactive" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>‹</button>
+                  <span className="logs-pagination-pages">
+                    {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+                      let p: number
+                      if (totalPages <= 7) p = i + 1
+                      else if (page <= 4) p = i + 1
+                      else if (page >= totalPages - 3) p = totalPages - 6 + i
+                      else p = page - 3 + i
+                      return (
+                        <button key={p} type="button" className={p === page ? 'btn-primary' : 'btn-monitor-inactive'} onClick={() => setPage(p)}>{p}</button>
+                      )
+                    })}
+                  </span>
+                  <button type="button" className="btn-monitor-inactive" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>›</button>
+                  <button type="button" className="btn-monitor-inactive" disabled={page >= totalPages} onClick={() => setPage(totalPages)} title="Последняя">»</button>
+                </div>
+                <span className="logs-pagination-info">Страница {page} из {totalPages}</span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -1,14 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { listJobs, getJob } from '../api'
+
+const PAGE_SIZE = 50
 
 export function Jobs() {
   const [jobs, setJobs] = useState<Array<Record<string, unknown>>>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null)
+  const [page, setPage] = useState(1)
 
   const load = async () => {
     try {
-      const { jobs: j } = await listJobs(100)
+      const { jobs: j } = await listJobs(500)
       setJobs(Array.isArray(j) ? j : [])
     } finally {
       setLoading(false)
@@ -16,6 +19,13 @@ export function Jobs() {
   }
 
   useEffect(() => { load() }, [])
+
+  const total = jobs.length
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const paginatedJobs = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE
+    return jobs.slice(start, start + PAGE_SIZE)
+  }, [jobs, page])
 
   const openJob = async (id: string) => {
     try {
@@ -47,7 +57,7 @@ export function Jobs() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(jobs ?? []).map((j: Record<string, unknown>) => (
+                  {(paginatedJobs ?? []).map((j: Record<string, unknown>) => (
                     <tr key={String(j.id)}>
                       <td>
                         <button
@@ -66,6 +76,30 @@ export function Jobs() {
                 </tbody>
               </table>
             </div>
+            {total > 0 && (
+              <div className="logs-pagination">
+                <span className="logs-pagination-total">Всего: {total}</span>
+                <div className="logs-pagination-buttons">
+                  <button type="button" className="btn-monitor-inactive" disabled={page <= 1} onClick={() => setPage(1)} title="Первая">«</button>
+                  <button type="button" className="btn-monitor-inactive" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>‹</button>
+                  <span className="logs-pagination-pages">
+                    {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+                      let p: number
+                      if (totalPages <= 7) p = i + 1
+                      else if (page <= 4) p = i + 1
+                      else if (page >= totalPages - 3) p = totalPages - 6 + i
+                      else p = page - 3 + i
+                      return (
+                        <button key={p} type="button" className={p === page ? 'btn-primary' : 'btn-monitor-inactive'} onClick={() => setPage(p)}>{p}</button>
+                      )
+                    })}
+                  </span>
+                  <button type="button" className="btn-monitor-inactive" disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>›</button>
+                  <button type="button" className="btn-monitor-inactive" disabled={page >= totalPages} onClick={() => setPage(totalPages)} title="Последняя">»</button>
+                </div>
+                <span className="logs-pagination-info">Страница {page} из {totalPages}</span>
+              </div>
+            )}
             {selected && (
               <div className="content-card" style={{ marginTop: 24 }}>
                 <h3 style={{ margin: '0 0 12px 0', fontSize: '1rem' }}>Job detail</h3>
