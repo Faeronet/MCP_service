@@ -155,7 +155,7 @@ services:
     build:
       context: .
       dockerfile: admin-backend/Dockerfile
-    # Доступ к GPU для мониторинга (nvidia-smi). На хосте без GPU закомментируйте deploy или используйте override.
+    # Доступ к GPU для мониторинга (nvidia-smi). На хосте без GPU закомментируйте deploy и volumes ниже.
     deploy:
       resources:
         reservations:
@@ -163,6 +163,9 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # В образе Alpine нет nvidia-smi — монтируем бинарник с хоста (библиотеки подхватываются nvidia runtime).
+    volumes:
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000

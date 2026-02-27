@@ -376,53 +376,7 @@ func collectCPU(prev *cpuSample, prevCgroup *cgroupCPUSample) (pct int, next cpu
 }
 
 func collectRAM() (pct int, usedGB, totalGB float64) {
-	const bytesToGB = 1024 * 1024 * 1024
-	// Prefer cgroup (container) memory when available.
-	if usedB, limitB, ok := readCgroupMemoryV2(); ok {
-		usedGB = float64(usedB) / bytesToGB
-		if limitB > 0 {
-			totalGB = float64(limitB) / bytesToGB
-			pctVal := (float64(usedB) / float64(limitB)) * 100
-			if pctVal > 100 {
-				pctVal = 100
-			}
-			pct = int(pctVal + 0.5)
-		} else {
-			total, _, _ := readProcMeminfo()
-			if total > 0 {
-				totalGB = float64(total) / (1024 * 1024)
-				pctVal := (float64(usedB) / (float64(total) * 1024)) * 100
-				if pctVal > 100 {
-					pctVal = 100
-				}
-				pct = int(pctVal + 0.5)
-			}
-		}
-		return pct, usedGB, totalGB
-	}
-	if usedB, limitB, ok := readCgroupMemoryV1(); ok {
-		usedGB = float64(usedB) / bytesToGB
-		if limitB > 0 {
-			totalGB = float64(limitB) / bytesToGB
-			pctVal := (float64(usedB) / float64(limitB)) * 100
-			if pctVal > 100 {
-				pctVal = 100
-			}
-			pct = int(pctVal + 0.5)
-		} else {
-			total, _, _ := readProcMeminfo()
-			if total > 0 {
-				totalGB = float64(total) / (1024 * 1024)
-				pctVal := (float64(usedB) / (float64(total) * 1024)) * 100
-				if pctVal > 100 {
-					pctVal = 100
-				}
-				pct = int(pctVal + 0.5)
-			}
-		}
-		return pct, usedGB, totalGB
-	}
-	// Fallback: host memory — used = MemTotal - MemFree - Buffers - Cached (как в htop/btm)
+	// Всегда используем /proc/meminfo и формулу как в top: used = MemTotal - MemFree - Buffers - Cached.
 	total, _, free, buffers, cached, err := readProcMeminfoFull()
 	if err != nil || total == 0 {
 		return 0, 0, 0
