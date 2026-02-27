@@ -518,10 +518,16 @@ func parseGPUCSVLine(line string) (name string, gpuPct int, memUsed, memTotal fl
 	return name, gpuPct, memUsed, memTotal, true
 }
 
-// getGPUNamesFromList возвращает имена GPU по порядку из nvidia-smi -L (для подстановки при пустом name из CSV).
+func nvidiaSmiCmd(path string, args ...string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	cmd.Env = append(os.Environ(), "LANG=C")
+	return cmd
+}
+
+// getGPUNamesFromList возвращает имена GPU по порядку из nvidia-smi -L.
+// Формат строки: "GPU 0: NVIDIA GeForce RTX 3080 (UUID: ...)" или "GPU 0: NVIDIA GeForce RTX 3080".
 func getGPUNamesFromList(nvidiaSmiPath string) []string {
-	cmd := exec.Command(nvidiaSmiPath, "-L")
-	out, err := cmd.Output()
+	out, err := nvidiaSmiCmd(nvidiaSmiPath, "-L").Output()
 	if err != nil {
 		return nil
 	}
@@ -531,6 +537,7 @@ func getGPUNamesFromList(nvidiaSmiPath string) []string {
 		if line == "" {
 			continue
 		}
+		// "GPU 0: NVIDIA GeForce RTX 3080 (UUID: ...)" -> "NVIDIA GeForce RTX 3080"
 		if idx := strings.Index(line, ": "); idx >= 0 {
 			name := strings.TrimSpace(line[idx+2:])
 			if end := strings.Index(name, " ("); end >= 0 {
@@ -544,43 +551,83 @@ func getGPUNamesFromList(nvidiaSmiPath string) []string {
 	return names
 }
 
+// parseGPUMetricsLine разбирает строку из nvidia-smi с тремя числами: utilization.gpu, memory.used, memory.total (nounits).
+func parseGPUMetricsLine(line string) (gpuPct int, memUsed, memTotal float64, ok bool) {
+	parts := strings.Split(strings.TrimSpace(line), ",")
+	if len(parts) < 3 {
+		return 0, 0, 0, false
+	}
+	gpuPct, _ = strconv.Atoi(strings.TrimSpace(parts[0]))
+	memUsedStr := strings.TrimSpace(parts[1])
+	memTotalStr := strings.TrimSpace(parts[2])
+	memUsedStr = strings.TrimSuffix(memUsedStr, " MiB")
+	memTotalStr = strings.TrimSuffix(memTotalStr, " MiB")
+	memUsed, _ = strconv.ParseFloat(memUsedStr, 64)
+	memTotal, _ = strconv.ParseFloat(memTotalStr, 64)
+	return gpuPct, memUsed, memTotal, true
+}
+
 func collectGPUs() []GPUMetrics {
 	path := nvidiaSmiPath()
-	cmd := exec.Command(path, "--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
+
+	// Сначала получаем список и имена из nvidia-smi -L — так гарантированно видим все GPU и корректные имена.
+	namesFromList := getGPUNamesFromList(path)
+
+	// Запрос только метрик (без name), чтобы не зависеть от парсинга имени в CSV — одна строка на GPU.
+	cmd := exec.Command(path, "--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
 	out, err := cmd.Output()
 	if err != nil {
+		// Если запрос метрик не сработал, но список по -L есть — возвращаем карты с именами и нулевыми метриками.
+		if len(namesFromList) > 0 {
+			gpus := make([]GPUMetrics, len(namesFromList))
+			for i, name := range namesFromList {
+				gpus[i] = GPUMetrics{Name: name, GPUPct: 0, VRAMPct: 0, VRAMUsedGB: 0, VRAMTotalGB: 0}
+			}
+			return gpus
+		}
 		return tryGPUsFromList(path)
 	}
-	var gpus []GPUMetrics
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	for _, line := range lines {
-		name, gpuPct, memUsed, memTotal, ok := parseGPUCSVLine(line)
-		if !ok {
-			continue
+
+	rawLines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var lines []string
+	for _, s := range rawLines {
+		if strings.TrimSpace(s) != "" {
+			lines = append(lines, s)
 		}
-		vramPct := 0
-		if memTotal > 0 {
-			vramPct = int((memUsed / memTotal) * 100)
-		}
-		if vramPct > 100 {
-			vramPct = 100
-		}
-		if gpuPct > 100 {
-			gpuPct = 100
-		}
-		vramUsedGB := memUsed / 1024
-		vramTotalGB := memTotal / 1024
-		gpus = append(gpus, GPUMetrics{Name: name, GPUPct: gpuPct, VRAMPct: vramPct, VRAMUsedGB: vramUsedGB, VRAMTotalGB: vramTotalGB})
 	}
-	if len(gpus) == 0 {
+	// Количество GPU = максимум из: число имён из -L, число строк с метриками.
+	n := len(namesFromList)
+	if len(lines) > n {
+		n = len(lines)
+	}
+	if n == 0 {
 		return tryGPUsFromList(path)
 	}
-	// Подставить имена из nvidia-smi -L для карт с пустым или N/A именем
-	namesFromList := getGPUNamesFromList(path)
-	for i := range gpus {
-		if gpus[i].Name == "" || gpus[i].Name == "N/A" {
-			if i < len(namesFromList) {
-				gpus[i].Name = namesFromList[i]
+
+	gpus := make([]GPUMetrics, n)
+	for i := 0; i < n; i++ {
+		name := "GPU " + strconv.Itoa(i)
+		if i < len(namesFromList) {
+			name = namesFromList[i]
+		}
+		gpus[i] = GPUMetrics{Name: name, GPUPct: 0, VRAMPct: 0, VRAMUsedGB: 0, VRAMTotalGB: 0}
+		if i < len(lines) {
+			gpuPct, memUsed, memTotal, ok := parseGPUMetricsLine(lines[i])
+			if ok {
+				vramPct := 0
+				if memTotal > 0 {
+					vramPct = int((memUsed / memTotal) * 100)
+				}
+				if vramPct > 100 {
+					vramPct = 100
+				}
+				if gpuPct > 100 {
+					gpuPct = 100
+				}
+				gpus[i].GPUPct = gpuPct
+				gpus[i].VRAMPct = vramPct
+				gpus[i].VRAMUsedGB = memUsed / 1024
+				gpus[i].VRAMTotalGB = memTotal / 1024
 			}
 		}
 	}
@@ -589,8 +636,7 @@ func collectGPUs() []GPUMetrics {
 
 // tryGPUsFromList вызывает nvidia-smi -L и возвращает список GPU с именами (метрики 0).
 func tryGPUsFromList(nvidiaSmiPath string) []GPUMetrics {
-	cmd := exec.Command(nvidiaSmiPath, "-L")
-	out, err := cmd.Output()
+	out, err := nvidiaSmiCmd(nvidiaSmiPath, "-L").Output()
 	if err != nil {
 		return nil
 	}
