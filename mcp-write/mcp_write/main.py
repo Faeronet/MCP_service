@@ -25,9 +25,11 @@ MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
 VLLM_BASE = os.getenv("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")  # или модель с vLLM; размерность из ответа API
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", "1024"))  # bge-m3 = 1024; для другой модели задайте в .env
 
 COLLECTION = "chunks"
-VECTOR_SIZE = 384
+VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
 qdrant: Optional[QdrantClient] = None
 minio_client: Optional[Minio] = None
@@ -77,8 +79,29 @@ def deterministic_edge_id(from_id: str, to_id: str, relation: str) -> str:
     return h[:32]
 
 
-def dummy_embed(text: str) -> list[float]:
-    """Placeholder: return zero vector. Replace with vLLM embeddings."""
+def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
+    """Вызов vLLM /v1/embeddings. Возвращает список векторов или пустой список при ошибке."""
+    if not texts:
+        return []
+    url = f"{VLLM_BASE.rstrip('/')}/embeddings"
+    payload = {"model": EMBEDDING_MODEL, "input": texts[0] if len(texts) == 1 else texts}
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            r = client.post(url, json=payload)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            out = [item["embedding"] for item in data.get("data", [])]
+            return out if isinstance(out[0][0], float) else [[float(x) for x in v] for v in out]
+    except Exception:
+        return []
+
+
+def embed_text(text: str) -> list[float]:
+    """Вектор эмбеддинга через vLLM; при ошибке — нулевой вектор той же размерности."""
+    vecs = _embed_via_vllm([text])
+    if vecs:
+        return vecs[0]
     return [0.0] * VECTOR_SIZE
 
 
@@ -114,7 +137,9 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     for i, text in enumerate(chunks_text):
         section_path = f"sec_{i}"
         chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, section_path, text)
-        vector = dummy_embed(text)
+        vector = embed_text(text)
+        if len(vector) != VECTOR_SIZE:
+            vector = (vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
         payload = {
             "chunk_id": chunk_id,
             "doc_id": req.doc_id,

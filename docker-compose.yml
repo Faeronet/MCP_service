@@ -254,7 +254,8 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       REDIS_ADDR: redis:6379
       RETRIEVAL_CACHE_TTL_SEC: ${MCP_READ_CACHE_TTL:-60}

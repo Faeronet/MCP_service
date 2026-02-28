@@ -24,7 +24,8 @@ func main() {
 	ctx := context.Background()
 	qdrantURL := strings.TrimSuffix(config.LoadString("QDRANT_URL", "http://qdrant:6333"), "/")
 	redisAddr := config.LoadString("REDIS_ADDR", "redis:6379")
-	embedModel := config.LoadString("EMBEDDING_MODEL", "")
+	embedAPIBase := strings.TrimSuffix(config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1"), "/")
+	embedModel := config.LoadString("EMBEDDING_MODEL", "BAAI/bge-m3")
 	rerankModel := config.LoadString("RERANK_MODEL", "")
 	maxRerank := config.LoadInt("MAX_INFLIGHT_RERANK", 16)
 	maxEmbed := config.LoadInt("MAX_INFLIGHT_EMBED", 32)
@@ -43,6 +44,7 @@ func main() {
 
 	handler := &MCPReadHandler{
 		qdrantURL:     qdrantURL,
+		embedAPIBase:  embedAPIBase,
 		redis:         rdb,
 		embedModel:    embedModel,
 		rerankModel:   rerankModel,
@@ -73,6 +75,7 @@ func requestIDMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 type MCPReadHandler struct {
 	qdrantURL     string
+	embedAPIBase  string
 	redis         *redis.Client
 	embedModel    string
 	rerankModel   string
@@ -85,7 +88,7 @@ type BuildContextRequest struct {
 	ACLToken        string `json:"acl_token"`
 	TokenBudget     int    `json:"token_budget"`
 	Mode            string `json:"mode"`
-	AttachmentsText string `json:"attachments_text_optional"`
+	AttachmentsText string `json:"attachments_text"`
 }
 
 type BuildContextResponse struct {
@@ -103,6 +106,53 @@ type qdrantSearchResult struct {
 	Result []struct {
 		Payload map[string]interface{} `json:"payload"`
 	} `json:"result"`
+}
+
+// OpenAI-compatible embeddings request/response
+type embedReq struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+type embedResp struct {
+	Data []struct {
+		Embedding []float64 `json:"embedding"`
+	} `json:"data"`
+}
+
+// embedQuery возвращает вектор запроса через vLLM /v1/embeddings; при ошибке — нулевой вектор заданной размерности.
+func (h *MCPReadHandler) embedQuery(ctx context.Context, query string) []float32 {
+	fallbackDim := config.LoadInt("EMBEDDING_DIMENSION", 1024)
+	if query == "" {
+		return make([]float32, fallbackDim)
+	}
+	body := embedReq{Model: h.embedModel, Input: query}
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.embedAPIBase+"/embeddings", bytes.NewReader(payload))
+	if err != nil {
+		log.Warn(ctx, "embed request build", logging.KV{"error", err})
+		return make([]float32, fallbackDim)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Warn(ctx, "embed request", logging.KV{"error", err})
+		return make([]float32, fallbackDim)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Warn(ctx, "embed non-200", logging.KV{"status", resp.StatusCode})
+		return make([]float32, fallbackDim)
+	}
+	var emb embedResp
+	if err := json.NewDecoder(resp.Body).Decode(&emb); err != nil || len(emb.Data) == 0 {
+		return make([]float32, fallbackDim)
+	}
+	vec64 := emb.Data[0].Embedding
+	vec := make([]float32, len(vec64))
+	for i, v := range vec64 {
+		vec[i] = float32(v)
+	}
+	return vec
 }
 
 func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
@@ -138,16 +188,9 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.embedLimiter.Release()
 
-	// When embed model not set: return empty context (graceful)
-	if h.embedModel == "" {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
-		return
-	}
-
 	collectionName := "chunks"
-	// Dummy vector for MVP (replace with real embed API call)
-	vec := make([]float32, 384)
+	// Вектор запроса через vLLM /v1/embeddings; при ошибке — нулевой вектор (поиск всё равно выполнится)
+	vec := h.embedQuery(ctx, req.QueryText)
 	trueVal := true
 	body := qdrantSearchReq{Vector: vec, Limit: 20, WithPayload: &trueVal}
 	payload, _ := json.Marshal(body)
@@ -182,6 +225,13 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	contextText := strings.Join(texts, "\n\n")
 	if len(contextText) > req.TokenBudget*4 {
 		contextText = contextText[:req.TokenBudget*4]
+	}
+	if req.AttachmentsText != "" {
+		attach := strings.TrimSpace(req.AttachmentsText)
+		if len(attach) > req.TokenBudget*2 {
+			attach = attach[:req.TokenBudget*2]
+		}
+		contextText = attach + "\n\n" + contextText
 	}
 
 	if h.redis != nil {
