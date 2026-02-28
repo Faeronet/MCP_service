@@ -151,6 +151,8 @@ services:
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
       # Кэш Hugging Face в ./models (загрузки по MODEL_NAME сохраняются в проекте)
       HF_HOME: /models
+      # Режим совместимости CUDA для старых драйверов (при Error 803). Работает на части GPU (datacenter/pro).
+      VLLM_ENABLE_CUDA_COMPATIBILITY: ${VLLM_ENABLE_CUDA_COMPATIBILITY:-1}
     ports:
       - "8000:8000"
     profiles:
