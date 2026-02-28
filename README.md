@@ -20,10 +20,10 @@ export POSTGRES_DSN="postgres://postgres:postgres@localhost:5432/assistant?sslmo
 for f in migrations/*.up.sql; do psql "$POSTGRES_DSN" -f "$f"; done
 
 # С профилем observability (Grafana)
-docker compose --profile observability up -d
+docker compose up -d
 
-# С GPU (vLLM на видеокарте)
-docker compose --profile gpu up -d
+# Все сервисы, включая vLLM (GPU) и Grafana, запускаются одной командой:
+docker compose up -d
 ```
 
 Одна команда поднятия всей инфраструктуры и приложений:
@@ -44,19 +44,7 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 3. **Прокси/VPN** — если доступ в интернет только через прокси или VPN, настройте их для демона Docker.
 4. **Зеркало** — если в сети есть корпоративное зеркало Docker Hub, укажите его в `daemon.json` в `registry-mirrors`.
 
-## Профили Docker Compose
-
-| Профиль | Описание |
-|--------|----------|
-| (нет) | postgres, minio, rabbitmq, redis, qdrant, loki, promtail, все app-сервисы |
-| `observability` | + Grafana |
-| `gpu` | + vLLM с резервацией GPU |
-
-Пример:
-
-```bash
-docker compose --profile observability --profile gpu up -d
-```
+Все сервисы запускаются по умолчанию и перезапускаются при падении или после перезагрузки хоста (`restart: unless-stopped`).
 
 ## Устранение неполадок
 
@@ -155,7 +143,7 @@ curl -X POST http://localhost:8080/api/upload -H "Authorization: Bearer <JWT>" -
 Инфраструктура готова, конфигурация — через env, без хардкода:
 
 - **VLLM_OPENAI_BASE** — базовый URL OpenAI-compatible API (vLLM).
-- **VLLM_MODEL_NAME**, **VLLM_MODEL_PATH** — для сервиса vLLM (profile gpu).
+- **VLLM_MODEL_NAME**, **VLLM_MODEL_PATH** — для сервиса vLLM.
 - **EMBEDDING_MODEL**, **RERANK_MODEL** — опционально для mcp-read (если пусто — graceful degradation, пустой context или без rerank).
 
 Если модели не настроены, сервисы стартуют и возвращают понятные ошибки (например MODEL_NOT_CONFIGURED / COLLECTION_NOT_READY).
