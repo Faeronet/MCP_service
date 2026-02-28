@@ -160,7 +160,7 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
-      MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
+      MODEL_NAME: ${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
       HF_HOME: /models
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
@@ -225,7 +225,8 @@ services:
       MCP_READ_URL: http://mcp-read:8082
       # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      LLM_MODEL: ${LLM_MODEL:-default}
+      # Имя модели в запросах к vLLM должно совпадать с загруженной (VLLM_MODEL_NAME). Иначе 404 «model default does not exist».
+      LLM_MODEL: ${LLM_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}

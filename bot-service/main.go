@@ -74,7 +74,8 @@ func main() {
 	deboounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
 	vllmBase := config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
-	llmModel := config.LoadString("LLM_MODEL", "default")
+	// Должно совпадать с моделью, загруженной в vLLM (VLLM_MODEL_NAME), иначе vLLM вернёт 404 «model default does not exist»
+	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
 
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
