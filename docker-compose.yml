@@ -139,9 +139,10 @@ services:
     depends_on:
       - loki
 
-  # vLLM: при драйвере 580 и CUDA 13 на хосте используем образ cu130. Иначе — latest или задайте VLLM_IMAGE.
+  # vLLM: образ cu130 под драйвер 580/CUDA 13. При Error 803 проверьте nvidia-ctk (см. README).
   vllm:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.16.0-cu130}
+    runtime: nvidia
     deploy:
       resources:
         reservations:
