@@ -90,17 +90,37 @@ def main():
             channel.basic_ack(delivery_tag=method.delivery_tag)
         except Exception as e:
             log.exception("job failed")
+            err_msg = str(e)
             if payload and payload.get("job_id"):
                 try:
+                    doc_id = None
+                    if payload.get("doc_id"):
+                        try:
+                            doc_id = uuid.UUID(payload["doc_id"])
+                        except (ValueError, TypeError):
+                            pass
                     with psycopg.connect(POSTGRES_DSN) as pg:
                         cur = pg.cursor()
+                        jid = uuid.UUID(payload["job_id"])
+                        cur.execute(
+                            "UPDATE core.job_steps SET status = 'failed', detail = %s::jsonb WHERE job_id = %s AND step_name = 'ingest'",
+                            (json.dumps({"error": err_msg}), jid),
+                        )
                         cur.execute(
                             "UPDATE core.jobs SET status = 'failed', updated_at = NOW() WHERE id = %s",
-                            (uuid.UUID(payload["job_id"]),),
+                            (jid,),
                         )
                         pg.commit()
-                except Exception:
-                    pass
+                        # Удалить неудачный документ из списка: job_steps (CASCADE при удалении job), job, versions, doc
+                        if doc_id:
+                            cur.execute("DELETE FROM core.job_steps WHERE job_id = %s", (jid,))
+                            cur.execute("DELETE FROM core.jobs WHERE id = %s", (jid,))
+                            cur.execute("DELETE FROM core.versions WHERE doc_id = %s", (doc_id,))
+                            cur.execute("DELETE FROM core.docs WHERE id = %s", (doc_id,))
+                            pg.commit()
+                            log.info("removed failed doc %s from list", doc_id)
+                except Exception as cleanup_err:
+                    log.warning("cleanup after failed job: %s", cleanup_err)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     ch.basic_consume("ingestion_jobs", on_message_callback=on_message)

@@ -1,4 +1,6 @@
 # Стек GPU: CUDA 12.4 (nvidia/cuda:12.4.0-runtime-ubuntu22.04 для проверки и своих образов).
+# vLLM запускается только с профилем: docker compose --profile vllm up -d
+# Остановка с vLLM: docker compose --profile vllm down
 services:
   postgres:
     image: postgres:16-alpine

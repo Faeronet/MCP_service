@@ -77,11 +77,13 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 
 Если после шага 2 при `docker compose --profile vllm up -d` появляется **«could not select device driver "nvidia" with capabilities: [[gpu]]»** — значит рантайм не подхватился: снова выполните `sudo nvidia-ctk runtime configure --runtime=docker` и `sudo systemctl restart docker`, затем повторите запуск.
 
-**vLLM в контейнере (сервис vllm):** чтобы бот видел LLM, стек нужно поднимать **с профилем vllm**, иначе контейнер vllm не создаётся и хостнейм `vllm` недоступен → «model is not configured or unavailable»:
+**vLLM в контейнере (сервис vllm):** чтобы бот видел LLM, стек нужно поднимать **и останавливать с профилем vllm**, иначе контейнер vllm не создаётся и хостнейм `vllm` недоступен → «model is not configured or unavailable»:
 ```bash
 docker compose --profile vllm up -d
+# остановка (вместе с vLLM):
+docker compose --profile vllm down
 ```
-В `.env` не переопределяйте `VLLM_OPENAI_BASE` (должно остаться `http://vllm:8000/v1`). Если vLLM не принимает модель `default`, задайте в `.env` имя загруженной модели, например: `LLM_MODEL=Qwen/Qwen3-0.6B` или как в `VLLM_MODEL_NAME`.
+Без `--profile vllm` при `up` сервис vllm не стартует, при `down` — не останавливается. В `.env` не переопределяйте `VLLM_OPENAI_BASE` (должно остаться `http://vllm:8000/v1`). Если vLLM не принимает модель `default`, задайте в `.env` имя загруженной модели, например: `LLM_MODEL=Qwen/Qwen3-0.6B` или как в `VLLM_MODEL_NAME`.
 
 **vLLM на хосте (не в Docker):** в `.env` задайте `VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1` (на Linux без host.docker.internal — IP хоста), затем `docker compose up -d bot-service mcp-read`.
 
@@ -184,7 +186,7 @@ sudo systemctl restart docker
 
 **Текущее состояние:** в коде заложены переменные окружения и заглушки; полноценные пайплайны нужно дорабатывать.
 
-- **Один vLLM:** по умолчанию используется **один инстанс vLLM** только для чата. Переменная `EMBEDDING_MODEL` пуста — эмбеддинги не вызываются, поиск по Qdrant идёт по нулевому вектору (контекст может быть пустым). Для семантического поиска поднимите в том же vLLM модель эмбеддингов (если поддерживается) или задайте `EMBEDDING_MODEL` и отдельный URL эмбеддингов в `.env`.
+- **Один vLLM:** по умолчанию используется **один инстанс vLLM** только для чата. Переменная `EMBEDDING_MODEL` пуста — эмбеддинги не вызываются, поиск по Qdrant идёт по нулевому вектору, поэтому **бот не отвечает на основе данных из Qdrant**. Чтобы ответы опирались на загруженные документы: поднимите в vLLM модель эмбеддингов (например `vllm serve BAAI/bge-m3 --port 8001` отдельным процессом или вторым контейнером) и задайте в `.env`: `EMBEDDING_MODEL=BAAI/bge-m3`, при другом порте — также `VLLM_OPENAI_BASE` для mcp-read/mcp-write на этот URL. OCR, ASR и реранк в текущей сборке не подключены к vLLM.
 - **Реранк:** mcp-read читает `RERANK_MODEL`, но реранк по ответам Qdrant **не вызывается** — нужно добавить вызов модели реранка после поиска по чанкам.
 - **OCR и ASR:** в attachment-worker заданы `WHISPER_MODEL` и `OCR_MODEL`, но пайплайн обработки вложений (документы, голос) может быть заглушкой — нужна реализация распознавания и индексации.
 - **Связи между чанками:** в Qdrant хранятся только точки в коллекции **chunks**; отдельной коллекции для рёбер/связей нет. Построение графа связей (links) нужно добавлять в mcp-write при инжесте.

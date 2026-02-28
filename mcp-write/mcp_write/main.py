@@ -45,6 +45,12 @@ async def lifespan(app: FastAPI):
         secret_key=MINIO_SECRET,
         secure=False,
     )
+    try:
+        if not minio_client.bucket_exists(MINIO_BUCKET):
+            minio_client.make_bucket(MINIO_BUCKET)
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning("minio bucket check: %s", e)
     # Ensure collection exists (create_collection is idempotent: 409 = already exists)
     try:
         qdrant.create_collection(
@@ -122,17 +128,26 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     parts = req.file_uri[8:].split("/", 1)
     bucket = parts[0]
     key = parts[1] if len(parts) > 1 else ""
+    if not key:
+        raise HTTPException(status_code=400, detail="file_uri key is empty")
 
-    # Placeholder: fetch object and split into chunks (in real impl use PyPDF/txt splitter)
     try:
         obj = minio_client.get_object(bucket, key)
-        raw = obj.read().decode(errors="replace")
+        data = obj.read()
         obj.close()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"minio get failed: {e}")
+        raise HTTPException(status_code=400, detail=f"minio get failed: {e!s}")
+
+    try:
+        raw = data.decode(errors="replace")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"decode failed: {e!s}")
 
     # Simple chunking: by paragraph
     chunks_text = [p.strip() for p in raw.split("\n\n") if p.strip()][:50]
+    if not chunks_text:
+        return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
+
     points = []
     for i, text in enumerate(chunks_text):
         section_path = f"sec_{i}"
@@ -156,8 +171,16 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             )
         )
 
-    # Upsert-only
-    qdrant.upsert(COLLECTION, points=points)
+    try:
+        qdrant.upsert(COLLECTION, points=points)
+    except Exception as e:
+        err = f"{e!s}"
+        if "dimension" in err.lower() or "vector" in err.lower() or "size" in err.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=f"qdrant upsert failed (vector size?): {err}. Try dropping collection 'chunks' and re-uploading.",
+            )
+        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
     return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
 
 
