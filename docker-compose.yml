@@ -144,7 +144,7 @@ services:
   vllm:
     profiles:
       - vllm
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    image: vllm/vllm-openai:v0.16.0
     deploy:
       resources:
         limits:
@@ -163,7 +163,8 @@ services:
       MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
       HF_HOME: /models
-      #VLLM_ENABLE_CUDA_COMPATIBILITY: ${VLLM_ENABLE_CUDA_COMPATIBILITY:-1}
+      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
+      VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8000:8000"
     restart: unless-stopped
