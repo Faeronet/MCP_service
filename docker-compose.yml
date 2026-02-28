@@ -229,6 +229,8 @@ services:
       MCP_READ_URL: http://mcp-read:8082
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
     depends_on:
@@ -258,6 +260,8 @@ services:
       EMBED_CACHE_TTL_SEC: ${EMBED_CACHE_TTL:-30}
       MAX_INFLIGHT_RERANK: ${MAX_INFLIGHT_RERANK:-16}
       MAX_INFLIGHT_EMBED: ${MAX_INFLIGHT_EMBED:-32}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8082:8082"
     depends_on:
@@ -284,6 +288,8 @@ services:
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8001:8001"
     depends_on:

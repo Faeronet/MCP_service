@@ -86,6 +86,34 @@ sudo systemctl restart docker
 
 Альтернатива: [драйвер с сайта NVIDIA](https://www.nvidia.com/Download/index.aspx) (выберите видеокарту и ОС).
 
+### Вариант: vLLM на хосте (если в Docker стабильно Error 803)
+
+При драйвере 580 и установленном toolkit ошибка 803 в контейнере иногда остаётся из‑за особенностей передачи драйвера. Можно запустить vLLM **на хосте** (без Docker) и подключать к нему остальные сервисы:
+
+1. **Установка на хосте** (Python 3.10–3.12):
+   ```bash
+   pip install vllm
+   # или: uv pip install vllm --torch-backend=auto
+   ```
+
+2. **Запуск сервера на порту 8000:**
+   ```bash
+   vllm serve --model Qwen/Qwen3-0.6B --port 8000
+   ```
+   Оставьте процесс запущенным (или запустите в screen/tmux).
+
+3. **Остановить контейнер vLLM и указать адрес хоста в `.env`:**
+   ```bash
+   docker compose stop vllm
+   ```
+   В `.env` задайте (подставьте IP хоста, с которого контейнеры ходят в vLLM; на той же машине — `host.docker.internal` или `172.17.0.1`):
+   ```
+   VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1
+   ```
+   На Linux без `host.docker.internal` используйте IP интерфейса хоста (например `192.168.x.x`) или добавьте в `docker-compose.yml` для сервисов, которым нужен vLLM: `extra_hosts: - "host.docker.internal:host-gateway"`.
+
+4. Остальные сервисы (bot-service, mcp-write и т.д.) будут обращаться к vLLM по этому URL.
+
 ## Структура репозитория
 
 ```
