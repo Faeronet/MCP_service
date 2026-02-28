@@ -5,4 +5,12 @@ import path from 'path'
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
+  server: {
+    proxy: {
+      '/api': {
+        target: (process.env.VITE_API_URL && process.env.VITE_API_URL.trim()) ? process.env.VITE_API_URL.trim() : 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
+  },
 })

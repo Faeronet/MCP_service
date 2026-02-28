@@ -205,6 +205,21 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"docs": docs})
 }
 
+// DocsWithID: GET /api/docs/ -> ListDocs, DELETE /api/docs/<id> -> DeleteDoc
+func (h *Handler) DocsWithID(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.ListDocs(w, r)
+		return
+	case http.MethodDelete:
+		h.DeleteDoc(w, r)
+		return
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+}
+
 func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

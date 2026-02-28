@@ -8,6 +8,7 @@ export function Docs() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [page, setPage] = useState(1)
   const [fileName, setFileName] = useState('')
 
@@ -23,6 +24,11 @@ export function Docs() {
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (!success) return
+    const t = setTimeout(() => setSuccess(''), 4000)
+    return () => clearTimeout(t)
+  }, [success])
 
   const total = docs.length
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -37,11 +43,14 @@ export function Docs() {
     setFileName(file.name)
     setUploading(true)
     setError('')
+    setSuccess('')
     try {
       await uploadFile(file, file.name)
+      setSuccess('Файл загружен.')
+      setFileName('')
       await load()
     } catch (err) {
-      setError(String(err))
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
     }
@@ -51,11 +60,13 @@ export function Docs() {
   const onDelete = async (docId: string, docName: string) => {
     if (!window.confirm(`Удалить документ «${docName}»? Чанки будут удалены из поиска.`)) return
     setError('')
+    setSuccess('')
     try {
       await deleteDoc(docId)
+      setSuccess('Документ удалён.')
       await load()
     } catch (err) {
-      setError(String(err))
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -77,6 +88,7 @@ export function Docs() {
           {uploading && <span className="text-muted">Загрузка…</span>}
         </div>
         {error && <p className="text-error" style={{ marginBottom: 0 }}>{error}</p>}
+        {success && <p className="text-muted" style={{ marginBottom: 0, color: 'var(--color-success, #0a0)' }}>{success}</p>}
       </div>
       <div className="content-panel">
         {loading ? (

@@ -88,7 +88,7 @@ func main() {
 	mux.HandleFunc("/api/login/", handler.Login)
 	mux.Handle("/api/upload", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Upload)))
 	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListDocs)))
-	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.DeleteDoc)))
+	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.DocsWithID)))
 	mux.Handle("/api/jobs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListJobs)))
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))

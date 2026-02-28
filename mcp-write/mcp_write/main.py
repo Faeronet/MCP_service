@@ -25,7 +25,7 @@ MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
 VLLM_BASE = os.getenv("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")  # или модель с vLLM; размерность из ответа API
+EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or "").strip()  # пусто = один vLLM (чат), эмбеддинги нулевые
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", "1024"))  # bge-m3 = 1024; для другой модели задайте в .env
 
 COLLECTION = "chunks"
@@ -80,8 +80,8 @@ def deterministic_edge_id(from_id: str, to_id: str, relation: str) -> str:
 
 
 def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
-    """Вызов vLLM /v1/embeddings. Возвращает список векторов или пустой список при ошибке."""
-    if not texts:
+    """Вызов vLLM /v1/embeddings. Возвращает список векторов или пустой список при ошибке. При пустом EMBEDDING_MODEL не вызываем API (один vLLM только для чата)."""
+    if not texts or not (EMBEDDING_MODEL or "").strip():
         return []
     url = f"{VLLM_BASE.rstrip('/')}/embeddings"
     payload = {"model": EMBEDDING_MODEL, "input": texts[0] if len(texts) == 1 else texts}

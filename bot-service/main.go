@@ -236,10 +236,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 
 	contextText, err := b.buildContext(ctx, requestID, msg.Text, "", 4000, "default")
 	if err != nil {
-		log.Error(ctx, "build_context", logging.KV{"error", err})
-		_ = b.appendMessage(ctx, sessionID, "assistant", "Sorry, retrieval is temporarily unavailable.")
-		b.sendReply(ctx, chatID, "Sorry, retrieval is temporarily unavailable.")
-		return
+		log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
+		contextText = ""
 	}
 
 	reply, err := b.callLLM(ctx, requestID, contextText, msg.Text)

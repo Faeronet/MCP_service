@@ -25,7 +25,7 @@ func main() {
 	qdrantURL := strings.TrimSuffix(config.LoadString("QDRANT_URL", "http://qdrant:6333"), "/")
 	redisAddr := config.LoadString("REDIS_ADDR", "redis:6379")
 	embedAPIBase := strings.TrimSuffix(config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1"), "/")
-	embedModel := config.LoadString("EMBEDDING_MODEL", "BAAI/bge-m3")
+	embedModel := config.LoadString("EMBEDDING_MODEL", "") // пусто = один vLLM только для чата, поиск по нулевому вектору
 	rerankModel := config.LoadString("RERANK_MODEL", "")
 	maxRerank := config.LoadInt("MAX_INFLIGHT_RERANK", 16)
 	maxEmbed := config.LoadInt("MAX_INFLIGHT_EMBED", 32)
@@ -119,10 +119,10 @@ type embedResp struct {
 	} `json:"data"`
 }
 
-// embedQuery возвращает вектор запроса через vLLM /v1/embeddings; при ошибке — нулевой вектор заданной размерности.
+// embedQuery возвращает вектор запроса через vLLM /v1/embeddings; при ошибке или если модель не задана — нулевой вектор.
 func (h *MCPReadHandler) embedQuery(ctx context.Context, query string) []float32 {
 	fallbackDim := config.LoadInt("EMBEDDING_DIMENSION", 1024)
-	if query == "" {
+	if query == "" || h.embedModel == "" {
 		return make([]float32, fallbackDim)
 	}
 	body := embedReq{Model: h.embedModel, Input: query}
@@ -182,8 +182,8 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.embedLimiter.Acquire(ctx); err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Error: "embed rate limit"})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
 		return
 	}
 	defer h.embedLimiter.Release()
@@ -198,21 +198,23 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		log.Error(ctx, "qdrant request", logging.KV{"error", err})
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Error: "QDRANT_UNAVAILABLE"})
+		log.Warn(ctx, "qdrant request failed, returning empty context", logging.KV{"error", err})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Error: "COLLECTION_NOT_READY"})
+		log.Warn(ctx, "qdrant non-200, returning empty context", logging.KV{"status", resp.StatusCode})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
 		return
 	}
 	var searchRes qdrantSearchResult
 	if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Error: "QDRANT_QUERY_FAILED"})
+		log.Warn(ctx, "qdrant decode failed, returning empty context", logging.KV{"error", err})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
 		return
 	}
 
