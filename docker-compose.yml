@@ -163,7 +163,7 @@ services:
       MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
       HF_HOME: /models
-      VLLM_ENABLE_CUDA_COMPATIBILITY: ${VLLM_ENABLE_CUDA_COMPATIBILITY:-1}
+      #VLLM_ENABLE_CUDA_COMPATIBILITY: ${VLLM_ENABLE_CUDA_COMPATIBILITY:-1}
     ports:
       - "8000:8000"
     restart: unless-stopped
