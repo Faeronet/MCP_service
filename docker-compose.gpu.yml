@@ -1,6 +1,6 @@
 # Опциональный override: мониторинг GPU в админке (nvidia-smi).
 # Использование: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
-# Требует: NVIDIA Container Toolkit (см. README — «Запуск на ПК с игровой видеокартой»).
+# Требует: NVIDIA Container Toolkit. Стек: CUDA 12.4 (см. README).
 services:
   admin-backend:
     deploy:

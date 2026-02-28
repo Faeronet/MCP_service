@@ -1,6 +1,9 @@
 # Разделение двух GPU: первая — LLM (vLLM), вторая — эмбеддинг, реранк, OCR, ASR.
 # Использование: docker compose -f docker-compose.yml -f docker-compose.2gpu.yml --profile vllm up -d
-# Требует: 2 GPU и NVIDIA Container Toolkit.
+# Требует: 2 GPU, NVIDIA Container Toolkit. Ориентир по стеку: CUDA 12.4.
+#
+# Сборка образов под вторую карту (CUDA 12.4): базовый образ nvidia/cuda:12.4.0-runtime-ubuntu22.04,
+# PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu124
 #
 # GPU 0 — vLLM (LLM)
 # GPU 1 — mcp-read (embed, rerank), mcp-write (embed, rerank), attachment-worker (Whisper/ASR, PaddleOCR)

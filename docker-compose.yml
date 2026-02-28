@@ -1,3 +1,4 @@
+# Стек GPU: CUDA 12.4 (nvidia/cuda:12.4.0-runtime-ubuntu22.04 для проверки и своих образов).
 services:
   postgres:
     image: postgres:16-alpine
@@ -139,7 +140,7 @@ services:
     depends_on:
       - loki
 
-  # vLLM: по умолчанию не запускается (профиль vllm). При двух GPU — первая отдаётся под LLM (см. docker-compose.2gpu.yml).
+  # vLLM (CUDA 12.4): по умолчанию не запускается (профиль vllm). Работает на всех GPU. Разделение по картам — docker-compose.2gpu.yml.
   vllm:
     profiles:
       - vllm
@@ -149,13 +150,12 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
-      # GPU 0 под LLM; при одной карте — она же. Для двух GPU используйте docker-compose.2gpu.yml.
-      NVIDIA_VISIBLE_DEVICES: ${VLLM_GPU_ID:-0}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}

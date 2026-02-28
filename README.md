@@ -68,7 +68,7 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
    ```
 3. Проверьте, что контейнер видит GPU:
    ```bash
-   docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi
+   docker run --rm --gpus all nvidia/cuda:12.4.0-runtime-ubuntu22.04 nvidia-smi
    ```
 4. Запустите стек с vLLM (одна GPU, подходит для 3080 Ti):
    ```bash
@@ -93,7 +93,7 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 docker compose -f docker-compose.yml -f docker-compose.2gpu.yml --profile vllm up -d
 ```
 
-Используется override **docker-compose.2gpu.yml**: он выставляет контейнерам доступ к обеим картам и переменные `NVIDIA_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES`, чтобы vLLM видел только GPU 0, а остальные сервисы — только GPU 1. Для работы эмбеддинга/реранка/OCR/ASR на GPU образы mcp-write и attachment-worker должны собираться с поддержкой CUDA (сейчас attachment-worker на python:3.12-slim без GPU; при необходимости замените базовый образ на nvidia/cuda и установите PyTorch с CUDA).
+Используется override **docker-compose.2gpu.yml**: он выставляет контейнерам доступ к обеим картам и переменные `NVIDIA_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES`, чтобы vLLM видел только GPU 0, а остальные сервисы — только GPU 1. Проект ориентирован на **CUDA 12.4**: для сборки своих образов под вторую карту используйте базовый образ `nvidia/cuda:12.4.0-runtime-ubuntu22.04` и PyTorch `cu124`. Сейчас attachment-worker и mcp-write идут на python:3.12-slim без GPU; для работы на GPU пересоберите их на базе CUDA 12.4 (см. комментарии в docker-compose.2gpu.yml).
 
 ## Устранение неполадок
 
@@ -102,7 +102,7 @@ docker compose -f docker-compose.yml -f docker-compose.2gpu.yml --profile vllm u
 Ошибка означает несовместимость **драйвера на хосте** и **CUDA в контейнере**. Сначала проверьте, что контейнеры видят GPU:
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.4.0-runtime-ubuntu22.04 nvidia-smi
 ```
 
 Если здесь тоже 803 или нет GPU — настройте NVIDIA Container Toolkit и рантайм:
@@ -112,7 +112,7 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 ```
 
-После этого снова `docker compose up -d vllm`. Если ошибка остаётся — обновите драйвер на хосте до версии ≥ 525 (для CUDA 12.x):
+После этого снова `docker compose up -d vllm`. Если ошибка остаётся — обновите драйвер на хосте до версии ≥ 525 (для CUDA 12.4 — актуальный драйвер из пакетов или с сайта NVIDIA):
 
 1. Текущая версия драйвера:
    ```bash
@@ -135,7 +135,7 @@ sudo systemctl restart docker
 
 Альтернатива: [драйвер с сайта NVIDIA](https://www.nvidia.com/Download/index.aspx) (выберите видеокарту и ОС).
 
-**Совпадение с [ai-tg-bot-for-rag](https://github.com/Faeronet/ai-tg-bot-for-rag):** там GPU-сервисы (stt, hf-router) поднимаются с образом `nvidia/cuda:12.1.1-runtime-ubuntu22.04`, PyTorch из `cu121`, переменными `NVIDIA_VISIBLE_DEVICES=all` и `NVIDIA_DRIVER_CAPABILITIES=compute,utility` и резервированием одной GPU (`count: 1`). Здесь для vLLM включены те же переменные и `count: 1`; если у вас в том репозитории stt/hf-router в Docker работают, а vLLM здесь — нет, причина в разном CUDA внутри образов (vLLM тянет свой PyTorch/CUDA). Тогда остаётся вариант «vLLM на хосте» ниже.
+**CUDA 12.4:** проверка GPU в контейнере и рекомендуемый базовый образ для своих сборок (эмбеддинг, реранк, OCR, ASR) — `nvidia/cuda:12.4.0-runtime-ubuntu22.04`; PyTorch для второй карты: `pip install torch --index-url https://download.pytorch.org/whl/cu124`. Образ vLLM (vllm/vllm-openai) собирается со своим CUDA; при несовместимости драйвера используйте вариант «vLLM на хосте» ниже.
 
 ### Вариант: vLLM на хосте (если в Docker стабильно Error 803)
 
