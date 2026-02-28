@@ -142,9 +142,14 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    volumes:
+      - ./models:/models
     environment:
-      MODEL_NAME: ${VLLM_MODEL_NAME:-}
+      MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
+      # Кэш Hugging Face в ./models (загрузки по MODEL_NAME сохраняются в проекте)
+      TRANSFORMERS_CACHE: /models
+      HF_HOME: /models
     ports:
       - "8000:8000"
     profiles:
@@ -237,8 +242,8 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
-      RERANK_MODEL: ${RERANK_MODEL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       REDIS_ADDR: redis:6379
       RETRIEVAL_CACHE_TTL_SEC: ${MCP_READ_CACHE_TTL:-60}
       EMBED_CACHE_TTL_SEC: ${EMBED_CACHE_TTL:-30}
@@ -267,6 +272,8 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-documents}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
     ports:
       - "8001:8001"
     depends_on:
@@ -307,6 +314,8 @@ services:
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
       WORKER_CONCURRENCY: ${ATTACHMENT_WORKER_CONCURRENCY:-4}
+      WHISPER_MODEL: ${WHISPER_MODEL:-openai/whisper-large-v3}
+      OCR_MODEL: ${OCR_MODEL:-PaddlePaddle/PaddleOCR-VL-1.5}
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }

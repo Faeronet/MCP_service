@@ -22,6 +22,8 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 BUCKET = os.getenv("MINIO_ATTACHMENTS_BUCKET", "attachments")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3")
+OCR_MODEL = os.getenv("OCR_MODEL", "PaddlePaddle/PaddleOCR-VL-1.5")
 
 ALLOWED_EXTENSIONS = {".txt", ".pdf", ".jpg", ".jpeg", ".png", ".ogg", ".mp3"}
 
@@ -64,7 +66,11 @@ def main():
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     ch.basic_consume("attachment_jobs", on_message_callback=on_message)
-    log.info("attachment-worker consuming attachment_jobs")
+    log.info(
+        "attachment-worker consuming attachment_jobs (WHISPER_MODEL=%s, OCR_MODEL=%s)",
+        WHISPER_MODEL,
+        OCR_MODEL,
+    )
     ch.start_consuming()
 
 
