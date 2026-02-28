@@ -25,7 +25,8 @@ MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
 VLLM_BASE = os.getenv("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
-EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or "").strip()  # пусто = один vLLM (чат), эмбеддинги нулевые
+EMBED_API_URL = (os.getenv("EMBED_API_URL") or "").strip()
+EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or "BAAI/bge-m3").strip()
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", "1024"))  # bge-m3 = 1024; для другой модели задайте в .env
 
 COLLECTION = "chunks"
@@ -86,10 +87,11 @@ def deterministic_edge_id(from_id: str, to_id: str, relation: str) -> str:
 
 
 def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
-    """Вызов vLLM /v1/embeddings. Возвращает список векторов или пустой список при ошибке. При пустом EMBEDDING_MODEL не вызываем API (один vLLM только для чата)."""
-    if not texts or not (EMBEDDING_MODEL or "").strip():
+    """Вызов vLLM /v1/embeddings (EMBED_API_URL или VLLM_OPENAI_BASE)."""
+    if not texts:
         return []
-    url = f"{VLLM_BASE.rstrip('/')}/embeddings"
+    base = (EMBED_API_URL or VLLM_BASE).rstrip("/")
+    url = f"{base}/embeddings"
     payload = {"model": EMBEDDING_MODEL, "input": texts[0] if len(texts) == 1 else texts}
     try:
         with httpx.Client(timeout=60.0) as client:
@@ -182,6 +184,30 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             )
         raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
     return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
+
+
+@app.get("/mcp/doc_ids")
+def list_doc_ids_in_qdrant() -> dict[str, Any]:
+    """Список doc_id, для которых есть хотя бы один чанк в Qdrant (для фильтра списка документов в админке)."""
+    if qdrant is None:
+        raise HTTPException(status_code=503, detail="service not ready")
+    seen: set[str] = set()
+    offset = None
+    while True:
+        points, next_offset = qdrant.scroll(
+            collection_name=COLLECTION,
+            limit=500,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for pt in points:
+            if pt.payload and "doc_id" in pt.payload:
+                seen.add(str(pt.payload["doc_id"]))
+        if next_offset is None:
+            break
+        offset = next_offset
+    return {"doc_ids": list(seen)}
 
 
 @app.delete("/doc/{doc_id}")

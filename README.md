@@ -83,7 +83,7 @@ docker compose --profile vllm up -d
 # остановка (вместе с vLLM):
 docker compose --profile vllm down
 ```
-Без `--profile vllm` при `up` сервис vllm не стартует, при `down` — не останавливается. В `.env` не переопределяйте `VLLM_OPENAI_BASE` (должно остаться `http://vllm:8000/v1`). Если vLLM не принимает модель `default`, задайте в `.env` имя загруженной модели, например: `LLM_MODEL=Qwen/Qwen3-0.6B` или как в `VLLM_MODEL_NAME`.
+Без `--profile vllm` при `up` сервис vllm не стартует, при `down` — не останавливается. Если контейнер vLLM остаётся после `down` — возможно, он был запущен вручную или из другой папки; выполните `docker ps`, найдите контейнер (например `...-vllm-1`) и остановите: `docker stop <container>` или из каталога проекта `docker compose --profile vllm down`. В `.env` не переопределяйте `VLLM_OPENAI_BASE` (должно остаться `http://vllm:8000/v1`). Если vLLM не принимает модель `default`, задайте в `.env` имя загруженной модели, например: `LLM_MODEL=Qwen/Qwen3-0.6B` или как в `VLLM_MODEL_NAME`.
 
 **vLLM на хосте (не в Docker):** в `.env` задайте `VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1` (на Linux без host.docker.internal — IP хоста), затем `docker compose up -d bot-service mcp-read`.
 
@@ -186,7 +186,9 @@ sudo systemctl restart docker
 
 **Текущее состояние:** в коде заложены переменные окружения и заглушки; полноценные пайплайны нужно дорабатывать.
 
-- **Один vLLM:** по умолчанию используется **один инстанс vLLM** только для чата. Переменная `EMBEDDING_MODEL` пуста — эмбеддинги не вызываются, поиск по Qdrant идёт по нулевому вектору, поэтому **бот не отвечает на основе данных из Qdrant**. Чтобы ответы опирались на загруженные документы: поднимите в vLLM модель эмбеддингов (например `vllm serve BAAI/bge-m3 --port 8001` отдельным процессом или вторым контейнером) и задайте в `.env`: `EMBEDDING_MODEL=BAAI/bge-m3`, при другом порте — также `VLLM_OPENAI_BASE` для mcp-read/mcp-write на этот URL. OCR, ASR и реранк в текущей сборке не подключены к vLLM.
+- **vLLM для чата и эмбеддингов:** при `docker compose --profile vllm up -d` поднимаются два контейнера: **vllm** (чат, Qwen) и **vllm-embed** (эмбеддинги, BAAI/bge-m3). mcp-read и mcp-write используют `EMBED_API_URL=http://vllm-embed:8000/v1` для семантического поиска по Qdrant.
+- **Реранк:** задайте `RERANK_API_URL` на сервис с `POST /rerank` (тело: `query`, `documents`, `model`; ответ: `results[]` с `index` и `relevance_score` или `scores[]`). Реранкер (например FlagEmbedding) — отдельный сервис, не входит в образ vLLM.
+- **OCR и ASR:** задайте `OCR_SERVICE_URL` и `ASR_SERVICE_URL` на сервисы с `POST /ocr` и `POST /asr` (multipart file → JSON `{"text": "..."}`). attachment-worker вызывает их для картинок/PDF и аудио. Реализации (PaddleOCR, Whisper) — отдельные контейнеры, не vLLM.
 - **Реранк:** mcp-read читает `RERANK_MODEL`, но реранк по ответам Qdrant **не вызывается** — нужно добавить вызов модели реранка после поиска по чанкам.
 - **OCR и ASR:** в attachment-worker заданы `WHISPER_MODEL` и `OCR_MODEL`, но пайплайн обработки вложений (документы, голос) может быть заглушкой — нужна реализация распознавания и индексации.
 - **Связи между чанками:** в Qdrant хранятся только точки в коллекции **chunks**; отдельной коллекции для рёбер/связей нет. Построение графа связей (links) нужно добавлять в mcp-write при инжесте.

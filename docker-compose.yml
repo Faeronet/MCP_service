@@ -173,6 +173,32 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
+  # vLLM для эмбеддингов (тот же образ, другая модель). Чат = vllm:8000, эмбеддинги = vllm-embed:8000.
+  vllm-embed:
+    profiles:
+      - vllm
+    image: vllm/vllm-openai:v0.16.0
+    command: ["--model", "intfloat/multilingual-e5-large", "--port", "8000"]
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/models
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES_EMBED:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      HF_HOME: /models
+      VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
+    ports:
+      - "8002:8000"
+    restart: unless-stopped
+
   # --- Application services ---
   admin-backend:
     build:
@@ -256,9 +282,11 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Пусто = один vLLM (чат); для семантического поиска задайте модель эмбеддингов в vLLM и сюда
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      # Эмбеддинги: при профиле vllm используется vllm-embed (BAAI/bge-m3)
+      EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
+      RERANK_API_URL: ${RERANK_API_URL:-}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       REDIS_ADDR: redis:6379
       RETRIEVAL_CACHE_TTL_SEC: ${MCP_READ_CACHE_TTL:-60}
@@ -291,7 +319,8 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-documents}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -338,6 +367,8 @@ services:
       WORKER_CONCURRENCY: ${ATTACHMENT_WORKER_CONCURRENCY:-4}
       WHISPER_MODEL: ${WHISPER_MODEL:-openai/whisper-large-v3}
       OCR_MODEL: ${OCR_MODEL:-PaddlePaddle/PaddleOCR-VL-1.5}
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-}
+      ASR_SERVICE_URL: ${ASR_SERVICE_URL:-}
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }

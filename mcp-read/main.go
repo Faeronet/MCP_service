@@ -24,9 +24,15 @@ func main() {
 	ctx := context.Background()
 	qdrantURL := strings.TrimSuffix(config.LoadString("QDRANT_URL", "http://qdrant:6333"), "/")
 	redisAddr := config.LoadString("REDIS_ADDR", "redis:6379")
-	embedAPIBase := strings.TrimSuffix(config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1"), "/")
-	embedModel := config.LoadString("EMBEDDING_MODEL", "") // пусто = один vLLM только для чата, поиск по нулевому вектору
-	rerankModel := config.LoadString("RERANK_MODEL", "")
+	embedAPIBase := config.LoadString("EMBED_API_URL", "")
+	if embedAPIBase == "" {
+		embedAPIBase = strings.TrimSuffix(config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1"), "/")
+	} else {
+		embedAPIBase = strings.TrimSuffix(embedAPIBase, "/")
+	}
+	embedModel := config.LoadString("EMBEDDING_MODEL", "BAAI/bge-m3")
+	rerankAPIURL := strings.TrimSuffix(config.LoadString("RERANK_API_URL", ""), "/")
+	rerankModel := config.LoadString("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 	maxRerank := config.LoadInt("MAX_INFLIGHT_RERANK", 16)
 	maxEmbed := config.LoadInt("MAX_INFLIGHT_EMBED", 32)
 
@@ -43,13 +49,14 @@ func main() {
 	embedLimiter := ratelimit.NewInFlight(maxEmbed)
 
 	handler := &MCPReadHandler{
-		qdrantURL:     qdrantURL,
-		embedAPIBase:  embedAPIBase,
-		redis:         rdb,
-		embedModel:    embedModel,
-		rerankModel:   rerankModel,
-		rerankLimiter: rerankLimiter,
-		embedLimiter:  embedLimiter,
+		qdrantURL:      qdrantURL,
+		embedAPIBase:   embedAPIBase,
+		rerankAPIURL:   rerankAPIURL,
+		redis:          rdb,
+		embedModel:     embedModel,
+		rerankModel:    rerankModel,
+		rerankLimiter:  rerankLimiter,
+		embedLimiter:   embedLimiter,
 	}
 
 	mux := http.NewServeMux()
@@ -76,6 +83,7 @@ func requestIDMiddleware(next http.HandlerFunc) http.HandlerFunc {
 type MCPReadHandler struct {
 	qdrantURL     string
 	embedAPIBase  string
+	rerankAPIURL  string
 	redis         *redis.Client
 	embedModel    string
 	rerankModel   string
@@ -224,6 +232,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			texts = append(texts, t)
 		}
 	}
+	if len(texts) > 0 && h.rerankAPIURL != "" && h.rerankModel != "" {
+		if err := h.rerankLimiter.Acquire(ctx); err == nil {
+			texts = h.rerank(ctx, req.QueryText, texts)
+			h.rerankLimiter.Release()
+		}
+	}
 	contextText := strings.Join(texts, "\n\n")
 	if len(contextText) > req.TokenBudget*4 {
 		contextText = contextText[:req.TokenBudget*4]
@@ -246,4 +260,87 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 func normalizeQuery(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
+}
+
+// rerank вызывает RERANK_API_URL и переупорядочивает texts по relevance_score. При ошибке возвращает texts без изменений.
+func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []string) []string {
+	if len(texts) == 0 {
+		return texts
+	}
+	body := map[string]interface{}{
+		"query":     query,
+		"documents": texts,
+		"model":     h.rerankModel,
+	}
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.rerankAPIURL+"/rerank", bytes.NewReader(payload))
+	if err != nil {
+		log.Warn(ctx, "rerank request build", logging.KV{"error", err})
+		return texts
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Warn(ctx, "rerank request", logging.KV{"error", err})
+		return texts
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Warn(ctx, "rerank non-200", logging.KV{"status", resp.StatusCode})
+		return texts
+	}
+	var result struct {
+		Results []struct {
+			Index          int     `json:"index"`
+			RelevanceScore float64 `json:"relevance_score"`
+		} `json:"results"`
+		Scores []float64 `json:"scores"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return texts
+	}
+	// Формат 1: scores[i] = релевантность i-го документа
+	if len(result.Scores) >= len(texts) {
+		type pair struct{ i int; s float64 }
+		ps := make([]pair, len(texts))
+		for i := range texts {
+			ps[i] = pair{i, result.Scores[i]}
+		}
+		for i := 0; i < len(ps); i++ {
+			for j := i + 1; j < len(ps); j++ {
+				if ps[j].s > ps[i].s {
+					ps[i], ps[j] = ps[j], ps[i]
+				}
+			}
+		}
+		out := make([]string, len(texts))
+		for i, p := range ps {
+			out[i] = texts[p.i]
+		}
+		return out
+	}
+	// Формат 2: results[] с index и relevance_score
+	if len(result.Results) > 0 {
+		ps := make([]struct{ i int; s float64 }, len(result.Results))
+		for i, r := range result.Results {
+			ps[i] = struct{ i int; s float64 }{r.Index, r.RelevanceScore}
+		}
+		for i := 0; i < len(ps); i++ {
+			for j := i + 1; j < len(ps); j++ {
+				if ps[j].s > ps[i].s {
+					ps[i], ps[j] = ps[j], ps[i]
+				}
+			}
+		}
+		out := make([]string, 0, len(texts))
+		for _, p := range ps {
+			if p.i >= 0 && p.i < len(texts) {
+				out = append(out, texts[p.i])
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return texts
 }

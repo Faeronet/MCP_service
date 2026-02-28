@@ -1,6 +1,6 @@
 """
 Attachment worker: consume attachment_jobs; unzip/convert/ocr/asr -> extracted_text.
-Sandbox: container limits (no-new-privileges, read-only rootfs in prod); allowlist types.
+OCR_SERVICE_URL / ASR_SERVICE_URL: POST multipart file → JSON {"text": "..."}.
 """
 import os
 import json
@@ -11,6 +11,7 @@ from io import BytesIO
 
 import pika
 import psycopg
+import requests
 from minio import Minio
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -24,6 +25,8 @@ MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 BUCKET = os.getenv("MINIO_ATTACHMENTS_BUCKET", "attachments")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3")
 OCR_MODEL = os.getenv("OCR_MODEL", "PaddlePaddle/PaddleOCR-VL-1.5")
+OCR_SERVICE_URL = (os.getenv("OCR_SERVICE_URL") or "").strip()
+ASR_SERVICE_URL = (os.getenv("ASR_SERVICE_URL") or "").strip()
 
 ALLOWED_EXTENSIONS = {".txt", ".pdf", ".jpg", ".jpeg", ".png", ".ogg", ".mp3"}
 
@@ -44,9 +47,41 @@ def main():
             object_key = payload.get("object_key")
             file_id = payload.get("file_id")
 
-            # Placeholder: no Telegram file download here; assume object already in MinIO or skip
-            # In full impl: get file from Telegram API, put to MinIO, then process
-            extracted = "Attachment received. (OCR/ASR placeholder - configure pipeline for full extraction.)"
+            extracted = "Attachment received."
+            if object_key:
+                try:
+                    obj = minio_client.get_object(BUCKET, object_key)
+                    data = obj.read()
+                    obj.close()
+                except Exception as e:
+                    log.warning("minio get %s: %s", object_key, e)
+                    data = b""
+                if data:
+                    ext = os.path.splitext(object_key)[1].lower()
+                    if ext in (".jpg", ".jpeg", ".png", ".pdf") and OCR_SERVICE_URL:
+                        r = requests.post(
+                            OCR_SERVICE_URL.rstrip("/") + "/ocr",
+                            files={"file": (os.path.basename(object_key), data, "application/octet-stream")},
+                            timeout=60,
+                        )
+                        if r.status_code == 200:
+                            out = r.json()
+                            extracted = out.get("text", extracted)
+                    elif ext in (".ogg", ".mp3", ".wav", ".m4a") and ASR_SERVICE_URL:
+                        r = requests.post(
+                            ASR_SERVICE_URL.rstrip("/") + "/asr",
+                            files={"file": (os.path.basename(object_key), data, "audio/ogg")},
+                            timeout=120,
+                        )
+                        if r.status_code == 200:
+                            out = r.json()
+                            extracted = out.get("text", extracted)
+                    elif ext == ".txt":
+                        extracted = data.decode(errors="replace")
+                else:
+                    extracted = "Attachment received. (File empty or not in MinIO.)"
+            else:
+                extracted = "Attachment received. (OCR/ASR: set OCR_SERVICE_URL and ASR_SERVICE_URL for extraction.)"
 
             with psycopg.connect(POSTGRES_DSN) as pg:
                 cur = pg.cursor()

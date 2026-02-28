@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -105,25 +106,28 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	file.Seek(0, 0)
 
-	var existingID uuid.UUID
-	err = h.Pool.QueryRow(ctx, `SELECT id FROM core.uploads WHERE file_hash = $1`, hash).Scan(&existingID)
-	if err == nil {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "duplicate", "upload_id": existingID.String()})
-		return
-	}
-
 	docName := r.FormValue("name")
 	if docName == "" {
 		docName = "document"
 	}
-	objectKey := "uploads/" + hash
-	size, _ := io.Copy(io.Discard, file)
-	file.Seek(0, 0)
-	_, err = h.MinIO.Put(ctx, objectKey, file, "application/octet-stream", size)
-	if err != nil {
-		http.Error(w, `{"error":"minio"}`, http.StatusInternalServerError)
-		return
+
+	var objectKey string
+	var size int64
+	var existingPath string
+	_ = h.Pool.QueryRow(ctx, `SELECT file_path FROM core.uploads WHERE file_hash = $1`, hash).Scan(&existingPath)
+	if existingPath != "" {
+		objectKey = existingPath
+		size, _ = io.Copy(io.Discard, file)
+	} else {
+		objectKey = "uploads/" + hash
+		size, _ = io.Copy(io.Discard, file)
+		file.Seek(0, 0)
+		_, err = h.MinIO.Put(ctx, objectKey, file, "application/octet-stream", size)
+		if err != nil {
+			http.Error(w, `{"error":"minio"}`, http.StatusInternalServerError)
+			return
+		}
+		_, _ = h.Pool.Exec(ctx, `INSERT INTO core.uploads (file_hash, file_path, size_bytes) VALUES ($1, $2, $3) ON CONFLICT (file_hash) DO NOTHING`, hash, objectKey, size)
 	}
 
 	var docID, versionID uuid.UUID
@@ -136,10 +140,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, `{"error":"version"}`, http.StatusInternalServerError)
 		return
-	}
-	_, err = h.Pool.Exec(ctx, `INSERT INTO core.uploads (file_hash, file_path, size_bytes) VALUES ($1, $2, $3) ON CONFLICT (file_hash) DO NOTHING`, hash, objectKey, size)
-	if err != nil {
-		// continue
 	}
 
 	jobID := uuid.New()
@@ -179,6 +179,9 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Показываем доки, которые есть в Qdrant или у которых есть джоб pending/running (ожидают инжеста)
+	inQdrant := h.docIDsInQdrant(ctx)
+	pendingDocIDs := h.docIDsWithPendingJobs(ctx)
 	rows, err := h.Pool.Query(ctx, `SELECT d.id, d.name, d.created_at,
 		(SELECT json_agg(json_build_object('id', v.id, 'version', v.version, 'file_hash', v.file_hash)) FROM core.versions v WHERE v.doc_id = d.id) 
 		FROM core.docs d ORDER BY d.created_at DESC`)
@@ -196,6 +199,10 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &name, &createdAt, &versions); err != nil {
 			continue
 		}
+		idStr := id.String()
+		if inQdrant != nil && !inQdrant[idStr] && !pendingDocIDs[idStr] {
+			continue
+		}
 		docs = append(docs, map[string]interface{}{
 			"id": id.String(), "name": name, "created_at": createdAt,
 			"versions": rawJSON(versions),
@@ -203,6 +210,50 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"docs": docs})
+}
+
+// docIDsWithPendingJobs возвращает set doc_id, у которых есть джоб со статусом pending или running.
+func (h *Handler) docIDsWithPendingJobs(ctx context.Context) map[string]bool {
+	rows, err := h.Pool.Query(ctx, `SELECT DISTINCT doc_id::text FROM core.jobs WHERE status IN ('pending', 'running') AND doc_id IS NOT NULL`)
+	if err != nil {
+		return make(map[string]bool)
+	}
+	defer rows.Close()
+	set := make(map[string]bool)
+	for rows.Next() {
+		var idStr string
+		if rows.Scan(&idStr) == nil && idStr != "" {
+			set[idStr] = true
+		}
+	}
+	return set
+}
+
+// docIDsInQdrant возвращает set doc_id, у которых есть чанки в Qdrant. При ошибке — nil (показываем все доки).
+func (h *Handler) docIDsInQdrant(ctx context.Context) map[string]bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.MCPWriteURL+"/mcp/doc_ids", nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil
+	}
+	defer resp.Body.Close()
+	var out struct {
+		DocIDs []string `json:"doc_ids"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return nil
+	}
+	set := make(map[string]bool)
+	for _, id := range out.DocIDs {
+		set[id] = true
+	}
+	return set
 }
 
 // DocsWithID: GET /api/docs/ -> ListDocs, DELETE /api/docs/<id> -> DeleteDoc
@@ -237,8 +288,13 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid doc id"}`, http.StatusBadRequest)
 		return
 	}
-	// Сначала удаляем документ из БД, чтобы он пропал из списка даже при недоступности mcp-write
+	// Порядок: jobs → versions → docs (из-за FK). Затем чанки в Qdrant через mcp-write.
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.jobs WHERE doc_id = $1`, docID)
+	resultV, err := h.Pool.Exec(ctx, `DELETE FROM core.versions WHERE doc_id = $1`, docID)
+	if err != nil {
+		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+		return
+	}
 	result, err := h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
 	if err != nil {
 		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
@@ -248,7 +304,8 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		return
 	}
-	// Удалить чанки из Qdrant через mcp-write (best effort; при ошибке док уже убран из списка)
+	_ = resultV
+	// Удалить чанки из Qdrant через mcp-write (best effort; док уже убран из списка)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, h.MCPWriteURL+"/doc/"+docID.String(), nil)
 	if resp, err := http.DefaultClient.Do(req); err == nil {
 		resp.Body.Close()
