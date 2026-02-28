@@ -140,18 +140,21 @@ services:
     depends_on:
       - loki
 
-  # vLLM (CUDA 12.4): по умолчанию не запускается (профиль vllm). Работает на всех GPU. Разделение по картам — docker-compose.2gpu.yml.
+  # vLLM (CUDA 12.4): профиль vllm, все GPU. Ошибка "could not select device driver nvidia" — установите NVIDIA Container Toolkit (см. README).
   vllm:
     profiles:
       - vllm
     image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
     deploy:
       resources:
+        limits:
+          memory: 24g
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: 2
               capabilities: [gpu]
+
     volumes:
       - ./models:/models
     environment:
