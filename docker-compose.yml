@@ -38,6 +38,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      # Доступ с другого ПК: http://IP_СЕРВЕРА:9000 (API), http://IP_СЕРВЕРА:9001 (консоль)
+      MINIO_SERVER_URL: ${MINIO_SERVER_URL:-}
     volumes:
       - minio_data:/data
     ports:
@@ -225,8 +227,8 @@ services:
       MCP_READ_URL: http://mcp-read:8082
       # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Имя модели в запросах к vLLM должно совпадать с загруженной (VLLM_MODEL_NAME). Иначе 404 «model default does not exist».
-      LLM_MODEL: ${LLM_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}}
+      # Имя модели в запросах — должно совпадать с загруженной в vLLM. По умолчанию Qwen3-0.6B; при другой модели задайте LLM_MODEL в .env.
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-0.6B}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}

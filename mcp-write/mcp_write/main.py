@@ -143,10 +143,10 @@ def delete_document(doc_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="service not ready")
     qdrant.delete(
         collection_name=COLLECTION,
-        points_selector=qdrant_models.FilterSelector(
-            filter=qdrant_models.Filter(
+        points_selector=FilterSelector(
+            filter=Filter(
                 must=[
-                    qdrant_models.FieldCondition(key="doc_id", match=qdrant_models.MatchValue(value=doc_id)),
+                    FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),
                 ],
             )
         ),
