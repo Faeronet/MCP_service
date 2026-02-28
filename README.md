@@ -186,7 +186,7 @@ sudo systemctl restart docker
 
 **Текущее состояние:** в коде заложены переменные окружения и заглушки; полноценные пайплайны нужно дорабатывать.
 
-- **vLLM для чата и эмбеддингов:** при `docker compose --profile vllm up -d` поднимаются два контейнера: **vllm** (чат, Qwen) и **vllm-embed** (эмбеддинги, BAAI/bge-m3). mcp-read и mcp-write используют `EMBED_API_URL=http://vllm-embed:8000/v1` для семантического поиска по Qdrant.
+- **vLLM для чата и эмбеддингов:** при `docker compose --profile vllm up -d` поднимаются два контейнера: **vllm** (чат, Qwen) и **vllm-embed** (эмбеддинги, BAAI/bge-m3). На **одной видеокарте** оба используют одну GPU с ограничением VRAM (vllm 0.55, vllm-embed 0.35), чтобы не было ошибки «Free memory on device... less than desired GPU memory utilization». Если у вас **две видеокарты**, задайте в `.env`: `NVIDIA_VISIBLE_DEVICES=0` и `NVIDIA_VISIBLE_DEVICES_EMBED=1`, чтобы чат шёл на первой GPU, эмбеддинги на второй.
 - **Реранк:** задайте `RERANK_API_URL` на сервис с `POST /rerank` (тело: `query`, `documents`, `model`; ответ: `results[]` с `index` и `relevance_score` или `scores[]`). Реранкер (например FlagEmbedding) — отдельный сервис, не входит в образ vLLM.
 - **OCR и ASR:** задайте `OCR_SERVICE_URL` и `ASR_SERVICE_URL` на сервисы с `POST /ocr` и `POST /asr` (multipart file → JSON `{"text": "..."}`). attachment-worker вызывает их для картинок/PDF и аудио. Реализации (PaddleOCR, Whisper) — отдельные контейнеры, не vLLM.
 - **Реранк:** mcp-read читает `RERANK_MODEL`, но реранк по ответам Qdrant **не вызывается** — нужно добавить вызов модели реранка после поиска по чанкам.

@@ -144,11 +144,12 @@ services:
     depends_on:
       - loki
 
-  # vLLM (CUDA 12.4): профиль vllm, все GPU. Ошибка "could not select device driver nvidia" — установите NVIDIA Container Toolkit (см. README).
+  # vLLM (чат). При одной видеокарте вместе с vllm-embed: ограничиваем VRAM 0.55, чтобы осталось место под эмбеддинги.
   vllm:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
+    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}", "--port", "8000", "--gpu-memory-utilization", "0.55"]
     deploy:
       resources:
         limits:
@@ -156,29 +157,27 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 2
+              count: 1
               capabilities: [gpu]
-
     volumes:
       - ./models:/models
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
-      MODEL_NAME: ${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}
-      MODEL_PATH: ${VLLM_MODEL_PATH:-}
       HF_HOME: /models
-      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8000:8000"
     restart: unless-stopped
 
-  # vLLM для эмбеддингов (тот же образ, другая модель). Чат = vllm:8000, эмбеддинги = vllm-embed:8000.
+  # vLLM для эмбеддингов. Чат = vllm:8000, эмбеддинги = vllm-embed:8000.
+  # Одна видеокарта: vllm уже занял почти всю VRAM — задаём --gpu-memory-utilization 0.35 и лёгкую модель BAAI/bge-m3.
+  # Две видеокарты: задайте NVIDIA_VISIBLE_DEVICES_EMBED=1, чтобы vllm-embed использовал вторую GPU.
   vllm-embed:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "intfloat/multilingual-e5-large", "--port", "8000"]
+    command: ["--model", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.35"]
     deploy:
       resources:
         limits:
@@ -191,7 +190,7 @@ services:
     volumes:
       - ./models:/models
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES_EMBED:-all}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES_EMBED:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
