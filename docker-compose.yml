@@ -139,24 +139,28 @@ services:
     depends_on:
       - loki
 
-  # vLLM: образ с CUDA 12 (latest) обычно стабильнее с драйвером 580. При 803 пробуйте VLLM_IMAGE=vllm/vllm-openai:v0.16.0-cu130.
+  # vLLM: по умолчанию не запускается (профиль vllm), чтобы избежать цикла перезапусков при Error 803.
+  # Запуск в Docker: docker compose --profile vllm up -d. Или запустите vLLM на хосте и задайте VLLM_OPENAI_BASE.
   vllm:
+    profiles:
+      - vllm
     image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: 2
               capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
+      # Как в ai-tg-bot-for-rag (stt / hf-router): явно задаём видимость GPU и capabilities
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
-      # Кэш Hugging Face в ./models (загрузки по MODEL_NAME сохраняются в проекте)
       HF_HOME: /models
-      # Режим совместимости CUDA для старых драйверов (при Error 803). Работает на части GPU (datacenter/pro).
       VLLM_ENABLE_CUDA_COMPATIBILITY: ${VLLM_ENABLE_CUDA_COMPATIBILITY:-1}
     ports:
       - "8000:8000"
@@ -179,6 +183,8 @@ services:
     volumes:
       - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
     environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}

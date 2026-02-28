@@ -22,9 +22,12 @@ for f in migrations/*.up.sql; do psql "$POSTGRES_DSN" -f "$f"; done
 # С профилем observability (Grafana)
 docker compose up -d
 
-# Все сервисы, включая vLLM (GPU) и Grafana, запускаются одной командой:
+# vLLM по умолчанию не запускается (профиль vllm). Варианты:
+# 1) В Docker (если GPU в контейнере работает): docker compose --profile vllm up -d
+# 2) На хосте (обход Error 803): см. раздел «Вариант: vLLM на хосте» ниже; в .env задайте VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1
 docker compose up -d
 ```
+**Важно:** без работающего vLLM (в контейнере с `--profile vllm` или на хосте с указанным `VLLM_OPENAI_BASE`) bot-service и mcp-read/mcp-write не смогут вызывать LLM. При 803 в Docker запустите vLLM на хосте и укажите URL в `.env`.
 
 Одна команда поднятия всей инфраструктуры и приложений:
 
@@ -44,7 +47,7 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 3. **Прокси/VPN** — если доступ в интернет только через прокси или VPN, настройте их для демона Docker.
 4. **Зеркало** — если в сети есть корпоративное зеркало Docker Hub, укажите его в `daemon.json` в `registry-mirrors`.
 
-Все сервисы запускаются по умолчанию и перезапускаются при падении или после перезагрузки хоста (`restart: unless-stopped`).
+Все сервисы, кроме vLLM, запускаются по умолчанию. vLLM включён только при `--profile vllm` (чтобы при Error 803 в Docker не было цикла перезапусков). Остальные сервисы перезапускаются при падении (`restart: unless-stopped`).
 
 ## Устранение неполадок
 
@@ -81,10 +84,12 @@ sudo systemctl restart docker
 
 3. После перезагрузки снова выполните `nvidia-smi` и проверьте версию, затем:
    ```bash
-   docker compose --profile gpu up -d vllm
+   docker compose --profile vllm up -d
    ```
 
 Альтернатива: [драйвер с сайта NVIDIA](https://www.nvidia.com/Download/index.aspx) (выберите видеокарту и ОС).
+
+**Совпадение с [ai-tg-bot-for-rag](https://github.com/Faeronet/ai-tg-bot-for-rag):** там GPU-сервисы (stt, hf-router) поднимаются с образом `nvidia/cuda:12.1.1-runtime-ubuntu22.04`, PyTorch из `cu121`, переменными `NVIDIA_VISIBLE_DEVICES=all` и `NVIDIA_DRIVER_CAPABILITIES=compute,utility` и резервированием одной GPU (`count: 1`). Здесь для vLLM включены те же переменные и `count: 1`; если у вас в том репозитории stt/hf-router в Docker работают, а vLLM здесь — нет, причина в разном CUDA внутри образов (vLLM тянет свой PyTorch/CUDA). Тогда остаётся вариант «vLLM на хосте» ниже.
 
 ### Вариант: vLLM на хосте (если в Docker стабильно Error 803)
 
