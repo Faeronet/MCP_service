@@ -148,7 +148,6 @@ services:
       MODEL_NAME: ${VLLM_MODEL_NAME:-llmcompressor-quants/Qwen2.5-7B-Instruct-fp8-dynamic}
       MODEL_PATH: ${VLLM_MODEL_PATH:-}
       # Кэш Hugging Face в ./models (загрузки по MODEL_NAME сохраняются в проекте)
-      TRANSFORMERS_CACHE: /models
       HF_HOME: /models
     ports:
       - "8000:8000"
