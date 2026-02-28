@@ -77,29 +77,19 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 
 Если после шага 2 при `docker compose --profile vllm up -d` появляется **«could not select device driver "nvidia" with capabilities: [[gpu]]»** — значит рантайм не подхватился: снова выполните `sudo nvidia-ctk runtime configure --runtime=docker` и `sudo systemctl restart docker`, затем повторите запуск.
 
-**Мониторинг GPU в админке:** по умолчанию админка не запрашивает GPU. Чтобы в веб-интерфейсе отображались загрузка и VRAM видеокарты, после установки toolkit поднимайте стек с override:  
-`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d` (и при необходимости добавьте `--profile vllm` для vLLM).
-
-#### Две видеокарты: LLM на первой, эмбеддинг/реранк/OCR/ASR на второй
-
-При **двух GPU** (например две RTX 3080 Ti) можно разнести нагрузку:
-
-- **GPU 0** — vLLM (LLM).
-- **GPU 1** — mcp-read (эмбеддинг, реранк), mcp-write (эмбеддинг, реранк), attachment-worker (Whisper/ASR, PaddleOCR).
-
-Запуск с двумя файлами и профилем vllm:
-
+**vLLM в контейнере (сервис vllm):** чтобы бот видел LLM, стек нужно поднимать **с профилем vllm**, иначе контейнер vllm не создаётся и хостнейм `vllm` недоступен → «model is not configured or unavailable»:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.2gpu.yml --profile vllm up -d
+docker compose --profile vllm up -d
 ```
+В `.env` не переопределяйте `VLLM_OPENAI_BASE` (должно остаться `http://vllm:8000/v1`). Если vLLM не принимает модель `default`, задайте в `.env` имя загруженной модели, например: `LLM_MODEL=Qwen/Qwen3-0.6B` или как в `VLLM_MODEL_NAME`.
 
-Используется override **docker-compose.2gpu.yml**: он выставляет контейнерам доступ к обеим картам и переменные `NVIDIA_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES`, чтобы vLLM видел только GPU 0, а остальные сервисы — только GPU 1. Проект ориентирован на **CUDA 12.4**: для сборки своих образов под вторую карту используйте базовый образ `nvidia/cuda:12.4.0-runtime-ubuntu22.04` и PyTorch `cu124`. Сейчас attachment-worker и mcp-write идут на python:3.12-slim без GPU; для работы на GPU пересоберите их на базе CUDA 12.4 (см. комментарии в docker-compose.2gpu.yml).
+**vLLM на хосте (не в Docker):** в `.env` задайте `VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1` (на Linux без host.docker.internal — IP хоста), затем `docker compose up -d bot-service mcp-read`.
 
 ## Устранение неполадок
 
 ### Ошибка: «could not select device driver "nvidia" with capabilities: [[gpu]]»
 
-Ошибка появляется, когда вы запускаете сервисы с GPU (`docker compose --profile vllm up -d` или с `docker-compose.gpu.yml` / `docker-compose.2gpu.yml`), а **NVIDIA Container Toolkit** не установлен или Docker его не использует.
+Ошибка появляется, когда вы запускаете сервисы с GPU (`docker compose --profile vllm up -d`), а **NVIDIA Container Toolkit** не установлен или Docker его не использует.
 
 **Что сделать:**
 

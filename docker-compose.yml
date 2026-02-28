@@ -170,7 +170,6 @@ services:
     restart: unless-stopped
 
   # --- Application services ---
-  # GPU не требуется: админка работает без nvidia. Мониторинг GPU — только с профилем gpu (nvidia-container-toolkit).
   admin-backend:
     build:
       context: .
@@ -224,7 +223,9 @@ services:
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
       MCP_READ_URL: http://mcp-read:8082
+      # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      LLM_MODEL: ${LLM_MODEL:-default}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}

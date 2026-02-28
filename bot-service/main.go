@@ -74,6 +74,7 @@ func main() {
 	deboounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
 	vllmBase := config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
+	llmModel := config.LoadString("LLM_MODEL", "default")
 
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
@@ -85,6 +86,7 @@ func main() {
 		queue:         rmq,
 		mcpReadURL:    mcpReadURL,
 		vllmBase:      vllmBase,
+		llmModel:      llmModel,
 		llmLimiter:    llmLimiter,
 		perChatLimiter: perChatLimiter,
 		debounce:      time.Duration(deboounceMs) * time.Millisecond,
@@ -155,6 +157,7 @@ type Bot struct {
 	queue          *queue.Client
 	mcpReadURL     string
 	vllmBase       string
+	llmModel       string
 	llmLimiter     *ratelimit.InFlight
 	perChatLimiter *ratelimit.PerKey
 	debounce       time.Duration
@@ -306,7 +309,7 @@ func (b *Bot) callLLM(ctx context.Context, requestID, contextText, userQuery str
 		{"role": "user", "content": userQuery},
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
-		"model": "default", "messages": messages, "max_tokens": 512,
+		"model": b.llmModel, "messages": messages, "max_tokens": 512,
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.vllmBase+"/chat/completions", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
