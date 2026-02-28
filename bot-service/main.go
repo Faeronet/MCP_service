@@ -243,8 +243,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 
 	reply, err := b.callLLM(ctx, requestID, contextText, msg.Text)
 	if err != nil {
-		log.Error(ctx, "llm call", logging.KV{"error", err})
-		b.sendReply(ctx, chatID, "Sorry, the model is not configured or unavailable.")
+		log.Error(ctx, "llm call", logging.KV{"error", err}, logging.KV{"vllm_base", b.vllmBase})
+		// Краткая подсказка пользователю; полная ошибка — в логах бота
+		hint := "Модель недоступна. Проверьте, что vLLM запущен (docker compose --profile vllm up -d) и в .env указан VLLM_OPENAI_BASE."
+		if errStr := err.Error(); len(errStr) < 120 {
+			hint = "Ошибка LLM: " + errStr
+		}
+		b.sendReply(ctx, chatID, hint)
 		return
 	}
 	_ = b.appendMessage(ctx, sessionID, "assistant", reply)

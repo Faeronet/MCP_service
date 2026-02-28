@@ -205,6 +205,47 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"docs": docs})
 }
 
+func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	path := strings.TrimPrefix(r.URL.Path, "/api/docs/")
+	path = strings.TrimSuffix(path, "/")
+	docID, err := uuid.Parse(path)
+	if err != nil {
+		http.Error(w, `{"error":"invalid doc id"}`, http.StatusBadRequest)
+		return
+	}
+	// Удалить чанки документа из Qdrant через mcp-write
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, h.MCPWriteURL+"/doc/"+docID.String(), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"mcp-write request"}`, http.StatusServiceUnavailable)
+		return
+	}
+	resp.Body.Close()
+	// 404 от mcp-write не критично (документ мог не быть проинжестен)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		http.Error(w, `{"error":"mcp-write delete"}`, http.StatusInternalServerError)
+		return
+	}
+	// Удалить джобы документа, затем документ (versions каскадно удалятся)
+	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.jobs WHERE doc_id = $1`, docID)
+	result, err := h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
+	if err != nil {
+		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "doc_id": docID.String()})
+}
+
 func (h *Handler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

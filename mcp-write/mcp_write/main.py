@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, FilterSelector, MatchValue
 from qdrant_client.http.models import PointStruct, VectorParams, Distance
 from qdrant_client.http.exceptions import UnexpectedResponse
 from minio import Minio
@@ -133,3 +134,21 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     # Upsert-only
     qdrant.upsert(COLLECTION, points=points)
     return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
+
+
+@app.delete("/doc/{doc_id}")
+def delete_document(doc_id: str) -> dict[str, Any]:
+    """Delete all chunks for the given doc_id from Qdrant (for admin doc removal)."""
+    if qdrant is None:
+        raise HTTPException(status_code=503, detail="service not ready")
+    qdrant.delete(
+        collection_name=COLLECTION,
+        points_selector=qdrant_models.FilterSelector(
+            filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(key="doc_id", match=qdrant_models.MatchValue(value=doc_id)),
+                ],
+            )
+        ),
+    )
+    return {"status": "ok", "doc_id": doc_id}

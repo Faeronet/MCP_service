@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { listDocs, uploadFile } from '../api'
+import { listDocs, uploadFile, deleteDoc } from '../api'
 
 const PAGE_SIZE = 50
 
@@ -48,6 +48,17 @@ export function Docs() {
     e.target.value = ''
   }
 
+  const onDelete = async (docId: string, docName: string) => {
+    if (!window.confirm(`Удалить документ «${docName}»? Чанки будут удалены из поиска.`)) return
+    setError('')
+    try {
+      await deleteDoc(docId)
+      await load()
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+
   return (
     <div className="page-layout">
       <div className="page-header">
@@ -79,6 +90,7 @@ export function Docs() {
                     <th>Name</th>
                     <th>ID</th>
                     <th>Created</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -87,6 +99,9 @@ export function Docs() {
                       <td>{d.name}</td>
                       <td className="mono">{d.id}</td>
                       <td>{new Date(d.created_at).toLocaleString()}</td>
+                      <td>
+                        <button type="button" className="btn-monitor-inactive" onClick={() => onDelete(d.id, d.name)} title="Удалить документ">Удалить</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

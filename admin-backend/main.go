@@ -88,6 +88,7 @@ func main() {
 	mux.HandleFunc("/api/login/", handler.Login)
 	mux.Handle("/api/upload", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Upload)))
 	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListDocs)))
+	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.DeleteDoc)))
 	mux.Handle("/api/jobs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListJobs)))
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
@@ -125,7 +126,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			origin = "*"
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

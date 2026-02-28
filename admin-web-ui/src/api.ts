@@ -54,6 +54,17 @@ export async function listDocs(): Promise<{ docs: Array<{ id: string; name: stri
   return r.json()
 }
 
+export async function deleteDoc(docId: string): Promise<{ status: string; doc_id: string }> {
+  const r = await fetch(`${API_URL}/api/docs/${docId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (r.status === 404) throw new Error('Document not found')
+  if (!r.ok) throw new Error(await r.text() || 'Failed to delete document')
+  return r.json()
+}
+
 export async function listJobs(limit?: number): Promise<{ jobs: Array<Record<string, unknown>> }> {
   const u = new URL(`${API_URL}/api/jobs`)
   if (limit) u.searchParams.set('limit', String(limit))
