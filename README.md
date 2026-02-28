@@ -58,6 +58,35 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 docker compose --profile observability --profile gpu up -d
 ```
 
+## Устранение неполадок
+
+### vLLM: Error 803 (unsupported display driver / cuda driver combination)
+
+Ошибка означает, что **драйвер NVIDIA на хосте старее**, чем требует CUDA в образе vLLM. Режим совместимости (`VLLM_ENABLE_CUDA_COMPATIBILITY=1`) помогает не на всех GPU.
+
+**Решение — обновить драйвер до версии ≥ 525** (для CUDA 12.x):
+
+1. Текущая версия драйвера:
+   ```bash
+   nvidia-smi
+   ```
+   Вверху: **Driver Version: XXX.XX**. Если меньше 525 — обновите.
+
+2. **Ubuntu/Debian:**
+   ```bash
+   sudo apt update
+   sudo apt install -y nvidia-driver-535
+   # или новее: nvidia-driver-545, nvidia-driver-550
+   sudo reboot
+   ```
+
+3. После перезагрузки снова выполните `nvidia-smi` и проверьте версию, затем:
+   ```bash
+   docker compose --profile gpu up -d vllm
+   ```
+
+Альтернатива: [драйвер с сайта NVIDIA](https://www.nvidia.com/Download/index.aspx) (выберите видеокарту и ОС).
+
 ## Структура репозитория
 
 ```

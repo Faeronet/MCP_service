@@ -133,10 +133,9 @@ services:
     depends_on:
       - loki
 
-  # vLLM: при Error 803 (driver/cuda mismatch) обновите драйвер на хосте до >= 525 (nvidia-smi).
-  # Вариант образа с явной CUDA: vllm/vllm-openai:v0.16.0-cu130 (нужен драйвер под CUDA 13).
+  # vLLM: при драйвере 580 и CUDA 13 на хосте используем образ cu130. Иначе — latest или задайте VLLM_IMAGE.
   vllm:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.16.0-cu130}
     deploy:
       resources:
         reservations:
