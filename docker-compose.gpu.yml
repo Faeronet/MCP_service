@@ -1,0 +1,17 @@
+# Опциональный override: мониторинг GPU в админке (nvidia-smi).
+# Использование: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Требует: NVIDIA Container Toolkit (см. README — «Запуск на ПК с игровой видеокартой»).
+services:
+  admin-backend:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

@@ -47,7 +47,53 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 3. **Прокси/VPN** — если доступ в интернет только через прокси или VPN, настройте их для демона Docker.
 4. **Зеркало** — если в сети есть корпоративное зеркало Docker Hub, укажите его в `daemon.json` в `registry-mirrors`.
 
-Все сервисы, кроме vLLM, запускаются по умолчанию. vLLM включён только при `--profile vllm` (чтобы при Error 803 в Docker не было цикла перезапусков). Остальные сервисы перезапускаются при падении (`restart: unless-stopped`).
+Все сервисы, кроме vLLM, запускаются по умолчанию. **GPU в Docker не требуется** — драйвер `nvidia` не используется, пока не запускаете vLLM с профилем `vllm`. Остальные сервисы перезапускаются при падении (`restart: unless-stopped`).
+
+### Запуск на ПК с игровой видеокартой (RTX 3080 Ti и др.)
+
+По умолчанию **ни один сервис не запрашивает GPU** — команда `docker compose up -d` не требует установленного NVIDIA Container Toolkit. Админка работает без мониторинга GPU (в интерфейсе будет N/A).
+
+**Чтобы запустить vLLM в Docker на одной видеокарте (например 3080 Ti):**
+
+1. Установите драйвер NVIDIA на хосте и проверьте: `nvidia-smi`.
+2. Установите **NVIDIA Container Toolkit** (Ubuntu/Debian):
+   ```bash
+   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+   curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+   sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+   sudo nvidia-ctk runtime configure --runtime=docker
+   sudo systemctl restart docker
+   ```
+3. Проверьте, что контейнер видит GPU:
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi
+   ```
+4. Запустите стек с vLLM (одна GPU, подходит для 3080 Ti):
+   ```bash
+   docker compose --profile vllm up -d
+   ```
+
+Если после шага 2 при `docker compose --profile vllm up -d` появляется **«could not select device driver "nvidia" with capabilities: [[gpu]]»** — значит рантайм не подхватился: снова выполните `sudo nvidia-ctk runtime configure --runtime=docker` и `sudo systemctl restart docker`, затем повторите запуск.
+
+**Мониторинг GPU в админке:** по умолчанию админка не запрашивает GPU. Чтобы в веб-интерфейсе отображались загрузка и VRAM видеокарты, после установки toolkit поднимайте стек с override:  
+`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d` (и при необходимости добавьте `--profile vllm` для vLLM).
+
+#### Две видеокарты: LLM на первой, эмбеддинг/реранк/OCR/ASR на второй
+
+При **двух GPU** (например две RTX 3080 Ti) можно разнести нагрузку:
+
+- **GPU 0** — vLLM (LLM).
+- **GPU 1** — mcp-read (эмбеддинг, реранк), mcp-write (эмбеддинг, реранк), attachment-worker (Whisper/ASR, PaddleOCR).
+
+Запуск с двумя файлами и профилем vllm:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.2gpu.yml --profile vllm up -d
+```
+
+Используется override **docker-compose.2gpu.yml**: он выставляет контейнерам доступ к обеим картам и переменные `NVIDIA_VISIBLE_DEVICES` / `CUDA_VISIBLE_DEVICES`, чтобы vLLM видел только GPU 0, а остальные сервисы — только GPU 1. Для работы эмбеддинга/реранка/OCR/ASR на GPU образы mcp-write и attachment-worker должны собираться с поддержкой CUDA (сейчас attachment-worker на python:3.12-slim без GPU; при необходимости замените базовый образ на nvidia/cuda и установите PyTorch с CUDA).
 
 ## Устранение неполадок
 

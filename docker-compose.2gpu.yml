@@ -1,0 +1,56 @@
+# Разделение двух GPU: первая — LLM (vLLM), вторая — эмбеддинг, реранк, OCR, ASR.
+# Использование: docker compose -f docker-compose.yml -f docker-compose.2gpu.yml --profile vllm up -d
+# Требует: 2 GPU и NVIDIA Container Toolkit.
+#
+# GPU 0 — vLLM (LLM)
+# GPU 1 — mcp-read (embed, rerank), mcp-write (embed, rerank), attachment-worker (Whisper/ASR, PaddleOCR)
+services:
+  vllm:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0"
+
+  mcp-read:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      CUDA_VISIBLE_DEVICES: "1"
+
+  mcp-write:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      CUDA_VISIBLE_DEVICES: "1"
+
+  attachment-worker:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      CUDA_VISIBLE_DEVICES: "1"
