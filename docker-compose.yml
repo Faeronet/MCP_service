@@ -149,7 +149,7 @@ services:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}", "--port", "8000", "--gpu-memory-utilization", "0.55"]
+    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}", "--port", "8000"]
     deploy:
       resources:
         limits:
@@ -157,27 +157,27 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['0']
               capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8000:8000"
     restart: unless-stopped
 
-  # vLLM для эмбеддингов. Чат = vllm:8000, эмбеддинги = vllm-embed:8000.
-  # Одна видеокарта: vllm уже занял почти всю VRAM — задаём --gpu-memory-utilization 0.35 и лёгкую модель BAAI/bge-m3.
-  # Две видеокарты: задайте NVIDIA_VISIBLE_DEVICES_EMBED=1, чтобы vllm-embed использовал вторую GPU.
+  # vLLM для эмбеддингов. Проброс только второй видеокарты (GPU 1): NVIDIA_VISIBLE_DEVICES=1 — контейнер видит только её.
+  # vllm (чат) остаётся на GPU 0, vllm-embed — на GPU 1.
   vllm-embed:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.35"]
+    command: ["--model", "BAAI/bge-m3", "--port", "8000"]
     deploy:
       resources:
         limits:
@@ -185,13 +185,14 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['1']
               capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES_EMBED:-0}
+      NVIDIA_VISIBLE_DEVICES: "1"
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:

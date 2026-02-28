@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -73,9 +74,13 @@ func main() {
 	maxInflightLLM := config.LoadInt("MAX_INFLIGHT_LLM", 32)
 	deboounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
-	vllmBase := config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
-	// Должно совпадать с моделью, загруженной в vLLM (VLLM_MODEL_NAME), иначе vLLM вернёт 404 «model default does not exist»
+	vllmBase := config.LoadString("LLM_BINDING_HOST", "")
+	if vllmBase == "" {
+		vllmBase = config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
+	}
+	vllmBase = strings.TrimSuffix(vllmBase, "/")
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
+	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")
 
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
@@ -88,6 +93,7 @@ func main() {
 		mcpReadURL:    mcpReadURL,
 		vllmBase:      vllmBase,
 		llmModel:      llmModel,
+		llmAPIKey:     llmAPIKey,
 		llmLimiter:    llmLimiter,
 		perChatLimiter: perChatLimiter,
 		debounce:      time.Duration(deboounceMs) * time.Millisecond,
@@ -159,6 +165,7 @@ type Bot struct {
 	mcpReadURL     string
 	vllmBase       string
 	llmModel       string
+	llmAPIKey      string
 	llmLimiter     *ratelimit.InFlight
 	perChatLimiter *ratelimit.PerKey
 	debounce       time.Duration
@@ -318,6 +325,9 @@ func (b *Bot) callLLM(ctx context.Context, requestID, contextText, userQuery str
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.vllmBase+"/chat/completions", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-ID", requestID)
+	if b.llmAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+b.llmAPIKey)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,14 +25,23 @@ func main() {
 	ctx := context.Background()
 	qdrantURL := strings.TrimSuffix(config.LoadString("QDRANT_URL", "http://qdrant:6333"), "/")
 	redisAddr := config.LoadString("REDIS_ADDR", "redis:6379")
-	embedAPIBase := config.LoadString("EMBED_API_URL", "")
+	embedAPIBase := config.LoadString("EMBEDDING_BINDING_HOST", "")
+	if embedAPIBase == "" {
+		embedAPIBase = config.LoadString("EMBED_API_URL", "")
+	}
 	if embedAPIBase == "" {
 		embedAPIBase = strings.TrimSuffix(config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1"), "/")
 	} else {
 		embedAPIBase = strings.TrimSuffix(embedAPIBase, "/")
 	}
+	embedAPIKey := config.LoadString("EMBEDDING_BINDING_API_KEY", "")
 	embedModel := config.LoadString("EMBEDDING_MODEL", "BAAI/bge-m3")
-	rerankAPIURL := strings.TrimSuffix(config.LoadString("RERANK_API_URL", ""), "/")
+	rerankAPIURL := config.LoadString("RERANK_BINDING_HOST", "")
+	if rerankAPIURL == "" {
+		rerankAPIURL = config.LoadString("RERANK_API_URL", "")
+	}
+	rerankAPIURL = strings.TrimSuffix(rerankAPIURL, "/")
+	rerankAPIKey := config.LoadString("RERANK_BINDING_API_KEY", "")
 	rerankModel := config.LoadString("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 	maxRerank := config.LoadInt("MAX_INFLIGHT_RERANK", 16)
 	maxEmbed := config.LoadInt("MAX_INFLIGHT_EMBED", 32)
@@ -51,7 +61,9 @@ func main() {
 	handler := &MCPReadHandler{
 		qdrantURL:      qdrantURL,
 		embedAPIBase:   embedAPIBase,
+		embedAPIKey:    embedAPIKey,
 		rerankAPIURL:   rerankAPIURL,
+		rerankAPIKey:   rerankAPIKey,
 		redis:          rdb,
 		embedModel:     embedModel,
 		rerankModel:    rerankModel,
@@ -81,14 +93,18 @@ func requestIDMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type MCPReadHandler struct {
-	qdrantURL     string
-	embedAPIBase  string
-	rerankAPIURL  string
-	redis         *redis.Client
-	embedModel    string
-	rerankModel   string
-	rerankLimiter *ratelimit.InFlight
-	embedLimiter  *ratelimit.InFlight
+	qdrantURL         string
+	embedAPIBase      string
+	embedAPIKey       string
+	rerankAPIURL      string
+	rerankAPIKey      string
+	redis             *redis.Client
+	embedModel        string
+	rerankModel       string
+	rerankLimiter     *ratelimit.InFlight
+	embedLimiter      *ratelimit.InFlight
+	embedModelIDMu    sync.Mutex
+	embedModelIDCached string
 }
 
 type BuildContextRequest struct {
@@ -118,13 +134,43 @@ type qdrantSearchResult struct {
 
 // OpenAI-compatible embeddings request/response
 type embedReq struct {
-	Model string `json:"model"`
-	Input string `json:"input"`
+	Model          string `json:"model"`
+	Input          string `json:"input"`
+	EncodingFormat string `json:"encoding_format,omitempty"`
 }
 type embedResp struct {
 	Data []struct {
 		Embedding []float64 `json:"embedding"`
 	} `json:"data"`
+}
+type modelsResp struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// embedModelID возвращает id модели с сервера (GET /v1/models), чтобы избежать 404 из-за несовпадения имени.
+func (h *MCPReadHandler) embedModelID(ctx context.Context) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.embedAPIBase+"/models", nil)
+	if err != nil {
+		return h.embedModel
+	}
+	if h.embedAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.embedAPIKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return h.embedModel
+	}
+	defer resp.Body.Close()
+	var out modelsResp
+	if json.NewDecoder(resp.Body).Decode(&out) != nil || len(out.Data) == 0 {
+		return h.embedModel
+	}
+	return out.Data[0].ID
 }
 
 // embedQuery возвращает вектор запроса через vLLM /v1/embeddings; при ошибке или если модель не задана — нулевой вектор.
@@ -133,7 +179,8 @@ func (h *MCPReadHandler) embedQuery(ctx context.Context, query string) []float32
 	if query == "" || h.embedModel == "" {
 		return make([]float32, fallbackDim)
 	}
-	body := embedReq{Model: h.embedModel, Input: query}
+	modelID := h.embedModelID(ctx)
+	body := embedReq{Model: modelID, Input: query, EncodingFormat: "float"}
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.embedAPIBase+"/embeddings", bytes.NewReader(payload))
 	if err != nil {
@@ -141,6 +188,9 @@ func (h *MCPReadHandler) embedQuery(ctx context.Context, query string) []float32
 		return make([]float32, fallbackDim)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if h.embedAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.embedAPIKey)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Warn(ctx, "embed request", logging.KV{"error", err})
@@ -273,12 +323,19 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 		"model":     h.rerankModel,
 	}
 	payload, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.rerankAPIURL+"/rerank", bytes.NewReader(payload))
+	rerankURL := h.rerankAPIURL
+	if rerankURL != "" && !strings.HasSuffix(strings.TrimSuffix(rerankURL, "/"), "rerank") {
+		rerankURL = rerankURL + "/rerank"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rerankURL, bytes.NewReader(payload))
 	if err != nil {
 		log.Warn(ctx, "rerank request build", logging.KV{"error", err})
 		return texts
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if h.rerankAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.rerankAPIKey)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Warn(ctx, "rerank request", logging.KV{"error", err})

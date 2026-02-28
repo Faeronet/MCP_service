@@ -24,10 +24,13 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
-VLLM_BASE = os.getenv("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
-EMBED_API_URL = (os.getenv("EMBED_API_URL") or "").strip()
+VLLM_BASE = (os.getenv("VLLM_OPENAI_BASE") or "http://vllm:8000/v1").strip().rstrip("/")
+EMBEDDING_BINDING_HOST = (os.getenv("EMBEDDING_BINDING_HOST") or "").strip().rstrip("/")
+EMBED_API_URL = (os.getenv("EMBED_API_URL") or "").strip().rstrip("/")
+EMBED_BASE = EMBEDDING_BINDING_HOST or EMBED_API_URL or VLLM_BASE
+EMBEDDING_BINDING_API_KEY = (os.getenv("EMBEDDING_BINDING_API_KEY") or "").strip()
 EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or "BAAI/bge-m3").strip()
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", "1024"))  # bge-m3 = 1024; для другой модели задайте в .env
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", os.getenv("EMBEDDING_DIM", "1024")))  # bge-m3 = 1024
 
 COLLECTION = "chunks"
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
@@ -86,21 +89,47 @@ def deterministic_edge_id(from_id: str, to_id: str, relation: str) -> str:
     return h[:32]
 
 
+def _embed_headers() -> dict:
+    if EMBEDDING_BINDING_API_KEY:
+        return {"Authorization": f"Bearer {EMBEDDING_BINDING_API_KEY}"}
+    return {}
+
+
+def _get_embed_model_id() -> str:
+    """Имя модели с сервера (GET /v1/models), чтобы избежать 404 из-за несовпадения имени."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(f"{EMBED_BASE}/models", headers=_embed_headers())
+            if r.status_code != 200:
+                return EMBEDDING_MODEL
+            data = r.json()
+            models = data.get("data") or []
+            if models and isinstance(models[0], dict) and models[0].get("id"):
+                return models[0]["id"]
+    except Exception:
+        pass
+    return EMBEDDING_MODEL
+
+
 def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
-    """Вызов vLLM /v1/embeddings (EMBED_API_URL или VLLM_OPENAI_BASE)."""
-    if not texts:
+    """Вызов /v1/embeddings (EMBEDDING_BINDING_HOST / EMBED_API_URL / VLLM_OPENAI_BASE)."""
+    if not texts or not EMBEDDING_MODEL:
         return []
-    base = (EMBED_API_URL or VLLM_BASE).rstrip("/")
-    url = f"{base}/embeddings"
-    payload = {"model": EMBEDDING_MODEL, "input": texts[0] if len(texts) == 1 else texts}
+    url = f"{EMBED_BASE}/embeddings"
+    model_id = _get_embed_model_id()
+    payload = {
+        "model": model_id,
+        "input": texts[0] if len(texts) == 1 else texts,
+        "encoding_format": "float",
+    }
     try:
         with httpx.Client(timeout=60.0) as client:
-            r = client.post(url, json=payload)
+            r = client.post(url, json=payload, headers=_embed_headers())
             if r.status_code != 200:
                 return []
             data = r.json()
             out = [item["embedding"] for item in data.get("data", [])]
-            return out if isinstance(out[0][0], float) else [[float(x) for x in v] for v in out]
+            return out if out and isinstance(out[0][0], float) else [[float(x) for x in v] for v in out]
     except Exception:
         return []
 
