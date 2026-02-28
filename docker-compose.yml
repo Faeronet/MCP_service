@@ -139,9 +139,9 @@ services:
     depends_on:
       - loki
 
-  # vLLM: образ cu130 под драйвер 580/CUDA 13. При Error 803 или "unknown runtime: nvidia" настройте nvidia-container-toolkit (README).
+  # vLLM: образ с CUDA 12 (latest) обычно стабильнее с драйвером 580. При 803 пробуйте VLLM_IMAGE=vllm/vllm-openai:v0.16.0-cu130.
   vllm:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.16.0-cu130}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
     deploy:
       resources:
         reservations:
