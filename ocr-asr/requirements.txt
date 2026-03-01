@@ -1,10 +1,10 @@
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
-# ASR
+# ASR (Hugging Face)
 faster-whisper>=1.0.0
-# OCR (CPU): PaddleOCR для PaddlePaddle/PaddleOCR-VL-1.5, easyocr для языковых кодов
-paddleocr>=2.7.0
-paddlepaddle>=2.5.0
+# OCR: TroCR (transformers) с Hugging Face, fallback easyocr
+transformers>=4.30.0
+torch>=2.0.0
 easyocr>=1.7.0
 Pillow>=10.0.0

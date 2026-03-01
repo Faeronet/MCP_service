@@ -10,8 +10,11 @@ log = logging.getLogger("ocr-asr")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 PORT = int(os.getenv("PORT", "8004"))
-OCR_MODEL = (os.getenv("OCR_MODEL") or "PaddlePaddle/PaddleOCR-VL-1.5").strip()
+OCR_MODEL = (os.getenv("OCR_MODEL") or "microsoft/trocr-base-handwritten").strip()
 ASR_MODEL = (os.getenv("ASR_MODEL") or "openai/whisper-large-v3").strip()
+HF_TOKEN = (os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or "").strip()
+if HF_TOKEN:
+    os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
 
 app = FastAPI(title="OCR+ASR")
 
@@ -20,21 +23,28 @@ _ocr_reader = None
 _asr_model = None
 
 
+def _hf_token_or_none():
+    return HF_TOKEN if HF_TOKEN else None
+
+
 def get_ocr():
     global _ocr_reader
     if _ocr_reader is None:
         try:
-            if "PaddlePaddle" in OCR_MODEL or "PaddleOCR" in OCR_MODEL:
-                from paddleocr import PaddleOCR
-                _ocr_reader = ("paddle", PaddleOCR(use_angle_cls=True, show_log=False))
-                log.info("OCR reader loaded: %s", OCR_MODEL)
+            if "trocr" in OCR_MODEL.lower() or "microsoft" in OCR_MODEL.lower():
+                from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+                token = _hf_token_or_none()
+                processor = TrOCRProcessor.from_pretrained(OCR_MODEL, token=token)
+                model = VisionEncoderDecoderModel.from_pretrained(OCR_MODEL, token=token)
+                _ocr_reader = ("trocr", (processor, model))
+                log.info("OCR reader loaded (TroCR): %s", OCR_MODEL)
             else:
                 import easyocr
                 langs = [x.strip() for x in (OCR_MODEL or "en").split(",") if x.strip()]
                 if not langs:
                     langs = ["en"]
                 _ocr_reader = ("easyocr", easyocr.Reader(langs, gpu=False))
-                log.info("OCR reader loaded: %s", langs)
+                log.info("OCR reader loaded (easyocr): %s", langs)
         except Exception as e:
             log.warning("OCR init failed: %s", e)
     return _ocr_reader
@@ -54,7 +64,7 @@ def get_asr():
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)) -> dict:
-    """Изображение или PDF (первая страница) → текст."""
+    """Изображение → текст (TroCR или easyocr)."""
     data = await file.read()
     if not data:
         return {"text": ""}
@@ -65,17 +75,14 @@ async def ocr(file: UploadFile = File(...)) -> dict:
         from PIL import Image
         import numpy as np
         img = Image.open(io.BytesIO(data)).convert("RGB")
-        arr = np.array(img)
         backend, ocr_engine = reader
-        if backend == "paddle":
-            result = ocr_engine.ocr(arr, cls=True)
-            text_parts = []
-            if result and result[0]:
-                for line in result[0]:
-                    if line and len(line) > 1 and line[1]:
-                        text_parts.append(line[1][0])
-            text = " ".join(text_parts).strip()
+        if backend == "trocr":
+            processor, model = ocr_engine
+            pixel_values = processor(images=img, return_tensors="pt").pixel_values
+            generated_ids = model.generate(pixel_values)
+            text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         else:
+            arr = np.array(img)
             results = ocr_engine.readtext(arr)
             text = " ".join([r[1] for r in results if len(r) > 1]).strip()
         return {"text": text or ""}
