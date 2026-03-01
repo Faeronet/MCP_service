@@ -39,6 +39,9 @@ EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", os.getenv("EMBEDDING_DIM", 
 COLLECTION = "chunks"
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
+RERANK_BASE = (os.getenv("RERANK_BINDING_HOST") or os.getenv("RERANK_API_URL") or "http://rerank:8787/api/v1").strip().rstrip("/")
+RERANK_MODEL = (os.getenv("RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip()
+
 qdrant: Optional[QdrantClient] = None
 minio_client: Optional[Minio] = None
 
@@ -158,6 +161,31 @@ def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
         return []
 
 
+def _call_rerank(query: str, documents: list[tuple[int, str]]) -> list[tuple[int, float]]:
+    """Вызов реранкера: query + список (index, text). Возвращает [(index, score), ...] по убыванию score."""
+    if not RERANK_BASE or not documents:
+        return []
+    url = f"{RERANK_BASE}/rerank" if not RERANK_BASE.endswith("/rerank") else RERANK_BASE
+    body = {
+        "query": (query or "")[:2000],
+        "documents": [{"id": idx, "text": (text or "")[:4000]} for idx, text in documents],
+        "model": RERANK_MODEL,
+    }
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            r = client.post(url, json=body)
+        if r.status_code != 200:
+            log.warning("rerank ingest: HTTP %s %s", r.status_code, r.text[:300])
+            return []
+        data = r.json()
+        out = data.get("data") or []
+        # data: [{id: index, similarity: score}, ...] уже отсортировано по similarity desc
+        return [(int(item["id"]), float(item.get("similarity", 0))) for item in out if "id" in item]
+    except Exception as e:
+        log.warning("rerank ingest failed: %s", e)
+        return []
+
+
 def embed_text(text: str) -> list[float]:
     """Вектор эмбеддинга через vLLM; при ошибке — нулевой вектор той же размерности."""
     vecs = _embed_via_vllm([text])
@@ -233,6 +261,27 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
         deterministic_chunk_id(req.doc_id, req.version_id, f"sec_{i}", text)
         for i, text in enumerate(chunks_text)
     ]
+
+    # Вызов реранкера при инжесте: связи по релевантности (related_chunk_ids, rerank_position)
+    rerank_order: list[tuple[int, float]] = []
+    if RERANK_BASE and len(chunks_text) > 0:
+        query = chunks_text[0][:2000] if chunks_text else ""
+        docs_for_rerank = [(i, chunks_text[i]) for i in range(len(chunks_text))]
+        rerank_order = _call_rerank(query, docs_for_rerank)
+        if rerank_order:
+            log.info("ingest_document: rerank returned %d items for doc_id=%s", len(rerank_order), req.doc_id)
+    # По rerank_order строим: для чанка i — его позиция в реранке и топ связанных по релевантности
+    rerank_position_by_index: dict[int, int] = {}
+    for pos, (idx, _) in enumerate(rerank_order):
+        rerank_position_by_index[idx] = pos
+    related_by_index: dict[int, list[str]] = {}
+    for i in range(len(chunks_text)):
+        # Топ-5 связанных чанков по реранку (без самого себя)
+        related_by_index[i] = [
+            chunk_ids[idx] for (idx, _) in rerank_order
+            if idx != i
+        ][:5]
+
     # Собираем точки как сырые dict для прямого HTTP upsert (payload без искажений клиентом)
     points_payload: list[dict[str, Any]] = []
     for i, text in enumerate(chunks_text):
@@ -251,9 +300,14 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             payload["prev_chunk_id"] = chunk_ids[i - 1]
         if i < len(chunk_ids) - 1:
             payload["next_chunk_id"] = chunk_ids[i + 1]
+        if i in rerank_position_by_index:
+            payload["rerank_position"] = rerank_position_by_index[i]
+        if related_by_index.get(i):
+            payload["related_chunk_ids"] = related_by_index[i]
         if req.metadata:
+            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text", "rerank_position", "related_chunk_ids")
             for k, v in req.metadata.items():
-                if k not in ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text"):
+                if k not in skip:
                     payload[k] = v
         points_payload.append({
             "id": chunk_id_to_point_id(chunk_id),
