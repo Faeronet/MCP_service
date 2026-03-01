@@ -40,12 +40,6 @@ export function Docs() {
 
   const hasSelection = selectedIds.size > 0
   const allSelected = docs.length > 0 && selectedIds.size === docs.length
-  const selectAllRef = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    const el = selectAllRef.current
-    if (!el) return
-    el.indeterminate = hasSelection && selectedIds.size < docs.length
-  }, [hasSelection, selectedIds.size, docs.length])
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev: Set<string>) => {
