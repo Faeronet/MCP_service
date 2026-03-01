@@ -1,0 +1,13 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+# ASR (Hugging Face)
+faster-whisper>=1.0.0
+# OCR: PaddleOCR-VL / TroCR (transformers) с Hugging Face, fallback easyocr
+transformers>=4.45.0
+torch>=2.0.0
+easyocr>=1.7.0
+Pillow>=10.0.0
+# PDF и текст
+pypdf>=4.0.0
+reportlab>=4.0.0
