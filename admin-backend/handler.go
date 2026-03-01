@@ -291,7 +291,7 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 	// Порядок: jobs → versions → docs (из-за FK). Затем чанки в Qdrant через mcp-write.
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.jobs WHERE doc_id = $1`, docID)
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.versions WHERE doc_id = $1`, docID)
-	result, err := h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
+	_, err := h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
 	if err != nil {
 		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 		return
