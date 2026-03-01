@@ -233,13 +233,13 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
         deterministic_chunk_id(req.doc_id, req.version_id, f"sec_{i}", text)
         for i, text in enumerate(chunks_text)
     ]
-    points = []
+    # Собираем точки как сырые dict для прямого HTTP upsert (payload без искажений клиентом)
+    points_payload: list[dict[str, Any]] = []
     for i, text in enumerate(chunks_text):
         chunk_id = chunk_ids[i]
         vector = embed_text(text)
         if len(vector) != VECTOR_SIZE:
             vector = (vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
-        # Сначала базовый payload и связи prev/next (обязательные для графа чанков)
         payload = {
             "chunk_id": chunk_id,
             "doc_id": req.doc_id,
@@ -251,55 +251,46 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             payload["prev_chunk_id"] = chunk_ids[i - 1]
         if i < len(chunk_ids) - 1:
             payload["next_chunk_id"] = chunk_ids[i + 1]
-        # Метаданные в конец, без перезаписи связей
         if req.metadata:
             for k, v in req.metadata.items():
                 if k not in ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text"):
                     payload[k] = v
-        points.append(
-            PointStruct(
-                id=chunk_id_to_point_id(chunk_id),
-                vector=vector,
-                payload=payload,
-            )
-        )
+        points_payload.append({
+            "id": chunk_id_to_point_id(chunk_id),
+            "vector": vector,
+            "payload": payload,
+        })
 
-    # Подсчёт связей и проверка: что именно уходит в upsert
-    with_prev = sum(1 for i in range(len(points)) if i > 0)
-    with_next = sum(1 for i in range(len(points)) if i < len(points) - 1)
-    first_payload_keys = list(points[0].payload.keys()) if points else []
+    with_prev = sum(1 for i in range(len(points_payload)) if i > 0)
+    with_next = sum(1 for i in range(len(points_payload)) if i < len(points_payload) - 1)
+    first_keys = list(points_payload[0]["payload"].keys()) if points_payload else []
     log.info(
-        "ingest_document: upserting %d points with links (prev=%d next=%d) doc_id=%s first_point_keys=%s",
-        len(points), with_prev, with_next, req.doc_id, first_payload_keys,
+        "ingest_document: upserting %d points (prev=%d next=%d) doc_id=%s first_payload_keys=%s",
+        len(points_payload), with_prev, with_next, req.doc_id, first_keys,
     )
 
     ensure_collection()
+    # Upsert через HTTP API, чтобы payload уходил в Qdrant как есть
+    url = f"{QDRANT_URL.strip('/')}/collections/{COLLECTION}/points"
+    body = {"points": points_payload}
     try:
-        qdrant.upsert(COLLECTION, points=points)
-    except UnexpectedResponse as e:
-        if e.status_code == 404:
+        with httpx.Client(timeout=60.0) as client:
+            r = client.put(url, json=body)
+        if r.status_code == 404:
             ensure_collection()
-            try:
-                qdrant.upsert(COLLECTION, points=points)
-            except Exception as retry_err:
-                log.warning("qdrant upsert retry after 404 failed: %s", retry_err)
-                raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {retry_err!s}") from retry_err
-            return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
-        err = f"{e!s}"
-        if "dimension" in err.lower() or "vector" in err.lower() or "size" in err.lower():
-            _ingest_error(
-                400,
-                f"qdrant upsert failed (vector dimension mismatch): {err}. "
-                f"Delete the collection so it is recreated with VECTOR_SIZE={VECTOR_SIZE}: "
-                "curl -X DELETE http://<qdrant>:6333/collections/chunks",
-                doc_id=req.doc_id,
-            )
-        log.warning("qdrant upsert failed: %s", err)
-        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
+            with httpx.Client(timeout=60.0) as client:
+                r = client.put(url, json=body)
+        if r.status_code >= 400:
+            err = r.text
+            log.warning("qdrant upsert HTTP %s: %s", r.status_code, err[:500])
+            if "dimension" in err.lower() or "vector" in err.lower():
+                _ingest_error(400, f"qdrant dimension mismatch: {err[:200]}. Delete collection chunks and retry.", doc_id=req.doc_id)
+            raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err[:200]}")
+    except HTTPException:
+        raise
     except Exception as e:
-        err = f"{e!s}"
-        log.warning("qdrant upsert failed: %s", err)
-        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
+        log.warning("qdrant upsert failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {e!s}") from e
 
     # Проверка: читаем обратно один-два чанка и логируем ключи payload (чтобы убедиться, что prev/next попали в Qdrant)
     try:
@@ -321,7 +312,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     except Exception as e:
         log.warning("ingest_document: verify scroll failed: %s", e)
 
-    return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
+    return {"status": "ok", "chunks_upserted": len(points_payload), "doc_id": req.doc_id, "version_id": req.version_id}
 
 
 @app.get("/mcp/doc_ids")
