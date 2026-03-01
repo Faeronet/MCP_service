@@ -11,10 +11,23 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 PORT = int(os.getenv("PORT", "8004"))
 OCR_MODEL = (os.getenv("OCR_MODEL") or "microsoft/trocr-base-handwritten").strip()
+OCR_LANGUAGES = (os.getenv("OCR_LANGUAGES") or "ru,en").strip()
 ASR_MODEL = (os.getenv("ASR_MODEL") or "openai/whisper-large-v3").strip()
+ASR_LANGUAGE = (os.getenv("ASR_LANGUAGE") or "ru").strip() or None
 HF_TOKEN = (os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or "").strip()
 if HF_TOKEN:
     os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
+
+
+def _device():
+    """cuda на GPU с индексом 1 (NVIDIA_VISIBLE_DEVICES=1), иначе cpu."""
+    if not os.getenv("NVIDIA_VISIBLE_DEVICES"):
+        return "cpu"
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
 
 app = FastAPI(title="OCR+ASR")
 
@@ -33,18 +46,22 @@ def get_ocr():
         try:
             if "trocr" in OCR_MODEL.lower() or "microsoft" in OCR_MODEL.lower():
                 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+                import torch
                 token = _hf_token_or_none()
                 processor = TrOCRProcessor.from_pretrained(OCR_MODEL, token=token)
                 model = VisionEncoderDecoderModel.from_pretrained(OCR_MODEL, token=token)
-                _ocr_reader = ("trocr", (processor, model))
-                log.info("OCR reader loaded (TroCR): %s", OCR_MODEL)
+                device = _device()
+                model = model.to(device)
+                _ocr_reader = ("trocr", (processor, model, device))
+                log.info("OCR reader loaded (TroCR) on %s: %s", device, OCR_MODEL)
             else:
                 import easyocr
-                langs = [x.strip() for x in (OCR_MODEL or "en").split(",") if x.strip()]
+                langs = [x.strip() for x in (OCR_LANGUAGES or OCR_MODEL or "ru,en").split(",") if x.strip()]
                 if not langs:
-                    langs = ["en"]
-                _ocr_reader = ("easyocr", easyocr.Reader(langs, gpu=False))
-                log.info("OCR reader loaded (easyocr): %s", langs)
+                    langs = ["ru", "en"]
+                use_gpu = _device() == "cuda"
+                _ocr_reader = ("easyocr", easyocr.Reader(langs, gpu=use_gpu))
+                log.info("OCR reader loaded (easyocr) gpu=%s: %s", use_gpu, langs)
         except Exception as e:
             log.warning("OCR init failed: %s", e)
     return _ocr_reader
@@ -55,8 +72,10 @@ def get_asr():
     if _asr_model is None:
         try:
             from faster_whisper import WhisperModel
-            _asr_model = WhisperModel(ASR_MODEL or "base", device="cpu", compute_type="int8")
-            log.info("ASR model loaded: %s", ASR_MODEL)
+            device = _device()
+            compute_type = "float16" if device == "cuda" else "int8"
+            _asr_model = WhisperModel(ASR_MODEL or "base", device=device, compute_type=compute_type)
+            log.info("ASR model loaded on %s (language=%s): %s", device, ASR_LANGUAGE, ASR_MODEL)
         except Exception as e:
             log.warning("ASR init failed: %s", e)
     return _asr_model
@@ -77,8 +96,9 @@ async def ocr(file: UploadFile = File(...)) -> dict:
         img = Image.open(io.BytesIO(data)).convert("RGB")
         backend, ocr_engine = reader
         if backend == "trocr":
-            processor, model = ocr_engine
-            pixel_values = processor(images=img, return_tensors="pt").pixel_values
+            processor, model, device = ocr_engine
+            import torch
+            pixel_values = processor(images=img, return_tensors="pt").pixel_values.to(device)
             generated_ids = model.generate(pixel_values)
             text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
         else:
@@ -106,7 +126,7 @@ async def asr(file: UploadFile = File(...)) -> dict:
             f.write(data)
             path = f.name
         try:
-            segments, _ = model.transcribe(path, language=None)
+            segments, _ = model.transcribe(path, language=ASR_LANGUAGE)
             text = " ".join([s.text for s in segments if s.text]).strip()
             return {"text": text or ""}
         finally:
