@@ -293,20 +293,36 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid doc id"}`, http.StatusBadRequest)
 		return
 	}
-	// Порядок: jobs → versions → docs (из-за FK). Затем чанки в Qdrant через mcp-write.
+
+	// 1. Удалить чанки из Qdrant (если есть) — запрос к mcp-write, ошибки игнорируем
+	if req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, h.MCPWriteURL+"/doc/"+docID.String(), nil); req != nil {
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+		}
+	}
+
+	// 2. Удалить джобы по doc_id
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.jobs WHERE doc_id = $1`, docID)
+
+	// 3. До удаления versions — получить file_path для удаления из MinIO
+	var filePaths []string
+	if rows, err := h.Pool.Query(ctx, `SELECT file_path FROM core.versions WHERE doc_id = $1`, docID); err == nil {
+		for rows.Next() {
+			var fp string
+			if rows.Scan(&fp) == nil && fp != "" {
+				filePaths = append(filePaths, fp)
+			}
+		}
+		rows.Close()
+	}
+	for _, objectKey := range filePaths {
+		_ = h.MinIO.Remove(ctx, objectKey)
+	}
+
+	// 4. Удалить versions и doc из БД (порядок из-за FK)
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.versions WHERE doc_id = $1`, docID)
-	_, err = h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
-	if err != nil {
-		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
-		return
-	}
-	// Всегда чистим Qdrant по doc_id (даже если записи в БД уже не было — могли остаться чанки)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, h.MCPWriteURL+"/doc/"+docID.String(), nil)
-	if resp, err := http.DefaultClient.Do(req); err == nil {
-		resp.Body.Close()
-	}
-	// Успех в любом случае: док удалён или уже отсутствовал (идемпотентность)
+	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "doc_id": docID.String()})
 }

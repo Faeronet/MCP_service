@@ -50,3 +50,8 @@ func (c *Client) Get(ctx context.Context, objectName string) (*minio.Object, err
 func (c *Client) Bucket() string { return c.bucket }
 
 func (c *Client) Client() *minio.Client { return c.client }
+
+// Remove удаляет объект из бакета. Ошибки (в т.ч. объект не найден) можно игнорировать при best-effort удалении.
+func (c *Client) Remove(ctx context.Context, objectName string) error {
+	return c.client.RemoveObject(ctx, c.bucket, objectName, minio.RemoveObjectOptions{})
+}
