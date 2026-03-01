@@ -36,15 +36,27 @@ export async function login(username: string, password: string): Promise<{ token
 }
 
 export async function uploadFile(file: File, name?: string): Promise<{ job_id: string; doc_id: string; status: string }> {
+  const token = getToken()
+  if (!token) throw new Error('NOT_LOGGED_IN')
   const form = new FormData()
   form.append('file', file)
   if (name) form.append('name', name)
   const r = await fetch(`${API_URL}/api/upload`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${getToken()}` },
+    headers: { Authorization: `Bearer ${token}` },
     body: form,
   })
-  if (!r.ok) throw new Error(await r.text())
+  checkAuth(r)
+  if (!r.ok) {
+    const text = await r.text()
+    try {
+      const body = JSON.parse(text) as { error?: string }
+      if (body?.error === 'token_expired') throw new Error('Сессия истекла. Войдите снова.')
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith('Сессия истекла')) throw e
+    }
+    throw new Error(text || 'Upload failed')
+  }
   return r.json()
 }
 

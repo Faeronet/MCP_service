@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"net/http"
 	"os"
 	"os/signal"
@@ -159,9 +160,20 @@ func authMiddleware(secret []byte, next http.Handler) http.Handler {
 		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
 			tokenStr = tokenStr[7:]
 		}
+		if tokenStr == "" {
+			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
+			return
+		}
 		_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) { return secret, nil })
 		if err != nil {
-			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+			log.Warn(r.Context(), "auth middleware jwt parse failed", logging.KV{"error", err})
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			body := `{"error":"invalid token"}`
+			if errors.Is(err, jwt.ErrTokenExpired) {
+				body = `{"error":"token_expired"}`
+			}
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -189,7 +201,14 @@ func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
 		}
 		_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) { return secret, nil })
 		if err != nil {
-			http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+			log.Warn(r.Context(), "grafana auth jwt parse failed", logging.KV{"error", err})
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			body := `{"error":"invalid token"}`
+			if errors.Is(err, jwt.ErrTokenExpired) {
+				body = `{"error":"token_expired"}`
+			}
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		next.ServeHTTP(w, r)
