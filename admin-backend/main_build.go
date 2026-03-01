@@ -95,7 +95,8 @@ func main() {
 	mux.HandleFunc("/api/login", handler.Login)
 	mux.HandleFunc("/api/login/", handler.Login)
 	mux.Handle("/api/upload", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Upload)))
-	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListDocs)))
+	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, docsRouter(handler)))
+	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, docsRouter(handler)))
 	mux.Handle("/api/jobs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListJobs)))
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
@@ -126,6 +127,25 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 }
 
+func docsRouter(h *Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/api/docs" || path == "/api/docs/" {
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			h.ListDocs(w, r)
+			return
+		}
+		if strings.HasPrefix(path, "/api/docs/") {
+			h.DocsWithID(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -133,7 +153,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			origin = "*"
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

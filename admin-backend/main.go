@@ -93,8 +93,8 @@ func main() {
 	mux.HandleFunc("/api/login", handler.Login)
 	mux.HandleFunc("/api/login/", handler.Login)
 	mux.Handle("/api/upload", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Upload)))
-	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListDocs)))
-	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.DocsWithID)))
+	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, docsRouter(handler)))
+	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, docsRouter(handler)))
 	mux.Handle("/api/jobs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListJobs)))
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
@@ -123,6 +123,27 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// docsRouter обрабатывает /api/docs и /api/docs/<id>: список или операция по id. Нужен отдельный роутер,
+// чтобы DELETE /api/docs/<id> гарантированно попадал в обработчик (в т.ч. под Go 1.22 ServeMux).
+func docsRouter(h *Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/api/docs" || path == "/api/docs/" {
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			h.ListDocs(w, r)
+			return
+		}
+		if strings.HasPrefix(path, "/api/docs/") {
+			h.DocsWithID(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
