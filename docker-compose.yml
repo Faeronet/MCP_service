@@ -350,6 +350,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-documents}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-0.6B}
+      USE_LLM_CHUNKING: ${USE_LLM_CHUNKING:-}
+      USE_LLM_RERANK_QUERY: ${USE_LLM_RERANK_QUERY:-}
       EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}

@@ -42,6 +42,10 @@ VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "102
 RERANK_BASE = (os.getenv("RERANK_BINDING_HOST") or os.getenv("RERANK_API_URL") or "http://rerank:8787/api/v1").strip().rstrip("/")
 RERANK_MODEL = (os.getenv("RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip()
 
+LLM_MODEL = (os.getenv("LLM_MODEL") or "Qwen/Qwen3-0.6B").strip()
+USE_LLM_CHUNKING = os.getenv("USE_LLM_CHUNKING", "").lower() in ("1", "true", "yes")
+USE_LLM_RERANK_QUERY = os.getenv("USE_LLM_RERANK_QUERY", "").lower() in ("1", "true", "yes")
+
 qdrant: Optional[QdrantClient] = None
 minio_client: Optional[Minio] = None
 
@@ -186,6 +190,56 @@ def _call_rerank(query: str, documents: list[tuple[int, str]]) -> list[tuple[int
         return []
 
 
+def _call_llm(messages: list[dict[str, str]], max_tokens: int = 2048) -> str:
+    """Вызов LLM (vLLM chat/completions). Возвращает content первого ответа или пустую строку при ошибке."""
+    if not VLLM_BASE or not LLM_MODEL:
+        return ""
+    url = f"{VLLM_BASE}/chat/completions"
+    body = {"model": LLM_MODEL, "messages": messages, "max_tokens": max_tokens}
+    try:
+        with httpx.Client(timeout=120.0) as client:
+            r = client.post(url, json=body)
+        if r.status_code != 200:
+            log.warning("llm request: HTTP %s %s", r.status_code, r.text[:200])
+            return ""
+        data = r.json()
+        choices = data.get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content") or ""
+    except Exception as e:
+        log.warning("llm request failed: %s", e)
+        return ""
+
+
+def _chunk_with_llm(raw: str) -> list[str]:
+    """Чанкинг через LLM: один запрос с просьбой разбить текст на логические чанки (параграфы через двойной перенос)."""
+    if not raw or not raw.strip():
+        return []
+    prompt = (
+        "Разбей следующий текст на логические фрагменты (чанки). "
+        "Выводи только сами фрагменты, разделяй их двойным переносом строки (две пустые строки между чанками). "
+        "Не добавляй нумерацию и заголовки.\n\nТекст:\n\n"
+    )
+    text = (raw or "")[:30000]
+    content = _call_llm([{"role": "user", "content": prompt + text}], max_tokens=4096)
+    if not content or not content.strip():
+        return []
+    chunks = [p.strip() for p in content.split("\n\n") if p.strip()]
+    return chunks[:50]
+
+
+def _summarize_with_llm(raw: str) -> str:
+    """Краткое содержание текста в одно предложение для использования как query реранка."""
+    if not raw or not raw.strip():
+        return ""
+    text = (raw or "")[:8000]
+    content = _call_llm([
+        {"role": "user", "content": f"Одним предложением опиши основное содержание текста (для поиска по смыслу):\n\n{text}"}
+    ], max_tokens=150)
+    return (content or "").strip()[:500]
+
+
 def embed_text(text: str) -> list[float]:
     """Вектор эмбеддинга через vLLM; при ошибке — нулевой вектор той же размерности."""
     vecs = _embed_via_vllm([text])
@@ -251,8 +305,16 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     if not raw or not raw.strip():
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
-    # Simple chunking: by paragraph
-    chunks_text = [p.strip() for p in raw.split("\n\n") if p.strip()][:50]
+    # Чанкинг: по желанию через LLM, иначе по параграфам
+    if USE_LLM_CHUNKING and VLLM_BASE and LLM_MODEL:
+        chunks_text = _chunk_with_llm(raw)
+        if not chunks_text:
+            chunks_text = [p.strip() for p in raw.split("\n\n") if p.strip()][:50]
+            log.info("ingest_document: LLM chunking returned empty, using simple split (%d chunks)", len(chunks_text))
+        else:
+            log.info("ingest_document: LLM chunking returned %d chunks", len(chunks_text))
+    else:
+        chunks_text = [p.strip() for p in raw.split("\n\n") if p.strip()][:50]
     if not chunks_text:
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
@@ -262,24 +324,29 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
         for i, text in enumerate(chunks_text)
     ]
 
-    # Вызов реранкера при инжесте: связи по релевантности (related_chunk_ids, rerank_position)
+    # Вызов реранкера при инжесте: строим связи чанков (links) и пишем их в Qdrant
     rerank_order: list[tuple[int, float]] = []
     if RERANK_BASE and len(chunks_text) > 0:
-        query = chunks_text[0][:2000] if chunks_text else ""
+        if USE_LLM_RERANK_QUERY and VLLM_BASE and LLM_MODEL:
+            query = _summarize_with_llm(raw)
+            if not query:
+                query = chunks_text[0][:2000] if chunks_text else ""
+        else:
+            query = chunks_text[0][:2000] if chunks_text else ""
         docs_for_rerank = [(i, chunks_text[i]) for i in range(len(chunks_text))]
         rerank_order = _call_rerank(query, docs_for_rerank)
         if rerank_order:
-            log.info("ingest_document: rerank returned %d items for doc_id=%s", len(rerank_order), req.doc_id)
-    # По rerank_order строим: для чанка i — его позиция в реранке и топ связанных по релевантности
+            log.info("ingest_document: rerank returned %d items (links) for doc_id=%s", len(rerank_order), req.doc_id)
+    # По rerank_order: позиция в реранке и связи (links) — список {chunk_id, score} для записи в Qdrant
     rerank_position_by_index: dict[int, int] = {}
     for pos, (idx, _) in enumerate(rerank_order):
         rerank_position_by_index[idx] = pos
-    related_by_index: dict[int, list[str]] = {}
+    links_by_index: dict[int, list[dict[str, Any]]] = {}
     for i in range(len(chunks_text)):
-        # Топ-5 связанных чанков по реранку (без самого себя)
-        related_by_index[i] = [
-            chunk_ids[idx] for (idx, _) in rerank_order
-            if idx != i
+        # Топ-5 связей по релевантности (chunk_id + score) для записи в payload
+        links_by_index[i] = [
+            {"chunk_id": chunk_ids[idx], "score": round(score, 4)}
+            for (idx, score) in rerank_order if idx != i
         ][:5]
 
     # Собираем точки как сырые dict для прямого HTTP upsert (payload без искажений клиентом)
@@ -302,10 +369,11 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             payload["next_chunk_id"] = chunk_ids[i + 1]
         if i in rerank_position_by_index:
             payload["rerank_position"] = rerank_position_by_index[i]
-        if related_by_index.get(i):
-            payload["related_chunk_ids"] = related_by_index[i]
+        if links_by_index.get(i):
+            payload["links"] = links_by_index[i]
+            payload["related_chunk_ids"] = [ln["chunk_id"] for ln in links_by_index[i]]
         if req.metadata:
-            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text", "rerank_position", "related_chunk_ids")
+            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text", "rerank_position", "related_chunk_ids", "links")
             for k, v in req.metadata.items():
                 if k not in skip:
                     payload[k] = v
