@@ -23,14 +23,15 @@ import (
 )
 
 type HandlerDeps struct {
-	Pool        *pgxpool.Pool
-	MinIO       *storage.Client
-	Queue       *queue.Client
-	JWTSecret   []byte
-	AdminUser   string
-	AdminPass   string
-	MCPWriteURL string
-	LokiURL     string
+	Pool            *pgxpool.Pool
+	MinIO           *storage.Client
+	Queue           *queue.Client
+	JWTSecret       []byte
+	JWTExpiration   time.Duration // срок действия токена (например 168h = 7 дней)
+	AdminUser       string
+	AdminPass       string
+	MCPWriteURL     string
+	LokiURL         string
 }
 
 type Handler struct {
@@ -67,7 +68,11 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
-	claims := jwt.MapClaims{"sub": user, "exp": time.Now().Add(24 * time.Hour).Unix()}
+	ttl := h.JWTExpiration
+	if ttl <= 0 {
+		ttl = 168 * time.Hour // по умолчанию 7 дней
+	}
+	claims := jwt.MapClaims{"sub": user, "exp": time.Now().Add(ttl).Unix()}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	tokStr, err := token.SignedString(h.JWTSecret)
 	if err != nil {

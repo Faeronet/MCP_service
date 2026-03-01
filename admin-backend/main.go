@@ -72,15 +72,20 @@ func main() {
 		secretBytes = hash[:]
 	}
 
+	jwtExpHours := config.LoadInt("JWT_EXPIRATION_HOURS", 168) // 168 = 7 дней
+	if jwtExpHours < 1 {
+		jwtExpHours = 168
+	}
 	handler := NewHandler(HandlerDeps{
-		Pool:        pool,
-		MinIO:       minioClient,
-		Queue:       rmq,
-		JWTSecret:   secretBytes,
-		AdminUser:   config.LoadString("ADMIN_USER", "admin"),
-		AdminPass:   config.LoadString("ADMIN_PASSWORD", "admin"),
-		MCPWriteURL: config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001"),
-		LokiURL:     config.LoadString("LOKI_URL", "http://loki:3100"),
+		Pool:          pool,
+		MinIO:         minioClient,
+		Queue:         rmq,
+		JWTSecret:     secretBytes,
+		JWTExpiration: time.Duration(jwtExpHours) * time.Hour,
+		AdminUser:     config.LoadString("ADMIN_USER", "admin"),
+		AdminPass:     config.LoadString("ADMIN_PASSWORD", "admin"),
+		MCPWriteURL:   config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001"),
+		LokiURL:       config.LoadString("LOKI_URL", "http://loki:3100"),
 	})
 
 	mux := http.NewServeMux()
