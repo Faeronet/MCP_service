@@ -6,8 +6,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
-# PyTorch CPU (легче и быстрее качается); для GPU используйте образ с CUDA.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+# PyTorch + torchvision одной парой версий (иначе torchvision::nms / extension — несовместимость).
+RUN pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cpu \
   && pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 EXPOSE 8004
