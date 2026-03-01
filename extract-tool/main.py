@@ -205,12 +205,14 @@ def _extract_single_sync(data: bytes, filename: str) -> str | None:
     if ext in IMAGE_EXT:
         reader = get_ocr()
         if reader is None:
+            log.warning("OCR reader not available, skipping image")
             return ""
         try:
             from PIL import Image
             import numpy as np
             img = Image.open(io.BytesIO(data)).convert("RGB")
             backend, ocr_engine = reader
+            log.info("Running OCR backend=%s", backend)
             if backend == "paddleocr":
                 processor, model, device = ocr_engine
                 import torch
@@ -235,7 +237,7 @@ def _extract_single_sync(data: bytes, filename: str) -> str | None:
                 results = ocr_engine.readtext(arr)
                 return " ".join([r[1] for r in results if len(r) > 1]).strip()
         except Exception as e:
-            log.warning("OCR in extract: %s", e)
+            log.exception("OCR in extract failed: %s", e)
             return ""
     if ext in AUDIO_EXT:
         model = get_asr()
@@ -263,9 +265,11 @@ def _extract_single_sync(data: bytes, filename: str) -> str | None:
 
 def _extract_impl(data: bytes, filename: str) -> dict:
     """Синхронная реализация извлечения (вызывается из пула потоков, чтобы не блокировать event loop)."""
+    ext = _file_extension(filename)
+    log.info("Extract request: filename=%s size=%d ext=%s", filename, len(data), ext)
     if not data:
         return {"text": ""}
-    if _file_extension(filename) in {".zip", ".tar", ".tar.gz", ".tar.xz", ".tgz", ".txz"}:
+    if ext in {".zip", ".tar", ".tar.gz", ".tar.xz", ".tgz", ".txz"}:
         items = _extract_archive(data, filename)
         if items is None:
             raise ValueError("Файл или архив нельзя обработать.")
@@ -281,6 +285,12 @@ def _extract_impl(data: bytes, filename: str) -> dict:
                 if t is not None:
                     parts.append(f"--- {name}\n" + (t or ""))
         return {"text": "\n\n".join(p for p in parts if p.strip())}
+    if ext in IMAGE_EXT:
+        log.info("Processing as image (OCR): %s", filename)
+    elif ext in AUDIO_EXT:
+        log.info("Processing as audio (ASR): %s", filename)
+    elif ext in TEXT_EXT or ext == ".pdf":
+        log.info("Processing as text/PDF: %s", filename)
     result = _extract_single_sync(data, filename)
     if result is not None:
         return {"text": result}
