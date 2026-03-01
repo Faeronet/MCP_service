@@ -239,19 +239,23 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
         vector = embed_text(text)
         if len(vector) != VECTOR_SIZE:
             vector = (vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        # Сначала базовый payload и связи prev/next (обязательные для графа чанков)
         payload = {
             "chunk_id": chunk_id,
             "doc_id": req.doc_id,
             "version_id": req.version_id,
             "section_path": f"sec_{i}",
             "text": text,
-            **(req.metadata or {}),
         }
-        # Связи с соседними чанками (prev/next)
         if i > 0:
             payload["prev_chunk_id"] = chunk_ids[i - 1]
         if i < len(chunk_ids) - 1:
             payload["next_chunk_id"] = chunk_ids[i + 1]
+        # Метаданные в конец, без перезаписи связей
+        if req.metadata:
+            for k, v in req.metadata.items():
+                if k not in ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text"):
+                    payload[k] = v
         points.append(
             PointStruct(
                 id=chunk_id_to_point_id(chunk_id),
@@ -260,12 +264,13 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             )
         )
 
-    # Подсчёт связей: у скольких чанков есть prev/next (для проверки записи в Qdrant)
+    # Подсчёт связей и проверка: что именно уходит в upsert
     with_prev = sum(1 for i in range(len(points)) if i > 0)
     with_next = sum(1 for i in range(len(points)) if i < len(points) - 1)
+    first_payload_keys = list(points[0].payload.keys()) if points else []
     log.info(
-        "ingest_document: upserting %d points with links (prev_chunk_id: %d, next_chunk_id: %d) doc_id=%s",
-        len(points), with_prev, with_next, req.doc_id,
+        "ingest_document: upserting %d points with links (prev=%d next=%d) doc_id=%s first_point_keys=%s",
+        len(points), with_prev, with_next, req.doc_id, first_payload_keys,
     )
 
     ensure_collection()
