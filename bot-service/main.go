@@ -501,7 +501,21 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		return
 	}
 	_ = b.appendMessage(ctx, sessionID, "assistant", reply)
-	b.sendReply(ctx, chatID, reply)
+	// Показываем пользователю, что извлекли (фрагмент) и ответ модели. Лимит Telegram 4096.
+	const previewLen = 350
+	const maxReplyLen = 4000
+	replyToUser := reply
+	if len(extracted) > 0 {
+		preview := extracted
+		if len(preview) > previewLen {
+			preview = preview[:previewLen] + "..."
+		}
+		replyToUser = "Извлечённый текст (начало):\n" + preview + "\n\nОтвет:\n" + reply
+		if len(replyToUser) > maxReplyLen {
+			replyToUser = replyToUser[:maxReplyLen-20] + "\n..."
+		}
+	}
+	b.sendReply(ctx, chatID, replyToUser)
 	log.Info(ctx, "attachment processed and LLM replied", logging.KV{"chat_id", chatID}, logging.KV{"object_key", objectKey})
 }
 

@@ -15,6 +15,7 @@ log = logging.getLogger("extract-tool")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 PORT = int(os.getenv("PORT", "8004"))
+# По умолчанию PaddleOCR-VL-1.5 с Hugging Face (HF_TOKEN для gated). При ошибке загрузки — fallback EasyOCR.
 OCR_MODEL = (os.getenv("OCR_MODEL") or "PaddlePaddle/PaddleOCR-VL-1.5").strip()
 OCR_LANGUAGES = (os.getenv("OCR_LANGUAGES") or "ru,en").strip()
 ASR_MODEL = (os.getenv("ASR_MODEL") or "openai/whisper-large-v3").strip()
@@ -42,11 +43,22 @@ def _hf_token_or_none():
     return HF_TOKEN if HF_TOKEN else None
 
 
+def _init_easyocr():
+    """Инициализация EasyOCR (стабильно ставится, поддерживает ru,en)."""
+    import easyocr
+    langs = [x.strip() for x in (OCR_LANGUAGES or OCR_MODEL or "ru,en").split(",") if x.strip()]
+    if not langs:
+        langs = ["ru", "en"]
+    use_gpu = _device() == "cuda"
+    return ("easyocr", easyocr.Reader(langs, gpu=use_gpu))
+
+
 def get_ocr():
     global _ocr_reader
     if _ocr_reader is None:
-        try:
-            if "paddleocr" in OCR_MODEL.lower() or "paddlepaddle" in OCR_MODEL.lower():
+        # Сначала пробуем тяжёлые модели по OCR_MODEL, при ошибке — fallback на EasyOCR
+        if OCR_MODEL and ("paddleocr" in OCR_MODEL.lower() or "paddlepaddle" in OCR_MODEL.lower()):
+            try:
                 from transformers import AutoProcessor, AutoModelForImageTextToText
                 import torch
                 token = _hf_token_or_none()
@@ -58,7 +70,12 @@ def get_ocr():
                 ).to(device).eval()
                 _ocr_reader = ("paddleocr", (processor, model, device))
                 log.info("OCR reader loaded (PaddleOCR-VL) on %s: %s", device, OCR_MODEL)
-            elif "trocr" in OCR_MODEL.lower() or "microsoft" in OCR_MODEL.lower():
+            except Exception as e:
+                log.warning("PaddleOCR-VL init failed, using EasyOCR: %s", e)
+                _ocr_reader = _init_easyocr()
+                log.info("OCR reader loaded (easyocr fallback): %s", OCR_LANGUAGES or "ru,en")
+        elif OCR_MODEL and ("trocr" in OCR_MODEL.lower() or "microsoft" in OCR_MODEL.lower()):
+            try:
                 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
                 import torch
                 token = _hf_token_or_none()
@@ -68,16 +85,16 @@ def get_ocr():
                 model = model.to(device)
                 _ocr_reader = ("trocr", (processor, model, device))
                 log.info("OCR reader loaded (TroCR) on %s: %s", device, OCR_MODEL)
-            else:
-                import easyocr
-                langs = [x.strip() for x in (OCR_LANGUAGES or OCR_MODEL or "ru,en").split(",") if x.strip()]
-                if not langs:
-                    langs = ["ru", "en"]
-                use_gpu = _device() == "cuda"
-                _ocr_reader = ("easyocr", easyocr.Reader(langs, gpu=use_gpu))
-                log.info("OCR reader loaded (easyocr) gpu=%s: %s", use_gpu, langs)
-        except Exception as e:
-            log.warning("OCR init failed: %s", e)
+            except Exception as e:
+                log.warning("TroCR init failed, using EasyOCR: %s", e)
+                _ocr_reader = _init_easyocr()
+                log.info("OCR reader loaded (easyocr fallback): %s", OCR_LANGUAGES or "ru,en")
+        else:
+            try:
+                _ocr_reader = _init_easyocr()
+                log.info("OCR reader loaded (easyocr): %s", OCR_LANGUAGES or OCR_MODEL or "ru,en")
+            except Exception as e:
+                log.exception("OCR init failed: %s", e)
     return _ocr_reader
 
 
