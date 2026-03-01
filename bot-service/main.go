@@ -410,22 +410,18 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	var fileID string
 	var objectKey string
 	var fileName string
-	var isVoice bool
 	if msg.Document != nil {
 		fileID = msg.Document.FileID
 		fileName = msg.Document.FileName
 		objectKey = "attachments/" + requestID + "/" + fileName
-		isVoice = false
 	} else if len(msg.Photo) > 0 {
 		fileID = msg.Photo[len(msg.Photo)-1].FileID
 		fileName = "photo.jpg"
 		objectKey = "attachments/" + requestID + "/" + fileName
-		isVoice = false
 	} else if msg.Voice != nil {
 		fileID = msg.Voice.FileID
 		fileName = "voice.ogg"
 		objectKey = "attachments/" + requestID + "/" + fileName
-		isVoice = true
 	} else {
 		return
 	}
