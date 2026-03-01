@@ -6,9 +6,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
-# PyTorch + torchvision одной парой версий (иначе torchvision::nms / extension — несовместимость).
-RUN pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cpu \
-  && pip install --no-cache-dir -r requirements.txt
+# Сначала ставим зависимости (могут подтянуть несовместимый torch/torchvision).
+RUN pip install --no-cache-dir -r requirements.txt
+# Затем фиксируем совместимую пару torch+torchvision из официального индекса (перезаписывает версии из requirements).
+RUN pip install --no-cache-dir --force-reinstall torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cpu
 COPY main.py .
 EXPOSE 8004
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8004"]
