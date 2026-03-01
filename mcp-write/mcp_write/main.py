@@ -2,11 +2,14 @@
 MCP Write: ingestion tool. chunk/embed/rerank quality/build_links/upsert.
 Deterministic chunk_id, edge_id; upsert-only to Qdrant.
 """
+import logging
 import os
 import hashlib
 import json
 from contextlib import asynccontextmanager
 from typing import Any, Optional
+
+log = logging.getLogger("mcp-write")
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -147,32 +150,36 @@ def health():
     return {"status": "ok"}
 
 
+def _ingest_error(code: int, detail: str, **kwargs: Any) -> None:
+    log.warning("ingest_document error %s: %s %s", code, detail, kwargs)
+    raise HTTPException(status_code=code, detail=detail)
+
 @app.post("/mcp/ingest_document")
 def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     """Ingest document: chunk, embed, build links, upsert to Qdrant. Idempotent via deterministic IDs."""
     if qdrant is None or minio_client is None:
-        raise HTTPException(status_code=503, detail="service not ready")
+        _ingest_error(503, "service not ready")
 
     # Parse file_uri: minio://bucket/key
     if not req.file_uri.startswith("minio://"):
-        raise HTTPException(status_code=400, detail="file_uri must be minio://bucket/key")
+        _ingest_error(400, "file_uri must be minio://bucket/key", file_uri=req.file_uri)
     parts = req.file_uri[8:].split("/", 1)
     bucket = parts[0]
     key = parts[1] if len(parts) > 1 else ""
     if not key:
-        raise HTTPException(status_code=400, detail="file_uri key is empty")
+        _ingest_error(400, "file_uri key is empty", file_uri=req.file_uri)
 
     try:
         obj = minio_client.get_object(bucket, key)
         data = obj.read()
         obj.close()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"minio get failed: {e!s}")
+        _ingest_error(400, f"minio get failed: {e!s}", bucket=bucket, key=key)
 
     try:
         raw = data.decode(errors="replace")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"decode failed: {e!s}")
+        _ingest_error(400, f"decode failed: {e!s}")
 
     # Simple chunking: by paragraph
     chunks_text = [p.strip() for p in raw.split("\n\n") if p.strip()][:50]
@@ -207,10 +214,12 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     except Exception as e:
         err = f"{e!s}"
         if "dimension" in err.lower() or "vector" in err.lower() or "size" in err.lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"qdrant upsert failed (vector size?): {err}. Try dropping collection 'chunks' and re-uploading.",
+            _ingest_error(
+                400,
+                f"qdrant upsert failed (vector size?): {err}. Try dropping collection 'chunks' and re-uploading.",
+                doc_id=req.doc_id,
             )
+        log.warning("qdrant upsert failed: %s", err)
         raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
     return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
 
