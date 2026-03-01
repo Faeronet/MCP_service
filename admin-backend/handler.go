@@ -290,26 +290,18 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	// Порядок: jobs → versions → docs (из-за FK). Затем чанки в Qdrant через mcp-write.
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.jobs WHERE doc_id = $1`, docID)
-	resultV, err := h.Pool.Exec(ctx, `DELETE FROM core.versions WHERE doc_id = $1`, docID)
-	if err != nil {
-		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
-		return
-	}
+	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.versions WHERE doc_id = $1`, docID)
 	result, err := h.Pool.Exec(ctx, `DELETE FROM core.docs WHERE id = $1`, docID)
 	if err != nil {
 		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 		return
 	}
-	if result.RowsAffected() == 0 {
-		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-		return
-	}
-	_ = resultV
-	// Удалить чанки из Qdrant через mcp-write (best effort; док уже убран из списка)
+	// Всегда чистим Qdrant по doc_id (даже если записи в БД уже не было — могли остаться чанки)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, h.MCPWriteURL+"/doc/"+docID.String(), nil)
 	if resp, err := http.DefaultClient.Do(req); err == nil {
 		resp.Body.Close()
 	}
+	// Успех в любом случае: док удалён или уже отсутствовал (идемпотентность)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "doc_id": docID.String()})
 }

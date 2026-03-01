@@ -42,6 +42,21 @@ qdrant: Optional[QdrantClient] = None
 minio_client: Optional[Minio] = None
 
 
+def ensure_collection() -> None:
+    """Создать коллекцию chunks, если её нет (после удаления пользователем)."""
+    if qdrant is None:
+        return
+    try:
+        qdrant.create_collection(
+            COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+        log.info("created collection %s with vector_size=%s", COLLECTION, VECTOR_SIZE)
+    except UnexpectedResponse as e:
+        if e.status_code != 409:
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global qdrant, minio_client
@@ -186,10 +201,14 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     if not chunks_text:
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
+    # Сначала считаем chunk_id для всех чанков (нужно для связей prev/next)
+    chunk_ids = [
+        deterministic_chunk_id(req.doc_id, req.version_id, f"sec_{i}", text)
+        for i, text in enumerate(chunks_text)
+    ]
     points = []
     for i, text in enumerate(chunks_text):
-        section_path = f"sec_{i}"
-        chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, section_path, text)
+        chunk_id = chunk_ids[i]
         vector = embed_text(text)
         if len(vector) != VECTOR_SIZE:
             vector = (vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
@@ -197,10 +216,15 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             "chunk_id": chunk_id,
             "doc_id": req.doc_id,
             "version_id": req.version_id,
-            "section_path": section_path,
+            "section_path": f"sec_{i}",
             "text": text,
             **(req.metadata or {}),
         }
+        # Связи с соседними чанками (prev/next)
+        if i > 0:
+            payload["prev_chunk_id"] = chunk_ids[i - 1]
+        if i < len(chunk_ids) - 1:
+            payload["next_chunk_id"] = chunk_ids[i + 1]
         points.append(
             PointStruct(
                 id=chunk_id,
@@ -209,16 +233,31 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             )
         )
 
+    ensure_collection()
     try:
         qdrant.upsert(COLLECTION, points=points)
-    except Exception as e:
+    except UnexpectedResponse as e:
+        if e.status_code == 404:
+            ensure_collection()
+            try:
+                qdrant.upsert(COLLECTION, points=points)
+            except Exception as retry_err:
+                log.warning("qdrant upsert retry after 404 failed: %s", retry_err)
+                raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {retry_err!s}") from retry_err
+            return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
         err = f"{e!s}"
         if "dimension" in err.lower() or "vector" in err.lower() or "size" in err.lower():
             _ingest_error(
                 400,
-                f"qdrant upsert failed (vector size?): {err}. Try dropping collection 'chunks' and re-uploading.",
+                f"qdrant upsert failed (vector dimension mismatch): {err}. "
+                f"Delete the collection so it is recreated with VECTOR_SIZE={VECTOR_SIZE}: "
+                "curl -X DELETE http://<qdrant>:6333/collections/chunks",
                 doc_id=req.doc_id,
             )
+        log.warning("qdrant upsert failed: %s", err)
+        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
+    except Exception as e:
+        err = f"{e!s}"
         log.warning("qdrant upsert failed: %s", err)
         raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
     return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
@@ -229,22 +268,28 @@ def list_doc_ids_in_qdrant() -> dict[str, Any]:
     """Список doc_id, для которых есть хотя бы один чанк в Qdrant (для фильтра списка документов в админке)."""
     if qdrant is None:
         raise HTTPException(status_code=503, detail="service not ready")
+    ensure_collection()
     seen: set[str] = set()
     offset = None
-    while True:
-        points, next_offset = qdrant.scroll(
-            collection_name=COLLECTION,
-            limit=500,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
-        for pt in points:
-            if pt.payload and "doc_id" in pt.payload:
-                seen.add(str(pt.payload["doc_id"]))
-        if next_offset is None:
-            break
-        offset = next_offset
+    try:
+        while True:
+            points, next_offset = qdrant.scroll(
+                collection_name=COLLECTION,
+                limit=500,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for pt in points:
+                if pt.payload and "doc_id" in pt.payload:
+                    seen.add(str(pt.payload["doc_id"]))
+            if next_offset is None:
+                break
+            offset = next_offset
+    except UnexpectedResponse as e:
+        if e.status_code == 404:
+            return {"doc_ids": []}
+        raise
     return {"doc_ids": list(seen)}
 
 
@@ -253,14 +298,19 @@ def delete_document(doc_id: str) -> dict[str, Any]:
     """Delete all chunks for the given doc_id from Qdrant (for admin doc removal)."""
     if qdrant is None:
         raise HTTPException(status_code=503, detail="service not ready")
-    qdrant.delete(
-        collection_name=COLLECTION,
-        points_selector=FilterSelector(
-            filter=Filter(
-                must=[
-                    FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),
-                ],
-            )
-        ),
-    )
+    try:
+        qdrant.delete(
+            collection_name=COLLECTION,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),
+                    ],
+                )
+            ),
+        )
+    except UnexpectedResponse as e:
+        if e.status_code == 404:
+            return {"status": "ok", "doc_id": doc_id}
+        raise
     return {"status": "ok", "doc_id": doc_id}

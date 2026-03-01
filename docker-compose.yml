@@ -380,6 +380,19 @@ services:
       mcp-write: { condition: service_started }
     restart: unless-stopped
 
+  # OCR + ASR в одном инстансе: POST /ocr и POST /asr (multipart → {"text": "..."})
+  ocr-asr:
+    build:
+      context: ./ocr-asr
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8004"
+      ASR_MODEL: ${ASR_MODEL:-base}
+      OCR_MODEL: ${OCR_MODEL:-en}
+    ports:
+      - "8004:8004"
+    restart: unless-stopped
+
   attachment-worker:
     build:
       context: .
@@ -393,9 +406,9 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
       WORKER_CONCURRENCY: ${ATTACHMENT_WORKER_CONCURRENCY:-4}
       WHISPER_MODEL: ${WHISPER_MODEL:-openai/whisper-large-v3}
-      OCR_MODEL: ${OCR_MODEL:-PaddlePaddle/PaddleOCR-VL-1.5}
-      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-}
-      ASR_SERVICE_URL: ${ASR_SERVICE_URL:-}
+      OCR_MODEL: ${OCR_MODEL:-en}
+      OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://ocr-asr:8004}
+      ASR_SERVICE_URL: ${ASR_SERVICE_URL:-http://ocr-asr:8004}
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
