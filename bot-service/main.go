@@ -542,7 +542,8 @@ func (b *Bot) callExtract(ctx context.Context, data []byte, fileName string) (te
 		return "", "", err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	client := &http.Client{Timeout: 120 * time.Second}
+	// Первый запрос может долго ждать: загрузка моделей с HF (ASR) или медленный инференс на CPU (OCR). 10 мин.
+	client := &http.Client{Timeout: 600 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err

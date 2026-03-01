@@ -4,11 +4,13 @@ POST /extract — универсальный вход; POST /ocr, POST /asr — 
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import os
 import tarfile
 import zipfile
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 
 log = logging.getLogger("extract-tool")
@@ -259,17 +261,14 @@ def _extract_single_sync(data: bytes, filename: str) -> str | None:
     return None
 
 
-@app.post("/extract")
-async def extract(file: UploadFile = File(...)) -> dict:
-    """Универсальное извлечение: архив → файлы; текст/PDF/фото/аудио → текст. 422 = нельзя обработать."""
-    data = await file.read()
-    filename = file.filename or ""
+def _extract_impl(data: bytes, filename: str) -> dict:
+    """Синхронная реализация извлечения (вызывается из пула потоков, чтобы не блокировать event loop)."""
     if not data:
         return {"text": ""}
     if _file_extension(filename) in {".zip", ".tar", ".tar.gz", ".tar.xz", ".tgz", ".txz"}:
         items = _extract_archive(data, filename)
         if items is None:
-            raise HTTPException(status_code=422, detail="Файл или архив нельзя обработать.")
+            raise ValueError("Файл или архив нельзя обработать.")
         parts = []
         for name, content in items:
             ext = _file_extension(name)
@@ -285,73 +284,100 @@ async def extract(file: UploadFile = File(...)) -> dict:
     result = _extract_single_sync(data, filename)
     if result is not None:
         return {"text": result}
-    raise HTTPException(status_code=422, detail="Файл или архив нельзя обработать.")
+    raise ValueError("Файл или архив нельзя обработать.")
+
+
+@app.post("/extract")
+async def extract(file: UploadFile = File(...)) -> dict:
+    """Универсальное извлечение: архив → файлы; текст/PDF/фото/аудио → текст. 422 = нельзя обработать."""
+    data = await file.read()
+    filename = file.filename or ""
+    try:
+        return await asyncio.to_thread(_extract_impl, data, filename)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+def _ocr_impl(data: bytes) -> dict:
+    """Синхронный OCR (в пуле потоков)."""
+    if not data:
+        return {"text": ""}
+    reader = get_ocr()
+    if reader is None:
+        raise RuntimeError("OCR not available")
+    from PIL import Image
+    import numpy as np
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+    backend, ocr_engine = reader
+    if backend == "paddleocr":
+        processor, model, device = ocr_engine
+        import torch
+        messages = [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": "OCR:"}]}]
+        inputs = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
+        if hasattr(inputs, "to"):
+            inputs = inputs.to(device)
+        else:
+            inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
+        generated_ids = model.generate(**inputs, max_new_tokens=1024)
+        input_len = inputs["input_ids"].shape[-1]
+        generated_ids_trimmed = generated_ids[0][input_len:]
+        text = processor.batch_decode(generated_ids_trimmed.unsqueeze(0), skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
+    elif backend == "trocr":
+        processor, model, device = ocr_engine
+        import torch
+        pixel_values = processor(images=img, return_tensors="pt").pixel_values.to(device)
+        generated_ids = model.generate(pixel_values)
+        text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+    else:
+        arr = np.array(img)
+        results = ocr_engine.readtext(arr)
+        text = " ".join([r[1] for r in results if len(r) > 1]).strip()
+    return {"text": text or ""}
 
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)) -> dict:
     data = await file.read()
-    if not data:
-        return {"text": ""}
-    reader = get_ocr()
-    if reader is None:
-        raise HTTPException(status_code=503, detail="OCR not available")
     try:
-        from PIL import Image
-        import numpy as np
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-        backend, ocr_engine = reader
-        if backend == "paddleocr":
-            processor, model, device = ocr_engine
-            import torch
-            messages = [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": "OCR:"}]}]
-            inputs = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
-            if hasattr(inputs, "to"):
-                inputs = inputs.to(device)
-            else:
-                inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
-            generated_ids = model.generate(**inputs, max_new_tokens=1024)
-            input_len = inputs["input_ids"].shape[-1]
-            generated_ids_trimmed = generated_ids[0][input_len:]
-            text = processor.batch_decode(generated_ids_trimmed.unsqueeze(0), skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
-        elif backend == "trocr":
-            processor, model, device = ocr_engine
-            import torch
-            pixel_values = processor(images=img, return_tensors="pt").pixel_values.to(device)
-            generated_ids = model.generate(pixel_values)
-            text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
-        else:
-            arr = np.array(img)
-            results = ocr_engine.readtext(arr)
-            text = " ".join([r[1] for r in results if len(r) > 1]).strip()
-        return {"text": text or ""}
+        return await asyncio.to_thread(_ocr_impl, data)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         log.exception("OCR failed")
         raise HTTPException(status_code=400, detail=f"OCR failed: {e!s}")
+
+ 
+def _asr_impl(data: bytes, filename: str) -> dict:
+    """Синхронный ASR (в пуле потоков)."""
+    if not data:
+        return {"text": ""}
+    model = get_asr()
+    if model is None:
+        raise RuntimeError("ASR not available")
+    import tempfile
+    suf = os.path.splitext(filename or "")[1] or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=suf, delete=False) as f:
+        f.write(data)
+        path = f.name
+    try:
+        segments, _ = model.transcribe(path, language=ASR_LANGUAGE)
+        text = " ".join([s.text for s in segments if s.text]).strip()
+        return {"text": text or ""}
+    finally:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
 
 
 @app.post("/asr")
 async def asr(file: UploadFile = File(...)) -> dict:
     data = await file.read()
-    if not data:
-        return {"text": ""}
-    model = get_asr()
-    if model is None:
-        raise HTTPException(status_code=503, detail="ASR not available")
+    filename = file.filename or ""
     try:
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(file.filename or "")[1] or ".wav", delete=False) as f:
-            f.write(data)
-            path = f.name
-        try:
-            segments, _ = model.transcribe(path, language=ASR_LANGUAGE)
-            text = " ".join([s.text for s in segments if s.text]).strip()
-            return {"text": text or ""}
-        finally:
-            try:
-                os.unlink(path)
-            except Exception:
-                pass
+        return await asyncio.to_thread(_asr_impl, data, filename)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         log.exception("ASR failed")
         raise HTTPException(status_code=400, detail=f"ASR failed: {e!s}")
