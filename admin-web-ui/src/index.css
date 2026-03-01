@@ -287,6 +287,29 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   font-size: 0.8125rem;
 }
 
+/* Панель над таблицей при выборе строк (доки и т.д.) */
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: var(--card-bg);
+  border: 1px solid var(--content-border);
+  border-radius: 8px;
+}
+.table-toolbar-info {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.table-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .logs-pagination {
   display: flex;
   align-items: center;

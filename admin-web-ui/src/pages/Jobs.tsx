@@ -47,34 +47,46 @@ export function Jobs() {
         ) : (
           <>
             <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(paginatedJobs ?? []).map((j: Record<string, unknown>) => (
-                    <tr key={String(j.id)}>
-                      <td>
-                        <button
-                          type="button"
-                          onClick={() => openJob(String(j.id))}
-                          style={{ background: 'none', border: 'none', color: 'var(--link)', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
-                        >
-                          {String(j.id).slice(0, 8)}…
-                        </button>
-                      </td>
-                      <td>{String(j.type)}</td>
-                      <td>{String(j.status)}</td>
-                      <td>{j.created_at ? new Date(String(j.created_at)).toLocaleString() : ''}</td>
+              <div className="table-header-wrap">
+                <table className="data-table data-table-header">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '22%' }}>ID</th>
+                      <th style={{ width: '15%' }}>Type</th>
+                      <th style={{ width: '18%' }}>Status</th>
+                      <th style={{ width: '45%' }}>Created</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                </table>
+              </div>
+              <div className="table-body-wrap">
+                {!(paginatedJobs ?? []).length ? (
+                  <div className="table-empty">
+                    <p className="table-empty-msg">Джобов пока нет</p>
+                  </div>
+                ) : (
+                  <table className="data-table data-table-body">
+                    <tbody>
+                      {(paginatedJobs ?? []).map((j: Record<string, unknown>) => (
+                        <tr key={String(j.id)}>
+                          <td style={{ width: '22%' }}>
+                            <button
+                              type="button"
+                              onClick={() => openJob(String(j.id))}
+                              style={{ background: 'none', border: 'none', color: 'var(--link)', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                            >
+                              {String(j.id).slice(0, 8)}…
+                            </button>
+                          </td>
+                          <td style={{ width: '15%' }}>{String(j.type)}</td>
+                          <td style={{ width: '18%' }}>{String(j.status)}</td>
+                          <td style={{ width: '45%' }}>{j.created_at ? new Date(String(j.created_at)).toLocaleString() : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
             {total > 0 && (
               <div className="logs-pagination">

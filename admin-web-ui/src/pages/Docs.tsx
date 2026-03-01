@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { listDocs, uploadFile, deleteDoc } from '../api'
 
 const PAGE_SIZE = 50
@@ -11,6 +11,7 @@ export function Docs() {
   const [success, setSuccess] = useState('')
   const [page, setPage] = useState(1)
   const [fileName, setFileName] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   const load = async () => {
     try {
@@ -37,6 +38,31 @@ export function Docs() {
     return docs.slice(start, start + PAGE_SIZE)
   }, [docs, page])
 
+  const hasSelection = selectedIds.size > 0
+  const allSelected = docs.length > 0 && selectedIds.size === docs.length
+  const selectAllRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const el = selectAllRef.current
+    if (!el) return
+    el.indeterminate = hasSelection && selectedIds.size < docs.length
+  }, [hasSelection, selectedIds.size, docs.length])
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev: Set<string>) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (allSelected) setSelectedIds(new Set())
+    else setSelectedIds(new Set(docs.map(d => d.id)))
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -57,17 +83,40 @@ export function Docs() {
     e.target.value = ''
   }
 
-  const onDelete = async (docId: string, docName: string) => {
+  const onDeleteOne = async (docId: string, docName: string) => {
     if (!window.confirm(`Удалить документ «${docName}»? Чанки будут удалены из поиска.`)) return
     setError('')
     setSuccess('')
     try {
       await deleteDoc(docId)
       setSuccess('Документ удалён.')
+      setSelectedIds((prev: Set<string>) => { const n = new Set(prev); n.delete(docId); return n })
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const onDeleteSelected = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    if (!window.confirm(`Удалить выбранные документы (${ids.length})? Чанки будут удалены из поиска.`)) return
+    setError('')
+    setSuccess('')
+    let ok = 0
+    let fail = 0
+    for (const id of ids) {
+      try {
+        await deleteDoc(id)
+        ok++
+      } catch {
+        fail++
+      }
+    }
+    setSelectedIds(new Set())
+    await load()
+    if (fail === 0) setSuccess(`Удалено документов: ${ok}.`)
+    else setError(`Удалено: ${ok}, ошибок: ${fail}.`)
   }
 
   return (
@@ -95,29 +144,75 @@ export function Docs() {
           <p className="text-muted">Loading…</p>
         ) : (
           <>
+            {hasSelection && (
+              <div className="table-toolbar">
+                <span className="table-toolbar-info">Выбрано: {selectedIds.size}</span>
+                <div className="table-toolbar-actions">
+                  <button type="button" className="btn-monitor-inactive" onClick={clearSelection} title="Снять все галочки">
+                    Отменить
+                  </button>
+                  <button type="button" className="btn-monitor-inactive" onClick={toggleSelectAll} title={allSelected ? 'Снять выделение со всех' : 'Выбрать все документы'}>
+                    {allSelected ? 'Снять выделение' : 'Выбрать все'}
+                  </button>
+                  <button type="button" className="btn-primary" onClick={onDeleteSelected} title="Удалить выбранные документы">
+                    Удалить
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>ID</th>
-                    <th>Created</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(paginatedDocs ?? []).map(d => (
-                    <tr key={d.id}>
-                      <td>{d.name}</td>
-                      <td className="mono">{d.id}</td>
-                      <td>{new Date(d.created_at).toLocaleString()}</td>
-                      <td>
-                        <button type="button" className="btn-monitor-inactive" onClick={() => onDelete(d.id, d.name)} title="Удалить документ">Удалить</button>
-                      </td>
+              <div className="table-header-wrap">
+                <table className="data-table data-table-header">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 40 }} title="Выбрать">
+                        <input
+                          ref={selectAllRef}
+                          type="checkbox"
+                          checked={docs.length > 0 && selectedIds.size === docs.length}
+                          onChange={toggleSelectAll}
+                          title="Выбрать все / снять выделение"
+                        />
+                      </th>
+                      <th style={{ width: '25%' }}>Name</th>
+                      <th style={{ width: '40%' }}>ID</th>
+                      <th style={{ width: '20%' }}>Created</th>
+                      <th style={{ width: 90 }}></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                </table>
+              </div>
+              <div className="table-body-wrap">
+                {!(paginatedDocs ?? []).length ? (
+                  <div className="table-empty">
+                    <p className="table-empty-msg">Документов пока нет</p>
+                    <p className="text-muted table-empty-hint">Загрузите файл через кнопку «Обзор…» выше.</p>
+                  </div>
+                ) : (
+                  <table className="data-table data-table-body">
+                    <tbody>
+                      {(paginatedDocs ?? []).map(d => (
+                        <tr key={d.id}>
+                          <td style={{ width: 40 }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(d.id)}
+                              onChange={() => toggleSelect(d.id)}
+                              title="Выбрать документ"
+                            />
+                          </td>
+                          <td style={{ width: '25%', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.name}>{d.name}</td>
+                          <td style={{ width: '40%' }} className="mono">{d.id}</td>
+                          <td style={{ width: '20%' }}>{new Date(d.created_at).toLocaleString()}</td>
+                          <td style={{ width: 90 }}>
+                            <button type="button" className="btn-monitor-inactive" onClick={() => onDeleteOne(d.id, d.name)} title="Удалить документ">Удалить</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
             {total > 0 && (
               <div className="logs-pagination">
