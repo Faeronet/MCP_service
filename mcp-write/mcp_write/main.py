@@ -295,6 +295,27 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
         err = f"{e!s}"
         log.warning("qdrant upsert failed: %s", err)
         raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err}")
+
+    # Проверка: читаем обратно один-два чанка и логируем ключи payload (чтобы убедиться, что prev/next попали в Qdrant)
+    try:
+        points_read, _ = qdrant.scroll(
+            collection_name=COLLECTION,
+            scroll_filter=Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=req.doc_id))]),
+            limit=2,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for idx, pt in enumerate(points_read):
+            keys = list(pt.payload.keys()) if pt.payload else []
+            has_prev = "prev_chunk_id" in keys
+            has_next = "next_chunk_id" in keys
+            log.info(
+                "ingest_document: after upsert point[%d] payload keys=%s has_prev=%s has_next=%s",
+                idx, keys, has_prev, has_next,
+            )
+    except Exception as e:
+        log.warning("ingest_document: verify scroll failed: %s", e)
+
     return {"status": "ok", "chunks_upserted": len(points), "doc_id": req.doc_id, "version_id": req.version_id}
 
 

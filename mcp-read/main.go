@@ -297,6 +297,9 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	numResults := len(searchRes.Result)
+	log.Info(ctx, "build_context: search returned", logging.KV{"points", numResults}, logging.KV{"rerank_url", h.rerankAPIURL})
+
 	var texts []string
 	mainChunkIDs := make(map[string]struct{})
 	neighborIDs := make(map[string]struct{})
@@ -326,6 +329,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(texts) > 0 && h.rerankAPIURL != "" && h.rerankModel != "" {
+		log.Info(ctx, "build_context: calling rerank", logging.KV{"url", h.rerankAPIURL}, logging.KV{"docs", len(texts)})
 		if err := h.rerankLimiter.Acquire(ctx); err == nil {
 			texts = h.rerank(ctx, req.QueryText, texts)
 			h.rerankLimiter.Release()
@@ -426,15 +430,13 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 		"model":     h.rerankModel,
 	}
 	payload, _ := json.Marshal(body)
-	rerankURL := h.rerankAPIURL
-	if rerankURL != "" {
-		rerankURL = strings.TrimSuffix(rerankURL, "/")
-		if !strings.Contains(rerankURL, "/rerank") {
-			if strings.HasSuffix(rerankURL, "/api/v1") {
-				rerankURL = rerankURL + "/rerank"
-			} else {
-				rerankURL = rerankURL + "/api/v1/rerank"
-			}
+	// Реранкер принимает только POST /api/v1/rerank — путь должен заканчиваться на /rerank
+	rerankURL := strings.TrimSuffix(h.rerankAPIURL, "/")
+	if rerankURL != "" && !strings.HasSuffix(rerankURL, "/rerank") {
+		if strings.HasSuffix(rerankURL, "/api/v1") {
+			rerankURL = rerankURL + "/rerank"
+		} else {
+			rerankURL = rerankURL + "/api/v1/rerank"
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rerankURL, bytes.NewReader(payload))
