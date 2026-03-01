@@ -42,6 +42,12 @@ func main() {
 		rerankAPIURL = config.LoadString("RERANK_API_URL", "")
 	}
 	rerankAPIURL = strings.TrimSuffix(rerankAPIURL, "/")
+	if rerankAPIURL == "" {
+		rerankAPIURL = "http://rerank:8787/api/v1"
+		log.Info(ctx, "rerank URL not set, using default", logging.KV{"url", rerankAPIURL})
+	} else {
+		log.Info(ctx, "rerank configured", logging.KV{"url", rerankAPIURL})
+	}
 	rerankAPIKey := config.LoadString("RERANK_BINDING_API_KEY", "")
 	rerankModel := config.LoadString("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 	maxRerank := config.LoadInt("MAX_INFLIGHT_RERANK", 16)
@@ -130,6 +136,20 @@ type qdrantSearchReq struct {
 type qdrantSearchResult struct {
 	Result []struct {
 		Payload map[string]interface{} `json:"payload"`
+	} `json:"result"`
+}
+
+// scrollReq/scrollResp для запроса соседних чанков по chunk_id (prev/next)
+type qdrantScrollReq struct {
+	Filter      map[string]interface{} `json:"filter,omitempty"`
+	Limit       *uint32                `json:"limit,omitempty"`
+	WithPayload *bool                  `json:"with_payload,omitempty"`
+}
+type qdrantScrollResp struct {
+	Result struct {
+		Points []struct {
+			Payload map[string]interface{} `json:"payload"`
+		} `json:"points"`
 	} `json:"result"`
 }
 
@@ -278,9 +298,31 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var texts []string
+	mainChunkIDs := make(map[string]struct{})
+	neighborIDs := make(map[string]struct{})
 	for _, p := range searchRes.Result {
 		if t, ok := p.Payload["text"].(string); ok {
 			texts = append(texts, t)
+		}
+		if cid, ok := p.Payload["chunk_id"].(string); ok && cid != "" {
+			mainChunkIDs[cid] = struct{}{}
+		}
+		for _, key := range []string{"prev_chunk_id", "next_chunk_id"} {
+			if v, ok := p.Payload[key].(string); ok && v != "" {
+				neighborIDs[v] = struct{}{}
+			}
+		}
+	}
+	// Убираем из соседей те, что уже в результатах поиска
+	for id := range mainChunkIDs {
+		delete(neighborIDs, id)
+	}
+	// Подтягиваем тексты соседних чанков (связи prev/next)
+	if len(neighborIDs) > 0 {
+		neighborTexts := h.fetchChunksByID(ctx, collectionName, neighborIDs)
+		if len(neighborTexts) > 0 {
+			texts = append(texts, neighborTexts...)
+			log.Info(ctx, "neighbor chunks added to context", logging.KV{"count", len(neighborTexts)}, logging.KV{"requested", len(neighborIDs)})
 		}
 	}
 	if len(texts) > 0 && h.rerankAPIURL != "" && h.rerankModel != "" {
@@ -309,6 +351,58 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText})
+}
+
+// fetchChunksByID возвращает тексты чанков по списку chunk_id (для связей prev/next).
+func (h *MCPReadHandler) fetchChunksByID(ctx context.Context, collectionName string, chunkIDSet map[string]struct{}) []string {
+	if len(chunkIDSet) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(chunkIDSet))
+	for id := range chunkIDSet {
+		ids = append(ids, id)
+	}
+	// Qdrant scroll: filter chunk_id in ids
+	limit := uint32(100)
+	withPayload := true
+	body := qdrantScrollReq{
+		Filter: map[string]interface{}{
+			"should": []map[string]interface{}{
+				{"key": "chunk_id", "match": map[string]interface{}{"any": ids}},
+			},
+		},
+		Limit:       &limit,
+		WithPayload: &withPayload,
+	}
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.qdrantURL+"/collections/"+collectionName+"/points/scroll", bytes.NewReader(payload))
+	if err != nil {
+		log.Warn(ctx, "scroll request build failed", logging.KV{"error", err})
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Warn(ctx, "scroll request failed", logging.KV{"error", err})
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		log.Warn(ctx, "scroll non-200", logging.KV{"status", resp.StatusCode})
+		return nil
+	}
+	var scrollRes qdrantScrollResp
+	if err := json.NewDecoder(resp.Body).Decode(&scrollRes); err != nil {
+		log.Warn(ctx, "scroll decode failed", logging.KV{"error", err})
+		return nil
+	}
+	var out []string
+	for _, pt := range scrollRes.Result.Points {
+		if t, ok := pt.Payload["text"].(string); ok && t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func normalizeQuery(s string) string {

@@ -260,6 +260,14 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             )
         )
 
+    # Подсчёт связей: у скольких чанков есть prev/next (для проверки записи в Qdrant)
+    with_prev = sum(1 for i in range(len(points)) if i > 0)
+    with_next = sum(1 for i in range(len(points)) if i < len(points) - 1)
+    log.info(
+        "ingest_document: upserting %d points with links (prev_chunk_id: %d, next_chunk_id: %d) doc_id=%s",
+        len(points), with_prev, with_next, req.doc_id,
+    )
+
     ensure_collection()
     try:
         qdrant.upsert(COLLECTION, points=points)
