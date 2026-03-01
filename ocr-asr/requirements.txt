@@ -3,6 +3,8 @@ uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 # ASR
 faster-whisper>=1.0.0
-# OCR (CPU)
+# OCR (CPU): PaddleOCR для PaddlePaddle/PaddleOCR-VL-1.5, easyocr для языковых кодов
+paddleocr>=2.7.0
+paddlepaddle>=2.5.0
 easyocr>=1.7.0
 Pillow>=10.0.0

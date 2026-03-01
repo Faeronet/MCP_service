@@ -4,16 +4,14 @@
 import io
 import logging
 import os
-from typing import Optional
-
 from fastapi import FastAPI, File, UploadFile, HTTPException
 
 log = logging.getLogger("ocr-asr")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 PORT = int(os.getenv("PORT", "8004"))
-OCR_MODEL = os.getenv("OCR_MODEL", "easyocr")  # or language list, e.g. "en,ru"
-ASR_MODEL = os.getenv("ASR_MODEL", "base")  # faster-whisper: tiny, base, small, medium, large-v3
+OCR_MODEL = (os.getenv("OCR_MODEL") or "PaddlePaddle/PaddleOCR-VL-1.5").strip()
+ASR_MODEL = (os.getenv("ASR_MODEL") or "openai/whisper-large-v3").strip()
 
 app = FastAPI(title="OCR+ASR")
 
@@ -26,12 +24,17 @@ def get_ocr():
     global _ocr_reader
     if _ocr_reader is None:
         try:
-            import easyocr
-            langs = [x.strip() for x in (OCR_MODEL or "en").split(",") if x.strip()]
-            if not langs:
-                langs = ["en"]
-            _ocr_reader = easyocr.Reader(langs, gpu=False)
-            log.info("OCR reader loaded: %s", langs)
+            if "PaddlePaddle" in OCR_MODEL or "PaddleOCR" in OCR_MODEL:
+                from paddleocr import PaddleOCR
+                _ocr_reader = ("paddle", PaddleOCR(use_angle_cls=True, show_log=False))
+                log.info("OCR reader loaded: %s", OCR_MODEL)
+            else:
+                import easyocr
+                langs = [x.strip() for x in (OCR_MODEL or "en").split(",") if x.strip()]
+                if not langs:
+                    langs = ["en"]
+                _ocr_reader = ("easyocr", easyocr.Reader(langs, gpu=False))
+                log.info("OCR reader loaded: %s", langs)
         except Exception as e:
             log.warning("OCR init failed: %s", e)
     return _ocr_reader
@@ -60,12 +63,22 @@ async def ocr(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=503, detail="OCR not available")
     try:
         from PIL import Image
-        img = Image.open(io.BytesIO(data)).convert("RGB")
         import numpy as np
+        img = Image.open(io.BytesIO(data)).convert("RGB")
         arr = np.array(img)
-        results = reader.readtext(arr)
-        text = " ".join([r[1] for r in results if len(r) > 1])
-        return {"text": text.strip() or ""}
+        backend, ocr_engine = reader
+        if backend == "paddle":
+            result = ocr_engine.ocr(arr, cls=True)
+            text_parts = []
+            if result and result[0]:
+                for line in result[0]:
+                    if line and len(line) > 1 and line[1]:
+                        text_parts.append(line[1][0])
+            text = " ".join(text_parts).strip()
+        else:
+            results = ocr_engine.readtext(arr)
+            text = " ".join([r[1] for r in results if len(r) > 1]).strip()
+        return {"text": text or ""}
     except Exception as e:
         log.exception("OCR failed")
         raise HTTPException(status_code=400, detail=f"OCR failed: {e!s}")

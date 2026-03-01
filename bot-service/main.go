@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
@@ -74,6 +75,7 @@ func main() {
 	maxInflightLLM := config.LoadInt("MAX_INFLIGHT_LLM", 32)
 	deboounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
+	ocrAsrURL := strings.TrimSuffix(config.LoadString("OCR_SERVICE_URL", config.LoadString("ASR_SERVICE_URL", "http://ocr-asr:8004")), "/")
 	vllmBase := config.LoadString("LLM_BINDING_HOST", "")
 	if vllmBase == "" {
 		vllmBase = config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
@@ -91,6 +93,7 @@ func main() {
 		minio:         minioClient,
 		queue:         rmq,
 		mcpReadURL:    mcpReadURL,
+		ocrAsrURL:     ocrAsrURL,
 		vllmBase:      vllmBase,
 		llmModel:      llmModel,
 		llmAPIKey:     llmAPIKey,
@@ -163,6 +166,7 @@ type Bot struct {
 	minio          *storage.Client
 	queue          *queue.Client
 	mcpReadURL     string
+	ocrAsrURL      string
 	vllmBase       string
 	llmModel       string
 	llmAPIKey      string
@@ -241,7 +245,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 	_ = b.appendMessage(ctx, sessionID, "user", msg.Text)
 
-	contextText, err := b.buildContext(ctx, requestID, msg.Text, "", 4000, "default")
+	attachmentsText := b.getAttachmentsText(ctx, sessionID)
+	contextText, err := b.buildContext(ctx, requestID, msg.Text, attachmentsText, 4000, "default")
 	if err != nil {
 		log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
 		contextText = ""
@@ -276,6 +281,25 @@ func (b *Bot) ensureSession(ctx context.Context, chatID, userID int64, username 
 func (b *Bot) appendMessage(ctx context.Context, sessionID uuid.UUID, role, content string) error {
 	_, err := b.pool.Exec(ctx, `INSERT INTO chat.messages (session_id, role, content) VALUES ($1, $2, $3)`, sessionID, role, content)
 	return err
+}
+
+// getAttachmentsText возвращает объединённый текст из вложений сессии (OCR/ASR), чтобы передать в build_context.
+func (b *Bot) getAttachmentsText(ctx context.Context, sessionID uuid.UUID) string {
+	rows, err := b.pool.Query(ctx,
+		`SELECT extracted_text FROM chat.attachments WHERE session_id = $1 AND status = 'done' AND extracted_text IS NOT NULL AND extracted_text != '' ORDER BY created_at DESC LIMIT 10`,
+		sessionID)
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	var parts []string
+	for rows.Next() {
+		var t string
+		if rows.Scan(&t) == nil && t != "" {
+			parts = append(parts, t)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (string, error) {
@@ -366,29 +390,137 @@ func (b *Bot) sendReply(ctx context.Context, chatID int64, text string) {
 
 func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID int64, requestID string) {
 	msg := u.Message
+	if b.bot == nil {
+		return
+	}
+	userID := int64(0)
+	username := ""
+	if msg.From != nil {
+		userID = msg.From.ID
+		if msg.From.UserName != "" {
+			username = msg.From.UserName
+		}
+	}
+	sessionID, err := b.ensureSession(ctx, chatID, userID, username)
+	if err != nil {
+		log.Warn(ctx, "ensure session for attachment", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Ошибка сессии.")
+		return
+	}
 	var fileID string
 	var objectKey string
+	var fileName string
+	var isVoice bool
 	if msg.Document != nil {
 		fileID = msg.Document.FileID
-		objectKey = "attachments/" + requestID + "/" + msg.Document.FileName
+		fileName = msg.Document.FileName
+		objectKey = "attachments/" + requestID + "/" + fileName
+		isVoice = false
 	} else if len(msg.Photo) > 0 {
 		fileID = msg.Photo[len(msg.Photo)-1].FileID
-		objectKey = "attachments/" + requestID + "/photo.jpg"
+		fileName = "photo.jpg"
+		objectKey = "attachments/" + requestID + "/" + fileName
+		isVoice = false
 	} else if msg.Voice != nil {
 		fileID = msg.Voice.FileID
-		objectKey = "attachments/" + requestID + "/voice.ogg"
+		fileName = "voice.ogg"
+		objectKey = "attachments/" + requestID + "/" + fileName
+		isVoice = true
 	} else {
 		return
 	}
-	// In full impl: get file from Telegram, upload to MinIO, enqueue attachment_jobs
-	_ = fileID
-	_ = objectKey
-	log.Info(ctx, "attachment received; enqueue placeholder", logging.KV{"chat_id", chatID}, logging.KV{"request_id", requestID})
-	jobPayload := map[string]string{
-		"chat_id":    fmt.Sprintf("%d", chatID),
-		"request_id": requestID,
-		"object_key": objectKey,
-		"file_id":    fileID,
+	file, err := b.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		log.Warn(ctx, "telegram get file", logging.KV{"error", err}, logging.KV{"file_id", fileID})
+		b.sendReply(ctx, chatID, "Не удалось получить файл.")
+		return
 	}
-	_ = b.queue.Publish(ctx, "attachment_jobs", jobPayload)
+	downloadURL := "https://api.telegram.org/file/bot" + b.bot.Token + "/" + file.FilePath
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Warn(ctx, "download file from telegram", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Не удалось скачать файл.")
+		return
+	}
+	data, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		log.Warn(ctx, "read telegram file body", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Ошибка чтения файла.")
+		return
+	}
+	if _, err := b.minio.Put(ctx, objectKey, bytes.NewReader(data), "application/octet-stream", int64(len(data))); err != nil {
+		log.Warn(ctx, "minio put attachment", logging.KV{"error", err}, logging.KV{"object_key", objectKey})
+		b.sendReply(ctx, chatID, "Ошибка сохранения файла.")
+		return
+	}
+	// Обязательная цепочка: сначала извлечение текста (OCR/ASR), потом сохранение и ответ
+	extracted, err := b.callOcrAsr(ctx, data, fileName, isVoice)
+	if err != nil {
+		log.Warn(ctx, "ocr/asr extraction failed", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Не удалось извлечь текст из файла (OCR/ASR).")
+		return
+	}
+	_, err = b.pool.Exec(ctx,
+		`INSERT INTO chat.attachments (session_id, object_key, extracted_text, status) VALUES ($1, $2, $3, 'done')`,
+		sessionID, objectKey, extracted)
+	if err != nil {
+		log.Warn(ctx, "insert attachment", logging.KV{"error", err})
+	}
+	reply := "Файл обработан."
+	if strings.TrimSpace(extracted) != "" {
+		if len(extracted) > 1500 {
+			reply = "Файл обработан. Текст (начало): " + extracted[:1500] + "..."
+		} else {
+			reply = "Файл обработан. Извлечённый текст:\n" + extracted
+		}
+	}
+	b.sendReply(ctx, chatID, reply)
+	log.Info(ctx, "attachment processed", logging.KV{"chat_id", chatID}, logging.KV{"object_key", objectKey})
+}
+
+// callOcrAsr отправляет файл в ocr-asr (POST /ocr или /asr), возвращает извлечённый текст.
+func (b *Bot) callOcrAsr(ctx context.Context, data []byte, fileName string, isVoice bool) (string, error) {
+	if b.ocrAsrURL == "" {
+		return "", fmt.Errorf("OCR_SERVICE_URL not set")
+	}
+	endpoint := "/ocr"
+	if isVoice {
+		endpoint = "/asr"
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", err
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", err
+	}
+	if err := w.Close(); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.ocrAsrURL+endpoint, &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ocr/asr %d: %s", resp.StatusCode, string(body))
+	}
+	var out struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.Text, nil
 }

@@ -2,6 +2,7 @@
 MCP Write: ingestion tool. chunk/embed/rerank quality/build_links/upsert.
 Deterministic chunk_id, edge_id; upsert-only to Qdrant.
 """
+import io
 import logging
 import os
 import hashlib
@@ -165,6 +166,28 @@ def health():
     return {"status": "ok"}
 
 
+def _extract_text_from_file(data: bytes, key: str) -> str:
+    """Извлекает текст из файла: PDF через pypdf, остальное — decode."""
+    is_pdf = key.lower().endswith(".pdf") or (len(data) >= 4 and data[:4] == b"%PDF")
+    if is_pdf:
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            parts = []
+            for page in reader.pages:
+                t = page.extract_text()
+                if t:
+                    parts.append(t)
+            return "\n\n".join(parts) if parts else ""
+        except Exception as e:
+            log.warning("PDF extract failed: %s", e)
+            return ""
+    try:
+        return data.decode(errors="replace")
+    except Exception:
+        return ""
+
+
 def _ingest_error(code: int, detail: str, **kwargs: Any) -> None:
     log.warning("ingest_document error %s: %s %s", code, detail, kwargs)
     raise HTTPException(status_code=code, detail=detail)
@@ -191,10 +214,9 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     except Exception as e:
         _ingest_error(400, f"minio get failed: {e!s}", bucket=bucket, key=key)
 
-    try:
-        raw = data.decode(errors="replace")
-    except Exception as e:
-        _ingest_error(400, f"decode failed: {e!s}")
+    raw = _extract_text_from_file(data, key)
+    if not raw or not raw.strip():
+        return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
     # Simple chunking: by paragraph
     chunks_text = [p.strip() for p in raw.split("\n\n") if p.strip()][:50]
