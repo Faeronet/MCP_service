@@ -103,6 +103,11 @@ def deterministic_chunk_id(doc_id: str, version_id: str, section_path: str, norm
     return h[:32]
 
 
+def chunk_id_to_point_id(chunk_id: str) -> int:
+    """Стабильный целочисленный id точки для Qdrant (UUID/int требуются API)."""
+    return int(hashlib.sha256(chunk_id.encode()).hexdigest()[:15], 16) & 0x7FFFFFFFFFFFFFFF
+
+
 def deterministic_edge_id(from_id: str, to_id: str, relation: str) -> str:
     h = hashlib.sha256(f"{from_id}:{to_id}:{relation}".encode()).hexdigest()
     return h[:32]
@@ -249,7 +254,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             payload["next_chunk_id"] = chunk_ids[i + 1]
         points.append(
             PointStruct(
-                id=chunk_id,
+                id=chunk_id_to_point_id(chunk_id),
                 vector=vector,
                 payload=payload,
             )
@@ -310,6 +315,7 @@ def list_doc_ids_in_qdrant() -> dict[str, Any]:
             offset = next_offset
     except UnexpectedResponse as e:
         if e.status_code == 404:
+            ensure_collection()
             return {"doc_ids": []}
         raise
     return {"doc_ids": list(seen)}

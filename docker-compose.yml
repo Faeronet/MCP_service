@@ -315,6 +315,7 @@ services:
       EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
+      RERANK_BINDING_HOST: ${RERANK_BINDING_HOST:-http://rerank:8787/api/v1}
       RERANK_API_URL: ${RERANK_API_URL:-http://rerank:8787/api/v1}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       REDIS_ADDR: redis:6379
@@ -350,6 +351,7 @@ services:
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
       EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
     extra_hosts:
       - "host.docker.internal:host-gateway"

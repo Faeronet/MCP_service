@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -287,6 +288,8 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			texts = h.rerank(ctx, req.QueryText, texts)
 			h.rerankLimiter.Release()
 		}
+	} else if len(texts) > 0 && (h.rerankAPIURL == "" || h.rerankModel == "") {
+		log.Info(ctx, "rerank skipped (no url or model)", logging.KV{"rerank_url_set", h.rerankAPIURL != ""})
 	}
 	contextText := strings.Join(texts, "\n\n")
 	if len(contextText) > req.TokenBudget*4 {
@@ -330,8 +333,15 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 	}
 	payload, _ := json.Marshal(body)
 	rerankURL := h.rerankAPIURL
-	if rerankURL != "" && !strings.HasSuffix(strings.TrimSuffix(rerankURL, "/"), "rerank") {
-		rerankURL = rerankURL + "/rerank"
+	if rerankURL != "" {
+		rerankURL = strings.TrimSuffix(rerankURL, "/")
+		if !strings.Contains(rerankURL, "/rerank") {
+			if strings.HasSuffix(rerankURL, "/api/v1") {
+				rerankURL = rerankURL + "/rerank"
+			} else {
+				rerankURL = rerankURL + "/api/v1/rerank"
+			}
+		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rerankURL, bytes.NewReader(payload))
 	if err != nil {
@@ -344,12 +354,13 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Warn(ctx, "rerank request", logging.KV{"error", err})
+		log.Warn(ctx, "rerank request failed", logging.KV{"error", err}, logging.KV{"url", rerankURL})
 		return texts
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Warn(ctx, "rerank non-200", logging.KV{"status", resp.StatusCode})
+		body, _ := io.ReadAll(resp.Body)
+		log.Warn(ctx, "rerank non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"body", string(body)})
 		return texts
 	}
 	var result struct {
@@ -364,10 +375,12 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		log.Warn(ctx, "rerank decode failed", logging.KV{"error", err})
 		return texts
 	}
-	// Формат data[] (s-kostyaev/reranker): уже отсортировано по similarity desc
+	// Формат data[] (reranker): уже отсортировано по similarity desc
 	if len(result.Data) > 0 {
+		log.Info(ctx, "rerank applied", logging.KV{"docs", len(texts)}, logging.KV{"url", rerankURL})
 		out := make([]string, 0, len(result.Data))
 		for _, d := range result.Data {
 			var idx int
