@@ -72,6 +72,16 @@ def main():
                         "metadata": {},
                     },
                 )
+                if r.status_code >= 400:
+                    try:
+                        body = r.text
+                    except Exception:
+                        body = ""
+                    log.error(
+                        "mcp-write ingest_document failed: status=%s body=%s",
+                        r.status_code,
+                        body[:500] if body else "",
+                    )
                 r.raise_for_status()
                 result = r.json()
 
@@ -111,14 +121,8 @@ def main():
                             (jid,),
                         )
                         pg.commit()
-                        # Удалить неудачный документ из списка: job_steps (CASCADE при удалении job), job, versions, doc
                         if doc_id:
-                            cur.execute("DELETE FROM core.job_steps WHERE job_id = %s", (jid,))
-                            cur.execute("DELETE FROM core.jobs WHERE id = %s", (jid,))
-                            cur.execute("DELETE FROM core.versions WHERE doc_id = %s", (doc_id,))
-                            cur.execute("DELETE FROM core.docs WHERE id = %s", (doc_id,))
-                            pg.commit()
-                            log.info("removed failed doc %s from list", doc_id)
+                            log.info("job %s (doc %s) marked failed, doc left in list", jid, doc_id)
                 except Exception as cleanup_err:
                     log.warning("cleanup after failed job: %s", cleanup_err)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)

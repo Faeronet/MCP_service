@@ -179,9 +179,9 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	// Показываем доки, которые есть в Qdrant или у которых есть джоб pending/running (ожидают инжеста)
+	// Показываем доки: в Qdrant, или с джобом pending/running/failed (ожидают инжеста или упали)
 	inQdrant := h.docIDsInQdrant(ctx)
-	pendingDocIDs := h.docIDsWithPendingJobs(ctx)
+	pendingDocIDs := h.docIDsWithPendingOrFailedJobs(ctx)
 	rows, err := h.Pool.Query(ctx, `SELECT d.id, d.name, d.created_at,
 		(SELECT json_agg(json_build_object('id', v.id, 'version', v.version, 'file_hash', v.file_hash)) FROM core.versions v WHERE v.doc_id = d.id) 
 		FROM core.docs d ORDER BY d.created_at DESC`)
@@ -212,9 +212,9 @@ func (h *Handler) ListDocs(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"docs": docs})
 }
 
-// docIDsWithPendingJobs возвращает set doc_id, у которых есть джоб со статусом pending или running.
-func (h *Handler) docIDsWithPendingJobs(ctx context.Context) map[string]bool {
-	rows, err := h.Pool.Query(ctx, `SELECT DISTINCT doc_id::text FROM core.jobs WHERE status IN ('pending', 'running') AND doc_id IS NOT NULL`)
+// docIDsWithPendingOrFailedJobs возвращает set doc_id, у которых есть джоб pending, running или failed (чтобы не скрывать упавшие).
+func (h *Handler) docIDsWithPendingOrFailedJobs(ctx context.Context) map[string]bool {
+	rows, err := h.Pool.Query(ctx, `SELECT DISTINCT doc_id::text FROM core.jobs WHERE status IN ('pending', 'running', 'failed') AND doc_id IS NOT NULL`)
 	if err != nil {
 		return make(map[string]bool)
 	}
