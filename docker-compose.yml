@@ -390,9 +390,11 @@ services:
       PORT: "8004"
       NVIDIA_VISIBLE_DEVICES: "1"
       HF_TOKEN: ${HF_TOKEN:-}
+      # Кэш моделей HF (ASR/OCR) в контейнере
+      HF_HOME: /tmp/hf_cache
       ASR_MODEL: ${ASR_MODEL:-openai/whisper-large-v3}
       ASR_LANGUAGE: ${ASR_LANGUAGE:-ru}
-      OCR_MODEL: ${OCR_MODEL:-microsoft/trocr-base-handwritten}
+      OCR_MODEL: ${OCR_MODEL:-PaddlePaddle/PaddleOCR-VL-1.5}
       OCR_LANGUAGES: ${OCR_LANGUAGES:-ru,en}
     deploy:
       resources:
@@ -417,7 +419,7 @@ services:
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
       WORKER_CONCURRENCY: ${ATTACHMENT_WORKER_CONCURRENCY:-4}
-      OCR_MODEL: ${OCR_MODEL:-microsoft/trocr-base-handwritten}
+      OCR_MODEL: ${OCR_MODEL:-PaddlePaddle/PaddleOCR-VL-1.5}
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://ocr-asr:8004}
       ASR_SERVICE_URL: ${ASR_SERVICE_URL:-http://ocr-asr:8004}
     depends_on:
