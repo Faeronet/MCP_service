@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { listJobs, getJob } from '../api'
 
-const PAGE_SIZE = 50
+const PAGE_SIZE = 20
 
 export function Jobs() {
   const [jobs, setJobs] = useState<Array<Record<string, unknown>>>([])

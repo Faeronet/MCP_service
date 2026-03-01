@@ -184,6 +184,10 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
   background: #23282b59;
   overflow: hidden;
 }
+.table-wrap-docs {
+  height: 700px;
+  min-height: 700px;
+}
 .table-header-wrap {
   flex-shrink: 0;
   border-bottom: 1px solid var(--content-border);

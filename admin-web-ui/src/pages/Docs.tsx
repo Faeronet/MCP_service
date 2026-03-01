@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { listDocs, uploadFile, deleteDoc } from '../api'
 
-const PAGE_SIZE = 50
+const PAGE_SIZE = 20
 
 export function Docs() {
   const [docs, setDocs] = useState<Array<{ id: string; name: string; created_at: string; versions: unknown }>>([])
@@ -83,20 +83,6 @@ export function Docs() {
     e.target.value = ''
   }
 
-  const onDeleteOne = async (docId: string, docName: string) => {
-    if (!window.confirm(`Удалить документ «${docName}»? Чанки будут удалены из поиска.`)) return
-    setError('')
-    setSuccess('')
-    try {
-      await deleteDoc(docId)
-      setSuccess('Документ удалён.')
-      setSelectedIds((prev: Set<string>) => { const n = new Set(prev); n.delete(docId); return n })
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
   const onDeleteSelected = async () => {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
@@ -144,40 +130,29 @@ export function Docs() {
           <p className="text-muted">Loading…</p>
         ) : (
           <>
-            {hasSelection && (
-              <div className="table-toolbar">
-                <span className="table-toolbar-info">Выбрано: {selectedIds.size}</span>
-                <div className="table-toolbar-actions">
-                  <button type="button" className="btn-monitor-inactive" onClick={clearSelection} title="Снять все галочки">
-                    Отменить
-                  </button>
-                  <button type="button" className="btn-monitor-inactive" onClick={toggleSelectAll} title={allSelected ? 'Снять выделение со всех' : 'Выбрать все документы'}>
-                    {allSelected ? 'Снять выделение' : 'Выбрать все'}
-                  </button>
-                  <button type="button" className="btn-primary" onClick={onDeleteSelected} title="Удалить выбранные документы">
-                    Удалить
-                  </button>
-                </div>
+            <div className="table-toolbar">
+              <span className="table-toolbar-info">Выбрано: {selectedIds.size}</span>
+              <div className="table-toolbar-actions">
+                <button type="button" className="btn-monitor-inactive" disabled={!hasSelection} onClick={clearSelection} title="Снять все галочки">
+                  Отменить
+                </button>
+                <button type="button" className="btn-monitor-inactive" disabled={!hasSelection} onClick={toggleSelectAll} title={allSelected ? 'Снять выделение со всех' : 'Выбрать все документы'}>
+                  {allSelected ? 'Снять выделение' : 'Выбрать все'}
+                </button>
+                <button type="button" className="btn-primary" disabled={!hasSelection} onClick={onDeleteSelected} title="Удалить выбранные документы">
+                  Удалить
+                </button>
               </div>
-            )}
-            <div className="table-wrap">
+            </div>
+            <div className="table-wrap table-wrap-docs">
               <div className="table-header-wrap">
                 <table className="data-table data-table-header">
                   <thead>
                     <tr>
-                      <th style={{ width: 40 }} title="Выбрать">
-                        <input
-                          ref={selectAllRef}
-                          type="checkbox"
-                          checked={docs.length > 0 && selectedIds.size === docs.length}
-                          onChange={toggleSelectAll}
-                          title="Выбрать все / снять выделение"
-                        />
-                      </th>
-                      <th style={{ width: '25%' }}>Name</th>
-                      <th style={{ width: '40%' }}>ID</th>
-                      <th style={{ width: '20%' }}>Created</th>
-                      <th style={{ width: 90 }}></th>
+                      <th style={{ width: '30%' }}>Name</th>
+                      <th style={{ width: '42%' }}>ID</th>
+                      <th style={{ width: '23%' }}>Created</th>
+                      <th style={{ width: 40 }}></th>
                     </tr>
                   </thead>
                 </table>
@@ -193,6 +168,9 @@ export function Docs() {
                     <tbody>
                       {(paginatedDocs ?? []).map(d => (
                         <tr key={d.id}>
+                          <td style={{ width: '30%', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.name}>{d.name}</td>
+                          <td style={{ width: '42%' }} className="mono">{d.id}</td>
+                          <td style={{ width: '23%' }}>{new Date(d.created_at).toLocaleString()}</td>
                           <td style={{ width: 40 }}>
                             <input
                               type="checkbox"
@@ -200,12 +178,6 @@ export function Docs() {
                               onChange={() => toggleSelect(d.id)}
                               title="Выбрать документ"
                             />
-                          </td>
-                          <td style={{ width: '25%', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.name}>{d.name}</td>
-                          <td style={{ width: '40%' }} className="mono">{d.id}</td>
-                          <td style={{ width: '20%' }}>{new Date(d.created_at).toLocaleString()}</td>
-                          <td style={{ width: 90 }}>
-                            <button type="button" className="btn-monitor-inactive" onClick={() => onDeleteOne(d.id, d.name)} title="Удалить документ">Удалить</button>
                           </td>
                         </tr>
                       ))}
