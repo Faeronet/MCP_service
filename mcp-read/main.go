@@ -313,13 +313,19 @@ func normalizeQuery(s string) string {
 }
 
 // rerank вызывает RERANK_API_URL и переупорядочивает texts по relevance_score. При ошибке возвращает texts без изменений.
+// Поддерживает форматы: (1) documents[] + results/scores, (2) documents[{id,text}] + data[{id,similarity}] (s-kostyaev/reranker).
 func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []string) []string {
 	if len(texts) == 0 {
 		return texts
 	}
+	// Формат reranker API: documents как [{id, text}], ответ {data: [{id, similarity}]}
+	docsWithID := make([]map[string]interface{}, len(texts))
+	for i, t := range texts {
+		docsWithID[i] = map[string]interface{}{"id": i, "text": t}
+	}
 	body := map[string]interface{}{
 		"query":     query,
-		"documents": texts,
+		"documents": docsWithID,
 		"model":     h.rerankModel,
 	}
 	payload, _ := json.Marshal(body)
@@ -352,9 +358,34 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 			RelevanceScore float64 `json:"relevance_score"`
 		} `json:"results"`
 		Scores []float64 `json:"scores"`
+		Data   []struct {
+			ID         interface{} `json:"id"`
+			Similarity float64     `json:"similarity"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return texts
+	}
+	// Формат data[] (s-kostyaev/reranker): уже отсортировано по similarity desc
+	if len(result.Data) > 0 {
+		out := make([]string, 0, len(result.Data))
+		for _, d := range result.Data {
+			var idx int
+			switch v := d.ID.(type) {
+			case float64:
+				idx = int(v)
+			case int:
+				idx = v
+			default:
+				continue
+			}
+			if idx >= 0 && idx < len(texts) {
+				out = append(out, texts[idx])
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
 	}
 	// Формат 1: scores[i] = релевантность i-го документа
 	if len(result.Scores) >= len(texts) {
