@@ -1,6 +1,5 @@
-# Reranker (BAAI/bge-reranker-v2-m3) on GPU
-ARG PYTHON_VERSION=3.11
-FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime AS base
+# Reranker (BAAI/bge-reranker-v2-m3) on GPU. PyTorch 2.4+ required by current transformers.
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime AS base
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

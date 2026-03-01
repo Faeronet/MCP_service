@@ -1,4 +1,4 @@
-torch>=2.2.0
+# torch comes from the base image (2.4.0); do not reinstall to avoid version mismatch
 transformers>=4.40.0
 fastapi>=0.111.0
 pydantic>=2.7.0
