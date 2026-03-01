@@ -25,7 +25,6 @@ if HF_TOKEN:
 
 
 def _device():
-    """cuda на GPU с индексом 1 (NVIDIA_VISIBLE_DEVICES=1), иначе cpu."""
     if not os.getenv("NVIDIA_VISIBLE_DEVICES"):
         return "cpu"
     try:
@@ -35,8 +34,6 @@ def _device():
         return "cpu"
 
 app = FastAPI(title="extract-tool")
-
-# Lazy-load models
 _ocr_reader = None
 _asr_model = None
 
@@ -85,10 +82,8 @@ def get_ocr():
 
 
 def _asr_model_id():
-    """Идентификатор модели для faster-whisper (CTranslate2 с HF). openai/whisper-* → Systran/faster-whisper-*."""
     m = (ASR_MODEL or "large-v3").strip()
     if m.startswith("openai/whisper-"):
-        # faster-whisper качает CTranslate2 с HF; openai/whisper-* — формат transformers
         name = m.replace("openai/whisper-", "").strip()
         return f"Systran/faster-whisper-{name}" if name else "Systran/faster-whisper-large-v3"
     return m
@@ -101,13 +96,11 @@ def get_asr():
         device = _device()
         compute_type = "float16" if device == "cuda" else "int8"
         model_id = _asr_model_id()
-        # Загрузка с Hugging Face (HUGGINGFACE_HUB_TOKEN в окружении для gated/private)
         try:
             _asr_model = WhisperModel(model_id, device=device, compute_type=compute_type)
             log.info("ASR model loaded on %s (language=%s): %s", device, ASR_LANGUAGE, model_id)
         except Exception as e1:
             log.warning("ASR load %s failed: %s", model_id, e1)
-            # Fallback: короткое имя (large-v3, base) — faster-whisper резолвит в HF
             short = "large-v3" if "large-v3" in (model_id or "") else (model_id.split("/")[-1] if "/" in (model_id or "") else model_id)
             if short != model_id:
                 try:
@@ -120,15 +113,12 @@ def get_asr():
     return _asr_model
 
 
-# --- Текст, PDF, архивы ---
 TEXT_EXT = {".txt", ".text", ".log", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".py", ".js", ".sh", ".yml", ".yaml"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
 AUDIO_EXT = {".ogg", ".mp3", ".wav", ".m4a", ".flac", ".opus", ".mpga"}
-ARCHIVE_EXT = {".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz"}
 
 
 def _extract_archive(data: bytes, filename: str) -> list[tuple[str, bytes]] | None:
-    """Распаковка архива. Возвращает [(имя_файла, содержимое), ...] или None."""
     fn = (filename or "").lower().strip()
     try:
         if fn.endswith(".zip"):
@@ -154,7 +144,6 @@ def _extract_archive(data: bytes, filename: str) -> list[tuple[str, bytes]] | No
 
 
 def _extract_text_from_text_file(data: bytes, filename: str) -> str:
-    """Извлечение текста из текстового файла (с опциональной конвертацией в PDF и обратно — по сути просто decode)."""
     try:
         return data.decode("utf-8", errors="replace").strip()
     except Exception:
@@ -164,26 +153,7 @@ def _extract_text_from_text_file(data: bytes, filename: str) -> str:
             return ""
 
 
-def _text_to_pdf_bytes(text: str) -> bytes:
-    """Конвертация текста в PDF (для экспорта)."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    width, height = A4
-    y = height - 40
-    for line in text.replace("\r", "").split("\n")[:2000]:
-        if y < 40:
-            c.showPage()
-            y = height - 40
-        c.drawString(40, y, line[:120])
-        y -= 14
-    c.save()
-    return buf.getvalue()
-
-
 def _extract_text_from_pdf(data: bytes) -> str:
-    """Извлечение текста из PDF."""
     try:
         from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(data))
@@ -208,7 +178,6 @@ def _file_extension(name: str) -> str:
 
 
 def _extract_single_sync(data: bytes, filename: str) -> str | None:
-    """Один файл: текст / PDF / OCR / ASR. None = неподдерживаемый тип."""
     ext = _file_extension(filename)
     if ext in TEXT_EXT:
         return _extract_text_from_text_file(data, filename)
@@ -275,17 +244,11 @@ def _extract_single_sync(data: bytes, filename: str) -> str | None:
 
 @app.post("/extract")
 async def extract(file: UploadFile = File(...)) -> dict:
-    """
-    Универсальное извлечение: архив (zip/tar.gz/tar.xz) → файлы в очередь на извлечение;
-    текст → экспорт и экстракт; PDF → экстракт; фото → OCR; аудио → ASR.
-    Ответ: {"text": "..."} или ошибка с сообщением для пользователя.
-    """
+    """Универсальное извлечение: архив → файлы; текст/PDF/фото/аудио → текст. 422 = нельзя обработать."""
     data = await file.read()
     filename = file.filename or ""
     if not data:
         return {"text": ""}
-
-    # Архив: распаковываем и обрабатываем каждый файл
     if _file_extension(filename) in {".zip", ".tar", ".tar.gz", ".tar.xz", ".tgz", ".txz"}:
         items = _extract_archive(data, filename)
         if items is None:
@@ -302,8 +265,6 @@ async def extract(file: UploadFile = File(...)) -> dict:
                 if t is not None:
                     parts.append(f"--- {name}\n" + (t or ""))
         return {"text": "\n\n".join(p for p in parts if p.strip())}
-
-    # Один файл
     result = _extract_single_sync(data, filename)
     if result is not None:
         return {"text": result}
@@ -312,7 +273,6 @@ async def extract(file: UploadFile = File(...)) -> dict:
 
 @app.post("/ocr")
 async def ocr(file: UploadFile = File(...)) -> dict:
-    """Изображение → текст (PaddleOCR-VL, TroCR или easyocr)."""
     data = await file.read()
     if not data:
         return {"text": ""}
@@ -327,22 +287,8 @@ async def ocr(file: UploadFile = File(...)) -> dict:
         if backend == "paddleocr":
             processor, model, device = ocr_engine
             import torch
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": img},
-                        {"type": "text", "text": "OCR:"},
-                    ],
-                }
-            ]
-            inputs = processor.apply_chat_template(
-                messages,
-                add_generation_prompt=True,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt",
-            )
+            messages = [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": "OCR:"}]}]
+            inputs = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt")
             if hasattr(inputs, "to"):
                 inputs = inputs.to(device)
             else:
@@ -350,11 +296,7 @@ async def ocr(file: UploadFile = File(...)) -> dict:
             generated_ids = model.generate(**inputs, max_new_tokens=1024)
             input_len = inputs["input_ids"].shape[-1]
             generated_ids_trimmed = generated_ids[0][input_len:]
-            text = processor.batch_decode(
-                generated_ids_trimmed.unsqueeze(0),
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
-            )[0].strip()
+            text = processor.batch_decode(generated_ids_trimmed.unsqueeze(0), skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
         elif backend == "trocr":
             processor, model, device = ocr_engine
             import torch
@@ -373,7 +315,6 @@ async def ocr(file: UploadFile = File(...)) -> dict:
 
 @app.post("/asr")
 async def asr(file: UploadFile = File(...)) -> dict:
-    """Аудио файл → текст (faster-whisper)."""
     data = await file.read()
     if not data:
         return {"text": ""}

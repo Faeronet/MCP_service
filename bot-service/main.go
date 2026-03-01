@@ -75,7 +75,7 @@ func main() {
 	maxInflightLLM := config.LoadInt("MAX_INFLIGHT_LLM", 32)
 	deboounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
-	ocrAsrURL := strings.TrimSuffix(config.LoadString("OCR_SERVICE_URL", config.LoadString("ASR_SERVICE_URL", "http://ocr-asr:8004")), "/")
+	extractToolURL := strings.TrimSuffix(config.LoadString("EXTRACT_TOOL_URL", config.LoadString("OCR_SERVICE_URL", config.LoadString("ASR_SERVICE_URL", "http://extract-tool:8004"))), "/")
 	vllmBase := config.LoadString("LLM_BINDING_HOST", "")
 	if vllmBase == "" {
 		vllmBase = config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
@@ -93,7 +93,7 @@ func main() {
 		minio:         minioClient,
 		queue:         rmq,
 		mcpReadURL:    mcpReadURL,
-		ocrAsrURL:     ocrAsrURL,
+		extractToolURL: extractToolURL,
 		vllmBase:      vllmBase,
 		llmModel:      llmModel,
 		llmAPIKey:     llmAPIKey,
@@ -166,7 +166,7 @@ type Bot struct {
 	minio          *storage.Client
 	queue          *queue.Client
 	mcpReadURL     string
-	ocrAsrURL      string
+	extractToolURL string
 	vllmBase       string
 	llmModel       string
 	llmAPIKey      string
@@ -455,11 +455,15 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		b.sendReply(ctx, chatID, "Ошибка сохранения файла.")
 		return
 	}
-	// Обязательная цепочка: сначала извлечение текста (OCR/ASR), потом сохранение и ответ
-	extracted, err := b.callOcrAsr(ctx, data, fileName, isVoice)
+	// Извлечение текста через extract-tool (/extract: текст, PDF, OCR, ASR, архивы)
+	extracted, userErr, err := b.callExtract(ctx, data, fileName)
 	if err != nil {
-		log.Warn(ctx, "ocr/asr extraction failed", logging.KV{"error", err})
-		b.sendReply(ctx, chatID, "Не удалось извлечь текст из файла (OCR/ASR).")
+		log.Warn(ctx, "extract failed", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Не удалось обработать файл.")
+		return
+	}
+	if userErr != "" {
+		b.sendReply(ctx, chatID, userErr)
 		return
 	}
 	_, err = b.pool.Exec(ctx,
@@ -468,59 +472,92 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	if err != nil {
 		log.Warn(ctx, "insert attachment", logging.KV{"error", err})
 	}
-	reply := "Файл обработан."
-	if strings.TrimSpace(extracted) != "" {
-		if len(extracted) > 1500 {
-			reply = "Файл обработан. Текст (начало): " + extracted[:1500] + "..."
-		} else {
-			reply = "Файл обработан. Извлечённый текст:\n" + extracted
-		}
+	// Отправка извлечённого текста в LLM и ответ пользователю ответом модели (не сырым текстом)
+	userMsg := "Обработай следующий текст из вложения и ответь по существу:\n\n" + extracted
+	if strings.TrimSpace(extracted) == "" {
+		b.sendReply(ctx, chatID, "Файл обработан, текст не извлечён.")
+		log.Info(ctx, "attachment processed (no text)", logging.KV{"chat_id", chatID}, logging.KV{"object_key", objectKey})
+		return
 	}
+	key := fmt.Sprintf("user:%d", userID)
+	if !b.perChatLimiter.Allow(key) {
+		log.Warn(ctx, "per-user rate limit (attachment)", logging.KV{"user_id", userID})
+		b.sendReply(ctx, chatID, "Слишком много запросов, подождите.")
+		return
+	}
+	_ = b.appendMessage(ctx, sessionID, "user", userMsg)
+	attachmentsText := b.getAttachmentsText(ctx, sessionID)
+	contextText, err := b.buildContext(ctx, requestID, userMsg, attachmentsText, 4000, "default")
+	if err != nil {
+		log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+		contextText = ""
+	}
+	if err := b.llmLimiter.Acquire(ctx); err != nil {
+		log.Warn(ctx, "llm queue full for attachment", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Сервер занят, попробуйте позже.")
+		return
+	}
+	defer b.llmLimiter.Release()
+	reply, err := b.callLLM(ctx, requestID, contextText, userMsg)
+	if err != nil {
+		log.Warn(ctx, "llm call for attachment", logging.KV{"error", err})
+		b.sendReply(ctx, chatID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
+		return
+	}
+	_ = b.appendMessage(ctx, sessionID, "assistant", reply)
 	b.sendReply(ctx, chatID, reply)
-	log.Info(ctx, "attachment processed", logging.KV{"chat_id", chatID}, logging.KV{"object_key", objectKey})
+	log.Info(ctx, "attachment processed and LLM replied", logging.KV{"chat_id", chatID}, logging.KV{"object_key", objectKey})
 }
 
-// callOcrAsr отправляет файл в ocr-asr (POST /ocr или /asr), возвращает извлечённый текст.
-func (b *Bot) callOcrAsr(ctx context.Context, data []byte, fileName string, isVoice bool) (string, error) {
-	if b.ocrAsrURL == "" {
-		return "", fmt.Errorf("OCR_SERVICE_URL not set")
-	}
-	endpoint := "/ocr"
-	if isVoice {
-		endpoint = "/asr"
+// callExtract отправляет файл в extract-tool (POST /extract). Возвращает (текст, сообщениеДляПользователя, ошибка).
+// При 422 сообщение для пользователя (например "Файл или архив нельзя обработать.") в userErr.
+func (b *Bot) callExtract(ctx context.Context, data []byte, fileName string) (text, userErr string, err error) {
+	if b.extractToolURL == "" {
+		return "", "", fmt.Errorf("EXTRACT_TOOL_URL / OCR_SERVICE_URL not set")
 	}
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	part, err := w.CreateFormFile("file", fileName)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := part.Write(data); err != nil {
-		return "", err
+		return "", "", err
 	}
 	if err := w.Close(); err != nil {
-		return "", err
+		return "", "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.ocrAsrURL+endpoint, &buf)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.extractToolURL+"/extract", &buf)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 422 {
+		var errBody struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal(bodyBytes, &errBody)
+		msg := errBody.Detail
+		if msg == "" {
+			msg = "Файл или архив нельзя обработать."
+		}
+		return "", msg, nil
+	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ocr/asr %d: %s", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("extract %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 	var out struct {
 		Text string `json:"text"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+	if err := json.Unmarshal(bodyBytes, &out); err != nil {
+		return "", "", err
 	}
-	return out.Text, nil
+	return out.Text, "", nil
 }
