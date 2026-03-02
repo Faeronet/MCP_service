@@ -97,6 +97,7 @@ export function Monitor() {
       </div>
       <div className="content-panel">
         {error && <p className="text-error">{error}</p>}
+        <div className="monitor-cards-row">
         {mode === 'system' && data && (
           <div className="monitor-section-frame">
             <h3 className="monitor-section-title">Система</h3>
@@ -200,8 +201,8 @@ export function Monitor() {
                 </div>
               </div>
             ))}
-          </>
         )}
+        </div>
       </div>
     </div>
   )

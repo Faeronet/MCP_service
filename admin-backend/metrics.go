@@ -380,7 +380,32 @@ func collectCPU(prev *cpuSample, prevCgroup *cgroupCPUSample) (pct int, next cpu
 }
 
 func collectRAM() (pct int, usedGB, totalGB float64) {
-	// Память — только used: used = MemTotal - MemFree - Buffers - Cached (как в top).
+	// В контейнере: только used из cgroup (memory.current), total = limit (memory.max).
+	if usedBytes, limitBytes, ok := readCgroupMemoryV2(); ok {
+		usedGB = float64(usedBytes) / (1024 * 1024 * 1024)
+		if limitBytes > 0 {
+			totalGB = float64(limitBytes) / (1024 * 1024 * 1024)
+			pctVal := (float64(usedBytes) / float64(limitBytes)) * 100
+			if pctVal > 100 {
+				pctVal = 100
+			}
+			pct = int(pctVal + 0.5)
+		}
+		return pct, usedGB, totalGB
+	}
+	if usedBytes, limitBytes, ok := readCgroupMemoryV1(); ok {
+		usedGB = float64(usedBytes) / (1024 * 1024 * 1024)
+		if limitBytes > 0 {
+			totalGB = float64(limitBytes) / (1024 * 1024 * 1024)
+			pctVal := (float64(usedBytes) / float64(limitBytes)) * 100
+			if pctVal > 100 {
+				pctVal = 100
+			}
+			pct = int(pctVal + 0.5)
+		}
+		return pct, usedGB, totalGB
+	}
+	// Хост: только used = MemTotal - MemFree - Buffers - Cached.
 	total, _, free, buffers, cached, err := readProcMeminfoFull()
 	if err != nil || total == 0 {
 		return 0, 0, 0

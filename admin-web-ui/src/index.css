@@ -483,6 +483,16 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   font-size: 0.875rem;
   color: var(--text-muted);
 }
+.monitor-cards-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.monitor-cards-row .monitor-section-frame {
+  flex: 1 1 360px;
+  min-width: 320px;
+  margin-bottom: 0;
+}
 .monitor-section-frame {
   border: 1px solid var(--content-border);
   border-radius: 12px;
