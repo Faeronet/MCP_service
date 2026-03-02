@@ -243,29 +243,40 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		log.Error(ctx, "ensure session", logging.KV{"error", err})
 		return
 	}
-	_ = b.appendMessage(ctx, sessionID, "user", msg.Text)
+	_, _ = b.appendMessage(ctx, sessionID, "user", msg.Text)
+	b.trimSessionMessagesIfNeeded(ctx, sessionID)
 
-	attachmentsText := b.getAttachmentsText(ctx, sessionID)
-	contextText, err := b.buildContext(ctx, requestID, msg.Text, attachmentsText, 4000, "default")
-	if err != nil {
-		if err.Error() == "chunk_not_found" {
-			b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-			_ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-			return
+	var contextText string
+	// Ответ на наше сообщение: берём сохранённый контекст того ответа, без запроса в Qdrant
+	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.IsBot {
+		if ctxStored, ok := b.getContextByTelegramMessageID(ctx, sessionID, msg.ReplyToMessage.MessageID); ok && ctxStored != "" {
+			contextText = ctxStored
+			log.Info(ctx, "using reply-to context", logging.KV{"chat_id", chatID})
 		}
-		if err.Error() == "date_not_found" {
-			b.sendReply(ctx, chatID, "Данные не найдены.")
-			_ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-			return
+	}
+	if contextText == "" {
+		attachmentsText := b.getAttachmentsText(ctx, sessionID)
+		var err error
+		contextText, err = b.buildContext(ctx, requestID, msg.Text, attachmentsText, 4000, "default")
+		if err != nil {
+			if err.Error() == "chunk_not_found" {
+				b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+				_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+				return
+			}
+			if err.Error() == "date_not_found" {
+				b.sendReply(ctx, chatID, "Данные не найдены.")
+				_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+				return
+			}
+			log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
+			contextText = ""
 		}
-		log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
-		contextText = ""
 	}
 
 	reply, err := b.callLLM(ctx, requestID, contextText, msg.Text)
 	if err != nil {
 		log.Error(ctx, "llm call", logging.KV{"error", err}, logging.KV{"vllm_base", b.vllmBase})
-		// Краткая подсказка пользователю; полная ошибка — в логах бота
 		hint := "Модель недоступна. Проверьте, что vLLM запущен (docker compose --profile vllm up -d) и в .env указан VLLM_OPENAI_BASE."
 		if errStr := err.Error(); len(errStr) < 120 {
 			hint = "Ошибка LLM: " + errStr
@@ -273,8 +284,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		b.sendReply(ctx, chatID, hint)
 		return
 	}
-	_ = b.appendMessage(ctx, sessionID, "assistant", reply)
-	b.sendReply(ctx, chatID, reply)
+	msgID, _ := b.appendMessage(ctx, sessionID, "assistant", reply)
+	b.trimSessionMessagesIfNeeded(ctx, sessionID)
+	telegramMsgID := b.sendReplyWithID(ctx, chatID, reply)
+	if msgID != uuid.Nil && telegramMsgID > 0 {
+		_ = b.updateMessageTelegramID(ctx, msgID, telegramMsgID)
+		_ = b.saveAnswerContext(ctx, sessionID, msgID, contextText)
+	}
 }
 
 func (b *Bot) ensureSession(ctx context.Context, chatID, userID int64, username string) (uuid.UUID, error) {
@@ -295,9 +311,53 @@ func (b *Bot) ensureSession(ctx context.Context, chatID, userID int64, username 
 	return id, err
 }
 
-func (b *Bot) appendMessage(ctx context.Context, sessionID uuid.UUID, role, content string) error {
-	_, err := b.pool.Exec(ctx, `INSERT INTO chat.messages (session_id, role, content) VALUES ($1, $2, $3)`, sessionID, role, content)
+func (b *Bot) appendMessage(ctx context.Context, sessionID uuid.UUID, role, content string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := b.pool.QueryRow(ctx, `INSERT INTO chat.messages (session_id, role, content) VALUES ($1, $2, $3) RETURNING id`, sessionID, role, content).Scan(&id)
+	return id, err
+}
+
+func (b *Bot) updateMessageTelegramID(ctx context.Context, messageID uuid.UUID, telegramMessageID int) error {
+	_, err := b.pool.Exec(ctx, `UPDATE chat.messages SET telegram_message_id = $1 WHERE id = $2`, telegramMessageID, messageID)
 	return err
+}
+
+func (b *Bot) saveAnswerContext(ctx context.Context, sessionID, messageID uuid.UUID, contextText string) error {
+	_, err := b.pool.Exec(ctx, `INSERT INTO chat.answer_context (session_id, message_id, context_text) VALUES ($1, $2, $3)`, sessionID, messageID, contextText)
+	return err
+}
+
+func (b *Bot) getContextByTelegramMessageID(ctx context.Context, sessionID uuid.UUID, telegramMessageID int) (string, bool) {
+	var contextText string
+	err := b.pool.QueryRow(ctx, `
+		SELECT ac.context_text FROM chat.answer_context ac
+		JOIN chat.messages m ON m.id = ac.message_id
+		WHERE m.session_id = $1 AND m.telegram_message_id = $2
+		LIMIT 1
+	`, sessionID, telegramMessageID).Scan(&contextText)
+	return contextText, err == nil
+}
+
+const maxMessagesBeforeTrim = 30
+const keepMessagesAfterTrim = 20
+
+func (b *Bot) trimSessionMessagesIfNeeded(ctx context.Context, sessionID uuid.UUID) {
+	var count int64
+	if err := b.pool.QueryRow(ctx, `SELECT COUNT(*) FROM chat.messages WHERE session_id = $1`, sessionID).Scan(&count); err != nil || count < maxMessagesBeforeTrim {
+		return
+	}
+	res, err := b.pool.Exec(ctx, `
+		DELETE FROM chat.messages WHERE session_id = $1 AND id NOT IN (
+			SELECT id FROM chat.messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2
+		)
+	`, sessionID, keepMessagesAfterTrim)
+	if err != nil {
+		log.Warn(ctx, "trim session messages", logging.KV{"error", err}, logging.KV{"session_id", sessionID})
+		return
+	}
+	if res.RowsAffected() > 0 {
+		log.Info(ctx, "trimmed session messages", logging.KV{"session_id", sessionID}, logging.KV{"deleted", res.RowsAffected()})
+	}
 }
 
 // getAttachmentsText возвращает объединённый текст из вложений сессии (OCR/ASR), чтобы передать в build_context.
@@ -396,13 +456,21 @@ func (b *Bot) callLLM(ctx context.Context, requestID, contextText, userQuery str
 }
 
 func (b *Bot) sendReply(ctx context.Context, chatID int64, text string) {
+	b.sendReplyWithID(ctx, chatID, text)
+}
+
+// sendReplyWithID отправляет сообщение и возвращает MessageID в Telegram (0 при ошибке).
+func (b *Bot) sendReplyWithID(ctx context.Context, chatID int64, text string) int {
 	if b.bot == nil {
-		return
+		return 0
 	}
 	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := b.bot.Send(msg); err != nil {
+	sent, err := b.bot.Send(msg)
+	if err != nil {
 		log.Warn(ctx, "send reply", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
+		return 0
 	}
+	return sent.MessageID
 }
 
 func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID int64, requestID string) {
@@ -498,18 +566,19 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		b.sendReply(ctx, chatID, "Слишком много запросов, подождите.")
 		return
 	}
-	_ = b.appendMessage(ctx, sessionID, "user", userMsg)
+	_, _ = b.appendMessage(ctx, sessionID, "user", userMsg)
+	b.trimSessionMessagesIfNeeded(ctx, sessionID)
 	attachmentsText := b.getAttachmentsText(ctx, sessionID)
 	contextText, err := b.buildContext(ctx, requestID, userMsg, attachmentsText, 4000, "default")
 	if err != nil {
 		if err.Error() == "chunk_not_found" {
 			b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-			_ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+			_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
 			return
 		}
 		if err.Error() == "date_not_found" {
 			b.sendReply(ctx, chatID, "Данные не найдены.")
-			_ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+			_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
 			return
 		}
 		log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
@@ -527,7 +596,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		b.sendReply(ctx, chatID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
 		return
 	}
-	_ = b.appendMessage(ctx, sessionID, "assistant", reply)
+	msgID, _ := b.appendMessage(ctx, sessionID, "assistant", reply)
+	b.trimSessionMessagesIfNeeded(ctx, sessionID)
 	// Показываем пользователю, что извлекли (фрагмент) и ответ модели. Лимит Telegram 4096.
 	const previewLen = 350
 	const maxReplyLen = 4000
@@ -542,7 +612,11 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			replyToUser = replyToUser[:maxReplyLen-20] + "\n..."
 		}
 	}
-	b.sendReply(ctx, chatID, replyToUser)
+	telegramMsgID := b.sendReplyWithID(ctx, chatID, replyToUser)
+	if msgID != uuid.Nil && telegramMsgID > 0 {
+		_ = b.updateMessageTelegramID(ctx, msgID, telegramMsgID)
+		_ = b.saveAnswerContext(ctx, sessionID, msgID, contextText)
+	}
 	log.Info(ctx, "attachment processed and LLM replied", logging.KV{"chat_id", chatID}, logging.KV{"object_key", objectKey})
 }
 
