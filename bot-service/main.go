@@ -248,6 +248,11 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	attachmentsText := b.getAttachmentsText(ctx, sessionID)
 	contextText, err := b.buildContext(ctx, requestID, msg.Text, attachmentsText, 4000, "default")
 	if err != nil {
+		if err.Error() == "chunk_not_found" {
+			b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+			_ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+			return
+		}
 		log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
 		contextText = ""
 	}
@@ -485,6 +490,11 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	attachmentsText := b.getAttachmentsText(ctx, sessionID)
 	contextText, err := b.buildContext(ctx, requestID, userMsg, attachmentsText, 4000, "default")
 	if err != nil {
+		if err.Error() == "chunk_not_found" {
+			b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+			_ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+			return
+		}
 		log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
 		contextText = ""
 	}

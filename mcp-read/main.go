@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ import (
 var log = logging.New("mcp-read")
 
 const retrievalCacheTTL = 60 * time.Second
+const maxSearchRounds = 5
 
 func main() {
 	ctx := context.Background()
@@ -50,6 +52,12 @@ func main() {
 	}
 	rerankAPIKey := config.LoadString("RERANK_BINDING_API_KEY", "")
 	rerankModel := config.LoadString("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+	rerankMinScore := 0.8
+	if s := config.LoadString("RERANK_MIN_SCORE", "0.8"); s != "" {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil && f >= 0 && f <= 1 {
+			rerankMinScore = f
+		}
+	}
 	maxRerank := config.LoadInt("MAX_INFLIGHT_RERANK", 16)
 	maxEmbed := config.LoadInt("MAX_INFLIGHT_EMBED", 32)
 
@@ -66,16 +74,17 @@ func main() {
 	embedLimiter := ratelimit.NewInFlight(maxEmbed)
 
 	handler := &MCPReadHandler{
-		qdrantURL:      qdrantURL,
-		embedAPIBase:   embedAPIBase,
-		embedAPIKey:    embedAPIKey,
-		rerankAPIURL:   rerankAPIURL,
-		rerankAPIKey:   rerankAPIKey,
-		redis:          rdb,
-		embedModel:     embedModel,
-		rerankModel:    rerankModel,
-		rerankLimiter:  rerankLimiter,
-		embedLimiter:   embedLimiter,
+		qdrantURL:       qdrantURL,
+		embedAPIBase:    embedAPIBase,
+		embedAPIKey:     embedAPIKey,
+		rerankAPIURL:    rerankAPIURL,
+		rerankAPIKey:    rerankAPIKey,
+		rerankMinScore:  rerankMinScore,
+		redis:           rdb,
+		embedModel:      embedModel,
+		rerankModel:     rerankModel,
+		rerankLimiter:   rerankLimiter,
+		embedLimiter:    embedLimiter,
 	}
 
 	mux := http.NewServeMux()
@@ -100,17 +109,18 @@ func requestIDMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type MCPReadHandler struct {
-	qdrantURL         string
-	embedAPIBase      string
-	embedAPIKey       string
-	rerankAPIURL      string
-	rerankAPIKey      string
-	redis             *redis.Client
-	embedModel        string
-	rerankModel       string
-	rerankLimiter     *ratelimit.InFlight
-	embedLimiter      *ratelimit.InFlight
-	embedModelIDMu    sync.Mutex
+	qdrantURL          string
+	embedAPIBase       string
+	embedAPIKey        string
+	rerankAPIURL       string
+	rerankAPIKey       string
+	rerankMinScore     float64
+	redis              *redis.Client
+	embedModel         string
+	rerankModel        string
+	rerankLimiter      *ratelimit.InFlight
+	embedLimiter       *ratelimit.InFlight
+	embedModelIDMu     sync.Mutex
 	embedModelIDCached string
 }
 
@@ -250,7 +260,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalized := normalizeQuery(req.QueryText)
-	cacheKey := "retrieval:" + normalized + ":v1"
+	cacheKey := "retrieval:" + normalized + ":v2"
 	if h.redis != nil {
 		val, err := h.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
@@ -268,79 +278,97 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	defer h.embedLimiter.Release()
 
 	collectionName := "chunks"
-	// Вектор запроса через vLLM /v1/embeddings; при ошибке — нулевой вектор (поиск всё равно выполнится)
 	vec := h.embedQuery(ctx, req.QueryText)
 	trueVal := true
-	body := qdrantSearchReq{Vector: vec, Limit: 20, WithPayload: &trueVal}
-	payload, _ := json.Marshal(body)
-	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.qdrantURL+"/collections/"+collectionName+"/points/search", bytes.NewReader(payload))
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		log.Warn(ctx, "qdrant request failed, returning empty context", logging.KV{"error", err})
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		log.Warn(ctx, "qdrant non-200, returning empty context", logging.KV{"status", resp.StatusCode})
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
-		return
-	}
-	var searchRes qdrantSearchResult
-	if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
-		log.Warn(ctx, "qdrant decode failed, returning empty context", logging.KV{"error", err})
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
-		return
-	}
 
-	numResults := len(searchRes.Result)
-	log.Info(ctx, "build_context: search returned", logging.KV{"points", numResults}, logging.KV{"rerank_url", h.rerankAPIURL})
+	var contextText string
+	var found bool
+	for round := 1; round <= maxSearchRounds; round++ {
+		limit := uint64(20 * round)
+		if limit > 100 {
+			limit = 100
+		}
+		body := qdrantSearchReq{Vector: vec, Limit: limit, WithPayload: &trueVal}
+		payload, _ := json.Marshal(body)
+		httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.qdrantURL+"/collections/"+collectionName+"/points/search", bytes.NewReader(payload))
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			log.Warn(ctx, "qdrant request failed", logging.KV{"error", err}, logging.KV{"round", round})
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Warn(ctx, "qdrant non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"round", round})
+			continue
+		}
+		var searchRes qdrantSearchResult
+		if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
+			resp.Body.Close()
+			log.Warn(ctx, "qdrant decode failed", logging.KV{"error", err})
+			continue
+		}
+		resp.Body.Close()
 
-	var texts []string
-	mainChunkIDs := make(map[string]struct{})
-	neighborIDs := make(map[string]struct{})
-	for _, p := range searchRes.Result {
-		if t, ok := p.Payload["text"].(string); ok {
-			texts = append(texts, t)
-		}
-		if cid, ok := p.Payload["chunk_id"].(string); ok && cid != "" {
-			mainChunkIDs[cid] = struct{}{}
-		}
-		for _, key := range []string{"prev_chunk_id", "next_chunk_id"} {
-			if v, ok := p.Payload[key].(string); ok && v != "" {
-				neighborIDs[v] = struct{}{}
+		var texts []string
+		mainChunkIDs := make(map[string]struct{})
+		neighborIDs := make(map[string]struct{})
+		for _, p := range searchRes.Result {
+			if t, ok := p.Payload["text"].(string); ok {
+				texts = append(texts, t)
+			}
+			if cid, ok := p.Payload["chunk_id"].(string); ok && cid != "" {
+				mainChunkIDs[cid] = struct{}{}
+			}
+			for _, key := range []string{"prev_chunk_id", "next_chunk_id"} {
+				if v, ok := p.Payload[key].(string); ok && v != "" {
+					neighborIDs[v] = struct{}{}
+				}
 			}
 		}
-	}
-	// Убираем из соседей те, что уже в результатах поиска
-	for id := range mainChunkIDs {
-		delete(neighborIDs, id)
-	}
-	// Подтягиваем тексты соседних чанков (связи prev/next)
-	if len(neighborIDs) > 0 {
-		neighborTexts := h.fetchChunksByID(ctx, collectionName, neighborIDs)
-		if len(neighborTexts) > 0 {
-			texts = append(texts, neighborTexts...)
-			log.Info(ctx, "neighbor chunks added to context", logging.KV{"count", len(neighborTexts)}, logging.KV{"requested", len(neighborIDs)})
+		for id := range mainChunkIDs {
+			delete(neighborIDs, id)
 		}
-	}
-	if len(texts) > 0 && h.rerankAPIURL != "" && h.rerankModel != "" {
-		log.Info(ctx, "build_context: calling rerank", logging.KV{"url", h.rerankAPIURL}, logging.KV{"docs", len(texts)})
-		if err := h.rerankLimiter.Acquire(ctx); err == nil {
-			texts = h.rerank(ctx, req.QueryText, texts)
+		if len(neighborIDs) > 0 {
+			neighborTexts := h.fetchChunksByID(ctx, collectionName, neighborIDs)
+			if len(neighborTexts) > 0 {
+				texts = append(texts, neighborTexts...)
+			}
+		}
+		if len(texts) == 0 {
+			continue
+		}
+
+		var topScore float64
+		if h.rerankAPIURL != "" && h.rerankModel != "" {
+			if err := h.rerankLimiter.Acquire(ctx); err != nil {
+				continue
+			}
+			texts, topScore = h.rerankWithScore(ctx, req.QueryText, texts)
 			h.rerankLimiter.Release()
+			log.Info(ctx, "build_context: round rerank", logging.KV{"round", round}, logging.KV{"top_score", topScore}, logging.KV{"docs", len(texts)})
+			if topScore < h.rerankMinScore {
+				continue
+			}
+		} else {
+			topScore = 1.0
 		}
-	} else if len(texts) > 0 && (h.rerankAPIURL == "" || h.rerankModel == "") {
-		log.Info(ctx, "rerank skipped (no url or model)", logging.KV{"rerank_url_set", h.rerankAPIURL != ""})
+
+		contextText = strings.Join(texts, "\n\n")
+		if len(contextText) > req.TokenBudget*4 {
+			contextText = contextText[:req.TokenBudget*4]
+		}
+		found = true
+		break
 	}
-	contextText := strings.Join(texts, "\n\n")
-	if len(contextText) > req.TokenBudget*4 {
-		contextText = contextText[:req.TokenBudget*4]
+
+	if !found {
+		log.Info(ctx, "build_context: chunk not found after rounds", logging.KV{"rounds", maxSearchRounds})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found"})
+		return
 	}
+
 	if req.AttachmentsText != "" {
 		attach := strings.TrimSpace(req.AttachmentsText)
 		if len(attach) > req.TokenBudget*2 {
@@ -413,13 +441,11 @@ func normalizeQuery(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
 }
 
-// rerank вызывает RERANK_API_URL и переупорядочивает texts по relevance_score. При ошибке возвращает texts без изменений.
-// Поддерживает форматы: (1) documents[] + results/scores, (2) documents[{id,text}] + data[{id,similarity}] (s-kostyaev/reranker).
-func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []string) []string {
+// rerankWithScore вызывает RERANK_API_URL, переупорядочивает texts по relevance_score и возвращает топ-score. При ошибке — (texts, 0).
+func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, texts []string) ([]string, float64) {
 	if len(texts) == 0 {
-		return texts
+		return texts, 0
 	}
-	// Формат reranker API: documents как [{id, text}], ответ {data: [{id, similarity}]}
 	docsWithID := make([]map[string]interface{}, len(texts))
 	for i, t := range texts {
 		docsWithID[i] = map[string]interface{}{"id": i, "text": t}
@@ -430,7 +456,6 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 		"model":     h.rerankModel,
 	}
 	payload, _ := json.Marshal(body)
-	// Реранкер принимает только POST /api/v1/rerank — путь должен заканчиваться на /rerank
 	rerankURL := strings.TrimSuffix(h.rerankAPIURL, "/")
 	if rerankURL != "" && !strings.HasSuffix(rerankURL, "/rerank") {
 		if strings.HasSuffix(rerankURL, "/api/v1") {
@@ -442,7 +467,7 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rerankURL, bytes.NewReader(payload))
 	if err != nil {
 		log.Warn(ctx, "rerank request build", logging.KV{"error", err})
-		return texts
+		return texts, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if h.rerankAPIKey != "" {
@@ -451,13 +476,13 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Warn(ctx, "rerank request failed", logging.KV{"error", err}, logging.KV{"url", rerankURL})
-		return texts
+		return texts, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Warn(ctx, "rerank non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"body", string(body)})
-		return texts
+		return texts, 0
 	}
 	var result struct {
 		Results []struct {
@@ -472,11 +497,13 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Warn(ctx, "rerank decode failed", logging.KV{"error", err})
-		return texts
+		return texts, 0
 	}
-	// Формат data[] (reranker): уже отсортировано по similarity desc
+
+	var topScore float64
+	// Формат data[] (reranker): отсортировано по similarity desc, первый — топ
 	if len(result.Data) > 0 {
-		log.Info(ctx, "rerank applied", logging.KV{"docs", len(texts)}, logging.KV{"url", rerankURL})
+		topScore = result.Data[0].Similarity
 		out := make([]string, 0, len(result.Data))
 		for _, d := range result.Data {
 			var idx int
@@ -493,10 +520,10 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 			}
 		}
 		if len(out) > 0 {
-			return out
+			return out, topScore
 		}
 	}
-	// Формат 1: scores[i] = релевантность i-го документа
+	// Формат scores[i]
 	if len(result.Scores) >= len(texts) {
 		type pair struct{ i int; s float64 }
 		ps := make([]pair, len(texts))
@@ -510,13 +537,14 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 				}
 			}
 		}
+		topScore = ps[0].s
 		out := make([]string, len(texts))
 		for i, p := range ps {
 			out[i] = texts[p.i]
 		}
-		return out
+		return out, topScore
 	}
-	// Формат 2: results[] с index и relevance_score
+	// Формат results[]
 	if len(result.Results) > 0 {
 		ps := make([]struct{ i int; s float64 }, len(result.Results))
 		for i, r := range result.Results {
@@ -529,6 +557,7 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 				}
 			}
 		}
+		topScore = ps[0].s
 		out := make([]string, 0, len(texts))
 		for _, p := range ps {
 			if p.i >= 0 && p.i < len(texts) {
@@ -536,8 +565,14 @@ func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []strin
 			}
 		}
 		if len(out) > 0 {
-			return out
+			return out, topScore
 		}
 	}
-	return texts
+	return texts, 0
+}
+
+// rerank вызывает rerankWithScore и возвращает только переупорядоченные тексты (для обратной совместимости).
+func (h *MCPReadHandler) rerank(ctx context.Context, query string, texts []string) []string {
+	out, _ := h.rerankWithScore(ctx, query, texts)
+	return out
 }
