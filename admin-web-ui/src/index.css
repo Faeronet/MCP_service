@@ -643,9 +643,10 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 }
 .monitor-chart-svg {
   width: 100%;
-  max-width: 800px;
+  max-width: 100%;
   height: auto;
-  min-height: 220px;
+  min-height: 200px;
+  display: block;
 }
 .monitor-grid-line {
   stroke: rgba(255, 255, 255, 0.08);

@@ -7,8 +7,8 @@ type ChartMode = 'all' | 'separate'
 
 const POLL_MS = 3000
 const MAX_HISTORY = 60
-const CHART_WIDTH = 360   /* 45% of 800 */
-const CHART_HEIGHT = 99   /* 45% of 220 */
+const CHART_WIDTH = 520
+const CHART_HEIGHT = 200
 
 type ChartSeriesEntry = { values: number[]; color: string; scale: number }
 type ChartSeries = Record<string, ChartSeriesEntry | undefined>
@@ -301,7 +301,7 @@ function MonitorTimeChart({
           </span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="monitor-chart-svg monitor-chart-svg--normal" style={{ maxWidth: width }}>
+      <svg viewBox={`0 0 ${width} ${height}`} className="monitor-chart-svg monitor-chart-svg--normal" style={{ width: '100%', maxWidth: width, minHeight: height }} preserveAspectRatio="xMidYMid meet">
         <defs>
           {keys.map(k => (
             <linearGradient key={k} id={`${gradPrefix}-grad-${k}`} x1="0" y1="1" x2="0" y2="0">
