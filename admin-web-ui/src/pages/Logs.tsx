@@ -95,7 +95,7 @@ export function Logs() {
         {loading ? (
           <p className="text-muted">Loading…</p>
         ) : (
-          <div className="table-wrap">
+          <div className="table-wrap table-wrap-logs">
             <div className="table-header-wrap">
               <table className="data-table data-table-header">
                 <thead>

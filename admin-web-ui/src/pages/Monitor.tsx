@@ -116,7 +116,6 @@ export function Monitor() {
     <div className="page-layout">
       <div className="page-header">
         <h1 className="page-title">Monitor</h1>
-        <p className="text-muted">Нагрузка с контейнеров с ИИ-моделями.</p>
         <div className="page-header-row page-header-row--center">
           <div className="monitor-type-toggle">
             {SECTION_ORDER.map(s => (

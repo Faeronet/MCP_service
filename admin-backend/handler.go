@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -481,6 +482,99 @@ func (h *Handler) LogsSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"logs": entries, "total": total})
+}
+
+// ListChats returns chat sessions with username (from core.users), chat_id, message count.
+func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	q := `SELECT s.id, s.telegram_id, s.chat_id, COALESCE(u.username, '') as username,
+		(SELECT COUNT(*) FROM chat.messages m WHERE m.session_id = s.id) as message_count
+		FROM chat.sessions s
+		LEFT JOIN core.users u ON u.telegram_id = s.telegram_id
+		ORDER BY s.last_active DESC`
+	rows, err := h.Pool.Query(ctx, q)
+	if err != nil {
+		http.Error(w, `{"error":"query"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var list []map[string]interface{}
+	for rows.Next() {
+		var id uuid.UUID
+		var telegramID, chatID int64
+		var username string
+		var count int64
+		if err := rows.Scan(&id, &telegramID, &chatID, &username, &count); err != nil {
+			continue
+		}
+		displayName := username
+		if displayName == "" {
+			displayName = strconv.FormatInt(telegramID, 10)
+		}
+		list = append(list, map[string]interface{}{
+			"session_id":     id.String(),
+			"telegram_id":    telegramID,
+			"chat_id":        chatID,
+			"username":       displayName,
+			"message_count": count,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"chats": list})
+}
+
+// GetChatMessages returns messages for a session (role, content, created_at) and response_time_sec for assistant messages.
+func (h *Handler) GetChatMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	sessionID := strings.TrimPrefix(r.URL.Path, "/api/chats/")
+	sessionID = strings.TrimSuffix(sessionID, "/messages")
+	if sessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+	if _, err := uuid.Parse(sessionID); err != nil {
+		http.Error(w, `{"error":"invalid session_id"}`, http.StatusBadRequest)
+		return
+	}
+	q := `SELECT role, content, created_at FROM chat.messages WHERE session_id = $1 ORDER BY created_at ASC`
+	rows, err := h.Pool.Query(ctx, q, sessionID)
+	if err != nil {
+		http.Error(w, `{"error":"query"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var messages []map[string]interface{}
+	var lastUserAt *time.Time
+	for rows.Next() {
+		var role, content string
+		var createdAt time.Time
+		if err := rows.Scan(&role, &content, &createdAt); err != nil {
+			continue
+		}
+		msg := map[string]interface{}{
+			"role":       role,
+			"content":   content,
+			"created_at": createdAt.Format(time.RFC3339),
+		}
+		if role == "assistant" && lastUserAt != nil {
+			sec := createdAt.Sub(*lastUserAt).Seconds()
+			msg["response_time_sec"] = math.Round(sec*100) / 100
+		}
+		if role == "user" {
+			lastUserAt = &createdAt
+		}
+		messages = append(messages, msg)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"messages": messages})
 }
 
 func (h *Handler) LogsRaw(w http.ResponseWriter, r *http.Request) {

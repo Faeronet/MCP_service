@@ -104,6 +104,37 @@ export async function searchLogs(params: { service?: string; request_id?: string
   return r.json()
 }
 
+export interface ChatListItem {
+  session_id: string
+  telegram_id: number
+  chat_id: number
+  username: string
+  message_count: number
+}
+
+export async function listChats(): Promise<{ chats: ChatListItem[] }> {
+  const r = await fetch(`${API_URL}/api/chats`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load chats')
+  return r.json()
+}
+
+export interface ChatMessage {
+  role: string
+  content: string
+  created_at: string
+  response_time_sec?: number
+}
+
+export async function getChatMessages(sessionId: string): Promise<{ messages: ChatMessage[] }> {
+  const r = await fetch(`${API_URL}/api/chats/${encodeURIComponent(sessionId)}/messages`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load messages')
+  return r.json()
+}
+
 export function grafanaUrl(): string {
   const base = `${API_URL}/api/grafana/`
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''

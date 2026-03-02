@@ -101,6 +101,8 @@ func main() {
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
+	mux.Handle("/api/chats", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListChats)))
+	mux.Handle("/api/chats/", authMiddleware(handler.JWTSecret, chatsRouter(handler)))
 	mux.Handle("/api/monitor/metrics", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.MonitorMetrics)))
 	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
@@ -140,6 +142,17 @@ func docsRouter(h *Handler) http.Handler {
 		}
 		if strings.HasPrefix(path, "/api/docs/") {
 			h.DocsWithID(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
+func chatsRouter(h *Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasSuffix(path, "/messages") && strings.HasPrefix(path, "/api/chats/") {
+			h.GetChatMessages(w, r)
 			return
 		}
 		http.NotFound(w, r)
