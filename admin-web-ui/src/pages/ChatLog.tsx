@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { listChats, getChatMessages, type ChatListItem, type ChatMessage } from '../api'
 import { useToast } from '../context/ToastContext'
 
@@ -17,7 +17,16 @@ export function ChatLog() {
   const [modalSession, setModalSession] = useState<ChatListItem | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [messagesLoading, setMessagesLoading] = useState(false)
+  const modalBodyRef = useRef<HTMLDivElement | null>(null)
   const toast = useToast()
+
+  useEffect(() => {
+    if (!messagesLoading && messages.length > 0 && modalBodyRef.current) {
+      const el = modalBodyRef.current
+      el.scrollTop = el.scrollHeight
+      requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
+    }
+  }, [messagesLoading, messages.length])
 
   const loadChats = async () => {
     setLoading(true)
@@ -122,7 +131,7 @@ export function ChatLog() {
                 ×
               </button>
             </div>
-            <div className="chat-modal-body">
+            <div className="chat-modal-body" ref={modalBodyRef}>
               {messagesLoading ? (
                 <p className="text-muted">Загрузка…</p>
               ) : messages.length === 0 ? (
