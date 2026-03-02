@@ -140,7 +140,11 @@ func CollectContainerMetrics() []ContainerMetrics {
 	apiVersions := []string{getDockerAPIVersion(), "1.43", "1.41", "1.40"}
 	body, apiVer, ok, listErr := tryContainersList(client, apiVersions)
 	if !ok || body == nil {
-		log.Warn(ctx, "container metrics: docker list failed", logging.KV{"error", listErr}, logging.KV{"socket", getDockerSocketPath()})
+		errStr := ""
+		if listErr != nil {
+			errStr = listErr.Error()
+		}
+		log.Warn(ctx, "container metrics: docker list failed", logging.KV{"error", errStr}, logging.KV{"socket", getDockerSocketPath()})
 		return nil
 	}
 	var containers []dockerContainer
