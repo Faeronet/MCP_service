@@ -252,6 +252,8 @@ services:
       MCP_WRITE_URL: http://mcp-write:8001
       LOKI_URL: http://loki:3100
       GRAFANA_URL: http://grafana:3000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - "8080:8080"
     depends_on:

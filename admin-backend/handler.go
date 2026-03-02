@@ -510,6 +510,7 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	system, gpus, history := CollectMetrics()
+	containers := CollectContainerMetrics()
 
 	systemMap := map[string]interface{}{
 		"cpu_pct":     system.CPUPct,
@@ -547,10 +548,21 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	containersMap := make([]map[string]interface{}, len(containers))
+	for i, c := range containers {
+		containersMap[i] = map[string]interface{}{
+			"name":         c.Name,
+			"cpu_pct":      c.CPUPct,
+			"ram_pct":      c.RAMPct,
+			"ram_used_gb":  c.RamUsedGB,
+			"ram_limit_gb": c.RamLimitGB,
+		}
+	}
 	payload := map[string]interface{}{
 		"system":     systemMap,
 		"gpus":       gpusMap,
 		"history":    historyMap,
+		"containers": containersMap,
 		"uptime_sec": GetUptimeSec(),
 	}
 	if len(gpus) > 0 {

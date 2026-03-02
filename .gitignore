@@ -4,3 +4,14 @@
 
 # Зависимости Node.js
 node_modules/
+
+# Директории сборок и артефакты проверки
+dist/
+build/
+out/
+bin/
+coverage/
+*.exe
+*.test
+.vite/
+.cache/
