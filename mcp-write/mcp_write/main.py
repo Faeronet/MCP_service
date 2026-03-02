@@ -20,6 +20,7 @@ from qdrant_client.models import Filter, FieldCondition, FilterSelector, MatchVa
 from qdrant_client.http.models import PointStruct, VectorParams, Distance
 from qdrant_client.http.exceptions import UnexpectedResponse
 from minio import Minio
+from minio.error import S3Error
 
 # Config from env
 POSTGRES_DSN = os.getenv("POSTGRES_DSN", "postgres://postgres:postgres@postgres:5432/assistant")
@@ -298,6 +299,10 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
         obj = minio_client.get_object(bucket, key)
         data = obj.read()
         obj.close()
+    except S3Error as e:
+        if getattr(e, "code", None) == "NoSuchKey":
+            _ingest_error(404, "file_not_found", bucket=bucket, key=key)
+        _ingest_error(400, f"minio get failed: {e!s}", bucket=bucket, key=key)
     except Exception as e:
         _ingest_error(400, f"minio get failed: {e!s}", bucket=bucket, key=key)
 
