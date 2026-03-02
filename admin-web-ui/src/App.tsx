@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { ToastContainer } from './components/Toast'
+import { useToast } from './context/ToastContext'
 import { Login } from './pages/Login'
 import { Docs } from './pages/Docs'
 import { Jobs } from './pages/Jobs'
@@ -10,6 +12,7 @@ import { Grafana } from './pages/Grafana'
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+  const { toasts, remove } = useToast()
 
   useEffect(() => {
     const onAuthChange = () => setToken(localStorage.getItem('token'))
@@ -19,6 +22,7 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      <ToastContainer toasts={toasts} onRemove={remove} />
       <Routes>
         <Route path="/login" element={<Login onLogin={() => setToken(localStorage.getItem('token'))} />} />
         <Route path="/" element={token ? <Layout /> : <Navigate to="/login" replace />}>
@@ -33,3 +37,4 @@ export default function App() {
     </BrowserRouter>
   )
 }
+

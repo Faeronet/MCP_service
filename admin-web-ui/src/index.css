@@ -677,3 +677,110 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   font-weight: 600;
   color: var(--text);
 }
+
+/* ----- Toast notifications (top-right, progress bar, error style) ----- */
+.toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.toast-container .toast {
+  pointer-events: auto;
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 40px 0 16px;
+  padding-bottom: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--content-border);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.875rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  animation: toast-in 0.3s ease forwards;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+.toast--exiting {
+  transform: translateX(120%);
+  opacity: 0;
+}
+.toast__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 10px;
+}
+.toast__label {
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+.toast__label--error {
+  color: #e5534b;
+}
+.toast__message {
+  color: var(--text);
+  line-height: 1.4;
+}
+.toast--error {
+  border-color: #e5534b;
+  background: rgba(229, 83, 75, 0.12);
+}
+.toast--error .toast__message {
+  color: var(--text);
+}
+.toast__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+.toast__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+.toast__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--content-border);
+  border-radius: 0 0 0 12px;
+  transition: width 0.05s linear;
+}
+.toast--error .toast__progress {
+  background: rgba(229, 83, 75, 0.6);
+}

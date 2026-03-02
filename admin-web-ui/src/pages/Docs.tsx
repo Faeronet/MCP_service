@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { listDocs, uploadFile, deleteDoc } from '../api'
+import { useToast } from '../context/ToastContext'
 
 const PAGE_SIZE = 20
 
@@ -7,29 +8,23 @@ export function Docs() {
   const [docs, setDocs] = useState<Array<{ id: string; name: string; created_at: string; versions: unknown }>>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
   const [page, setPage] = useState(1)
   const [fileName, setFileName] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const toast = useToast()
 
   const load = async () => {
     try {
       const { docs: d } = await listDocs()
       setDocs(Array.isArray(d) ? d : [])
     } catch (e) {
-      setError(String(e))
+      toast.error(String(e))
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [])
-  useEffect(() => {
-    if (!success) return
-    const t = setTimeout(() => setSuccess(''), 4000)
-    return () => clearTimeout(t)
-  }, [success])
 
   const total = docs.length
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -62,15 +57,13 @@ export function Docs() {
     if (!file) return
     setFileName(file.name)
     setUploading(true)
-    setError('')
-    setSuccess('')
     try {
       await uploadFile(file, file.name)
-      setSuccess('Файл загружен.')
+      toast.success('Файл загружен.')
       setFileName('')
       await load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
     }
@@ -81,8 +74,6 @@ export function Docs() {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
     if (!window.confirm(`Удалить выбранные документы (${ids.length})? Чанки будут удалены из поиска.`)) return
-    setError('')
-    setSuccess('')
     let ok = 0
     let fail = 0
     for (const id of ids) {
@@ -95,8 +86,8 @@ export function Docs() {
     }
     setSelectedIds(new Set())
     await load()
-    if (fail === 0) setSuccess(`Удалено документов: ${ok}.`)
-    else setError(`Удалено: ${ok}, ошибок: ${fail}.`)
+    if (fail === 0) toast.success(`Удалено документов: ${ok}.`)
+    else toast.error(`Удалено: ${ok}, ошибок: ${fail}.`)
   }
 
   return (
@@ -116,8 +107,6 @@ export function Docs() {
           </label>
           {uploading && <span className="text-muted">Загрузка…</span>}
         </div>
-        {error && <p className="text-error" style={{ marginBottom: 0 }}>{error}</p>}
-        {success && <p className="text-muted" style={{ marginBottom: 0, color: 'var(--color-success, #0a0)' }}>{success}</p>}
       </div>
       <div className="content-panel">
         {loading ? (
@@ -130,7 +119,7 @@ export function Docs() {
                 <button type="button" className="btn-monitor-inactive" disabled={!hasSelection} onClick={clearSelection} title="Снять все галочки">
                   Отменить
                 </button>
-                <button type="button" className="btn-monitor-inactive" disabled={!hasSelection} onClick={toggleSelectAll} title={allSelected ? 'Снять выделение со всех' : 'Выбрать все документы'}>
+                <button type="button" className="btn-monitor-inactive" disabled={docs.length === 0} onClick={toggleSelectAll} title={allSelected ? 'Снять выделение со всех' : 'Выбрать все документы'}>
                   {allSelected ? 'Снять выделение' : 'Выбрать все'}
                 </button>
                 <button type="button" className="btn-primary" disabled={!hasSelection} onClick={onDeleteSelected} title="Удалить выбранные документы">
