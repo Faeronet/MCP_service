@@ -500,6 +500,20 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   min-width: 200px;
   max-width: 280px;
 }
+.monitor-section-frame--empty {
+  min-width: 280px;
+  max-width: 400px;
+}
+.monitor-containers-hint {
+  margin: 0;
+  font-size: 0.875rem;
+}
+.monitor-containers-hint code {
+  background: rgba(255,255,255,0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.8125rem;
+}
 .monitor-section-frame {
   border: 1px solid var(--content-border);
   border-radius: 12px;

@@ -6,16 +6,30 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
 
-const (
-	adminWebUISkip   = "admin-web-ui"
-	dockerSocketPath = "/var/run/docker.sock"
-	dockerAPIVersion = "v1.41"
+var (
+	// Исключаем из сбора: admin-web-ui, postgres, логирование (loki, promtail, grafana), migrate.
+	containerSkipSubstrings = []string{"admin-web-ui", "postgres", "migrate", "loki", "promtail", "grafana"}
 )
+
+func getDockerSocketPath() string {
+	if p := os.Getenv("DOCKER_SOCKET_PATH"); p != "" {
+		return p
+	}
+	return "/var/run/docker.sock"
+}
+
+func getDockerAPIVersion() string {
+	if v := os.Getenv("DOCKER_API_VERSION"); v != "" {
+		return strings.TrimPrefix(v, "v")
+	}
+	return "1.41"
+}
 
 // ContainerMetrics — CPU и RAM по контейнеру (для монитора).
 type ContainerMetrics struct {
@@ -67,11 +81,12 @@ var (
 
 func getDockerHTTPClient() *http.Client {
 	dockerClientOnce.Do(func() {
+		socketPath := getDockerSocketPath()
 		dockerHTTPClient = &http.Client{
 			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return net.Dial("unix", dockerSocketPath)
+					return net.Dial("unix", socketPath)
 				},
 			},
 		}
@@ -79,29 +94,44 @@ func getDockerHTTPClient() *http.Client {
 	return dockerHTTPClient
 }
 
-// skipContainer возвращает true, если контейнер нужно исключить (admin-web-ui).
+// skipContainer возвращает true, если контейнер исключаем: postgres, логирование (loki, promtail, grafana), admin-web-ui, migrate.
 func skipContainer(name, image string) bool {
 	lower := strings.ToLower(name + " " + image)
-	return strings.Contains(lower, adminWebUISkip)
+	for _, sub := range containerSkipSubstrings {
+		if strings.Contains(lower, sub) {
+			return true
+		}
+	}
+	return false
 }
 
-// CollectContainerMetrics собирает CPU и RAM по всем запущенным контейнерам, кроме admin-web-ui.
+// tryContainersList запрашивает список контейнеров; возвращает (body, apiVer, ok).
+func tryContainersList(client *http.Client, apiVersions []string) ([]byte, string, bool) {
+	for _, apiVer := range apiVersions {
+		path := "http://localhost/v" + apiVer + "/containers/json"
+		req, err := http.NewRequest(http.MethodGet, path, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return body, apiVer, true
+		}
+	}
+	return nil, "", false
+}
+
+// CollectContainerMetrics собирает CPU и RAM по всем запущенным контейнерам, кроме postgres, логирования, admin-web-ui.
 func CollectContainerMetrics() []ContainerMetrics {
 	client := getDockerHTTPClient()
-	req, err := http.NewRequest(http.MethodGet, "http://localhost/"+dockerAPIVersion+"/containers/json", nil)
-	if err != nil {
-		return nil
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	apiVersions := []string{getDockerAPIVersion(), "1.43", "1.41", "1.40"}
+	body, apiVer, ok := tryContainersList(client, apiVersions)
+	if !ok || body == nil {
 		return nil
 	}
 	var containers []dockerContainer
@@ -133,7 +163,7 @@ func CollectContainerMetrics() []ContainerMetrics {
 			}
 		}
 
-		statsReq, _ := http.NewRequest(http.MethodGet, "http://localhost/"+dockerAPIVersion+"/containers/"+c.ID+"/stats?stream=0", nil)
+		statsReq, _ := http.NewRequest(http.MethodGet, "http://localhost/v"+apiVer+"/containers/"+c.ID+"/stats?stream=0", nil)
 		statsResp, err := client.Do(statsReq)
 		if err != nil {
 			continue
