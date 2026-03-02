@@ -7,8 +7,11 @@ type ChartMode = 'all' | 'separate'
 
 const POLL_MS = 3000
 const MAX_HISTORY = 60
-const CHART_WIDTH = 800
-const CHART_HEIGHT = 220
+const CHART_WIDTH = 360   /* 45% of 800 */
+const CHART_HEIGHT = 99   /* 45% of 220 */
+
+type ChartSeriesEntry = { values: number[]; color: string; scale: number }
+type ChartSeries = Record<string, ChartSeriesEntry | undefined>
 
 function formatUptime(sec: number): string {
   if (!sec || sec <= 0) return '—'
@@ -262,6 +265,7 @@ function MonitorTimeChart({
   }, [data, type, gpuIndex, gpuSeries])
 
   const keys: string[] = type === 'system' ? ['cpu', 'ram', 'disk_io'] : type === 'cpu' ? ['cpu'] : type === 'ram' ? ['ram'] : gpuSeries ? [gpuSeries] : ['gpu', 'vram']
+  const seriesMap = series as ChartSeries
   const n = data.length
   const xScale = (i: number) => (n <= 1 ? padding.left : padding.left + (i / Math.max(1, n - 1)) * innerW)
   const yScale = (val: number, maxV: number) =>
@@ -270,7 +274,7 @@ function MonitorTimeChart({
   const paths = useMemo(() => {
     const out: Record<string, string> = {}
     keys.forEach(key => {
-      const s = series[key]
+      const s = seriesMap[key]
       if (!s || !s.values.length) return
       const maxV = s.scale
       let linePath = `M ${xScale(0)} ${yScale(s.values[0], maxV)}`
@@ -292,7 +296,7 @@ function MonitorTimeChart({
       <div className="monitor-chart-legend">
         {keys.map(k => (
           <span key={k} className="monitor-legend-item">
-            <span className="monitor-legend-dot" style={{ background: series[k]?.color }} />
+            <span className="monitor-legend-dot" style={{ background: seriesMap[k]?.color }} />
             {labels[k]}
           </span>
         ))}
@@ -301,8 +305,8 @@ function MonitorTimeChart({
         <defs>
           {keys.map(k => (
             <linearGradient key={k} id={`${gradPrefix}-grad-${k}`} x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stopColor={series[k]?.color} stopOpacity={0.4} />
-              <stop offset="100%" stopColor={series[k]?.color} stopOpacity={0.05} />
+              <stop offset="0%" stopColor={seriesMap[k]?.color} stopOpacity={0.4} />
+              <stop offset="100%" stopColor={seriesMap[k]?.color} stopOpacity={0.05} />
             </linearGradient>
           ))}
         </defs>
@@ -316,12 +320,13 @@ function MonitorTimeChart({
         ))}
         {keys.map(k => {
           const d = paths[k]
-          if (!d || !series[k]?.values.length) return null
-          const areaPath = d + ` L ${xScale(series[k].values.length - 1)} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`
+          const ent = seriesMap[k]
+          if (!d || !ent?.values.length) return null
+          const areaPath = d + ` L ${xScale(ent.values.length - 1)} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`
           return (
             <g key={k}>
               <path d={areaPath} fill={`url(#${gradPrefix}-grad-${k})`} className="monitor-area" />
-              <path d={d} fill="none" stroke={series[k].color} strokeWidth={2} className="monitor-line" />
+              <path d={d} fill="none" stroke={ent.color} strokeWidth={2} className="monitor-line" />
             </g>
           )
         })}
