@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
 var (
@@ -105,37 +108,44 @@ func skipContainer(name, image string) bool {
 	return false
 }
 
-// tryContainersList запрашивает список контейнеров; возвращает (body, apiVer, ok).
-func tryContainersList(client *http.Client, apiVersions []string) ([]byte, string, bool) {
+// tryContainersList запрашивает список контейнеров; возвращает (body, apiVer, ok, lastErr).
+func tryContainersList(client *http.Client, apiVersions []string) ([]byte, string, bool, error) {
+	var lastErr error
 	for _, apiVer := range apiVersions {
 		path := "http://localhost/v" + apiVer + "/containers/json"
 		req, err := http.NewRequest(http.MethodGet, path, nil)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
-			return body, apiVer, true
+			return body, apiVer, true, nil
 		}
+		lastErr = fmt.Errorf("api v%s: %d", apiVer, resp.StatusCode)
 	}
-	return nil, "", false
+	return nil, "", false, lastErr
 }
 
 // CollectContainerMetrics собирает CPU и RAM по всем запущенным контейнерам, кроме postgres, логирования, admin-web-ui.
 func CollectContainerMetrics() []ContainerMetrics {
+	ctx := context.Background()
 	client := getDockerHTTPClient()
 	apiVersions := []string{getDockerAPIVersion(), "1.43", "1.41", "1.40"}
-	body, apiVer, ok := tryContainersList(client, apiVersions)
+	body, apiVer, ok, listErr := tryContainersList(client, apiVersions)
 	if !ok || body == nil {
+		log.Warn(ctx, "container metrics: docker list failed", logging.KV{"error", listErr}, logging.KV{"socket", getDockerSocketPath()})
 		return nil
 	}
 	var containers []dockerContainer
 	if json.Unmarshal(body, &containers) != nil {
+		log.Warn(ctx, "container metrics: docker list json decode failed", logging.KV{"api_version", apiVer})
 		return nil
 	}
 
