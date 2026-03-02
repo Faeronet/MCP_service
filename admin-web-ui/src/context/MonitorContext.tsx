@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import { getMonitorMetrics, type MonitorMetricsResponse } from '../api'
 
-const POLL_MS = 10000
+const POLL_MS = Number(import.meta.env.VITE_MONITOR_POLL_MS) || 30000
 
 type MonitorContextValue = {
   lastData: MonitorMetricsResponse | null

@@ -272,6 +272,8 @@ services:
     build:
       context: .
       dockerfile: admin-web-ui/Dockerfile
+      args:
+        VITE_MONITOR_POLL_MS: ${VITE_MONITOR_POLL_MS:-30000}
     ports:
       - "5173:80"
     depends_on:

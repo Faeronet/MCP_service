@@ -7,7 +7,7 @@ import { useMonitorContext } from '../context/MonitorContext'
 type MonitorSection = 'gpus' | 'ai' | 'read' | 'write' | 'worker' | 'other'
 type ChartMode = 'all' | 'separate'
 
-const POLL_MS = 10000
+const POLL_MS = Number(import.meta.env.VITE_MONITOR_POLL_MS) || 30000
 
 /** Какие блоки показывать в каждом разделе. Контейнеры — по точному совпадению имени (lowercase). */
 const SECTION_CONFIG: Record<MonitorSection, { gpus: boolean; containers: string[] }> = {

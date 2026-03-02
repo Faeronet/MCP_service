@@ -7,6 +7,9 @@ COPY admin-web-ui/ ./
 # Пустой URL = относительные запросы /api/..., nginx проксирует на admin-backend
 ARG VITE_API_URL=
 ENV VITE_API_URL=$VITE_API_URL
+# Интервал опроса монитора (мс). По умолчанию 30 с.
+ARG VITE_MONITOR_POLL_MS=30000
+ENV VITE_MONITOR_POLL_MS=$VITE_MONITOR_POLL_MS
 # Увеличиваем heap Node (segfault при сборке часто из-за нехватки памяти в контейнере)
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
