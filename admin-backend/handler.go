@@ -305,19 +305,29 @@ func (h *Handler) DeleteDoc(w http.ResponseWriter, r *http.Request) {
 	// 2. Удалить джобы по doc_id
 	_, _ = h.Pool.Exec(ctx, `DELETE FROM core.jobs WHERE doc_id = $1`, docID)
 
-	// 3. До удаления versions — получить file_path для удаления из MinIO
+	// 3. До удаления versions — получить file_path и file_hash для MinIO и кэша uploads
 	var filePaths []string
-	if rows, err := h.Pool.Query(ctx, `SELECT file_path FROM core.versions WHERE doc_id = $1`, docID); err == nil {
+	var fileHashes []string
+	if rows, err := h.Pool.Query(ctx, `SELECT file_path, file_hash FROM core.versions WHERE doc_id = $1`, docID); err == nil {
 		for rows.Next() {
-			var fp string
-			if rows.Scan(&fp) == nil && fp != "" {
-				filePaths = append(filePaths, fp)
+			var fp, fh string
+			if rows.Scan(&fp, &fh) == nil {
+				if fp != "" {
+					filePaths = append(filePaths, fp)
+				}
+				if fh != "" {
+					fileHashes = append(fileHashes, fh)
+				}
 			}
 		}
 		rows.Close()
 	}
 	for _, objectKey := range filePaths {
 		_ = h.MinIO.Remove(ctx, objectKey)
+	}
+	// Очистить кэш core.uploads по file_hash, чтобы повторная загрузка того же файла не считалась дубликатом
+	for _, hash := range fileHashes {
+		_, _ = h.Pool.Exec(ctx, `DELETE FROM core.uploads WHERE file_hash = $1`, hash)
 	}
 
 	// 4. Удалить versions и doc из БД (порядок из-за FK)

@@ -310,6 +310,12 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     if not raw or not raw.strip():
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
+    # Первое слово извлечённого текста — в ключ name у всех чанков этого документа
+    first_word = ""
+    parts = (raw or "").strip().split()
+    if parts:
+        first_word = parts[0]
+
     # Чанкинг: по желанию через LLM, иначе по параграфам
     if USE_LLM_CHUNKING and VLLM_BASE and LLM_MODEL:
         chunks_text = _chunk_with_llm(raw)
@@ -367,6 +373,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             "version_id": req.version_id,
             "section_path": f"sec_{i}",
             "text": text,
+            "name": first_word,
         }
         if i > 0:
             payload["prev_chunk_id"] = chunk_ids[i - 1]
@@ -378,7 +385,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             payload["links"] = links_by_index[i]
             payload["related_chunk_ids"] = [ln["chunk_id"] for ln in links_by_index[i]]
         if req.metadata:
-            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text", "rerank_position", "related_chunk_ids", "links")
+            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text", "name", "rerank_position", "related_chunk_ids", "links")
             for k, v in req.metadata.items():
                 if k not in skip:
                     payload[k] = v
