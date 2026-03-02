@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics, type ContainerMetrics } from '../api'
+import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics, type ContainerMetrics, type ContainerHistoryPoint } from '../api'
 import { SpeedometerGauge } from '../components/SpeedometerGauge'
 
 type MonitorType = 'system' | 'gpu'
@@ -39,6 +39,7 @@ export function Monitor() {
   const [error, setError] = useState<string | null>(null)
   const [chartModeSystem, setChartModeSystem] = useState<ChartMode>('all')
   const [chartModeGpu, setChartModeGpu] = useState<ChartMode>('all')
+  const [chartModeByContainer, setChartModeByContainer] = useState<Record<string, ChartMode>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -167,14 +168,40 @@ export function Monitor() {
                   value={c.ram_pct}
                   label="RAM"
                   unit="%"
-                  valueLabel={
-                    c.ram_used_gb != null && c.ram_limit_gb != null && c.ram_limit_gb > 0
-                      ? `${c.ram_used_gb.toFixed(2)} / ${c.ram_limit_gb.toFixed(1)} GB`
-                      : c.ram_used_gb != null
-                        ? `${c.ram_used_gb.toFixed(2)} GB`
-                        : undefined
-                  }
+                  valueLabel={c.ram_used_gb != null ? `${c.ram_used_gb.toFixed(2)} GB` : undefined}
                 />
+              </div>
+              <div className="monitor-chart-mode-toggle">
+                <button
+                  type="button"
+                  className={(chartModeByContainer[c.name] ?? 'all') === 'all' ? 'btn-primary' : 'btn-monitor-inactive'}
+                  onClick={() => setChartModeByContainer(prev => ({ ...prev, [c.name]: 'all' }))}
+                >
+                  Всё на одном
+                </button>
+                <button
+                  type="button"
+                  className={(chartModeByContainer[c.name] ?? 'all') === 'separate' ? 'btn-primary' : 'btn-monitor-inactive'}
+                  onClick={() => setChartModeByContainer(prev => ({ ...prev, [c.name]: 'separate' }))}
+                >
+                  По отдельности
+                </button>
+              </div>
+              <div className="monitor-chart-block">
+                {(chartModeByContainer[c.name] ?? 'all') === 'all' ? (
+                  <MonitorTimeChart data={c.history ?? []} type="container" width={CHART_WIDTH} height={CHART_HEIGHT} />
+                ) : (
+                  <>
+                    <div className="monitor-chart-panel monitor-chart-panel--compact">
+                      <h4 className="monitor-chart-title">CPU</h4>
+                      <MonitorTimeChart data={c.history ?? []} type="cpu" width={CHART_WIDTH} height={CHART_HEIGHT} />
+                    </div>
+                    <div className="monitor-chart-panel monitor-chart-panel--compact">
+                      <h4 className="monitor-chart-title">RAM</h4>
+                      <MonitorTimeChart data={c.history ?? []} type="ram" width={CHART_WIDTH} height={CHART_HEIGHT} />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -255,8 +282,8 @@ function MonitorTimeChart({
   width = 800,
   height = 220,
 }: {
-  data: MonitorMetricsResponse['history']
-  type: 'system' | 'cpu' | 'ram' | 'gpu'
+  data: MonitorMetricsResponse['history'] | ContainerHistoryPoint[]
+  type: 'system' | 'cpu' | 'ram' | 'gpu' | 'container'
   gpuIndex?: number
   gpuSeries?: 'gpu' | 'vram'
   width?: number
@@ -282,7 +309,7 @@ function MonitorTimeChart({
   }, [data])
 
   const series = useMemo(() => {
-    if (type === 'system') {
+    if (type === 'system' || type === 'container') {
       const cpu = data.map(d => d.cpu)
       const ram = data.map(d => d.ram)
       const maxVal = Math.max(100, ...cpu, ...ram)
@@ -299,8 +326,10 @@ function MonitorTimeChart({
       const ram = data.map(d => d.ram)
       return { ram: { values: ram, color: CHART_COLORS.ram, scale: Math.max(100, ...ram) } }
     }
-    const gpu = data.map(d => (d.gpus?.[gpuIndex] ? d.gpus[gpuIndex].gpu_pct : d.gpu))
-    const vram = data.map(d => (d.gpus?.[gpuIndex] ? d.gpus[gpuIndex].vram_pct : d.vram))
+    // type === 'gpu': data is always full history (not container)
+    const hist = data as MonitorMetricsResponse['history']
+    const gpu = hist.map(d => (d.gpus?.[gpuIndex] ? d.gpus[gpuIndex].gpu_pct : d.gpu))
+    const vram = hist.map(d => (d.gpus?.[gpuIndex] ? d.gpus[gpuIndex].vram_pct : d.vram))
     const maxVal = Math.max(100, ...gpu, ...vram)
     if (gpuSeries === 'gpu') {
       return { gpu: { values: gpu, color: CHART_COLORS.gpu, scale: maxVal } }
@@ -314,7 +343,7 @@ function MonitorTimeChart({
     }
   }, [data, type, gpuIndex, gpuSeries])
 
-  const keys: string[] = type === 'system' ? ['cpu', 'ram'] : type === 'cpu' ? ['cpu'] : type === 'ram' ? ['ram'] : gpuSeries ? [gpuSeries] : ['gpu', 'vram']
+  const keys: string[] = type === 'system' || type === 'container' ? ['cpu', 'ram'] : type === 'cpu' ? ['cpu'] : type === 'ram' ? ['ram'] : gpuSeries ? [gpuSeries] : ['gpu', 'vram']
   const seriesMap = series as ChartSeries
   const n = data.length
   const xScale = (i: number) => (n <= 1 ? padding.left : padding.left + (i / Math.max(1, n - 1)) * innerW)

@@ -118,12 +118,19 @@ export interface GPUMetrics {
   vram_total_gb?: number
 }
 
+export interface ContainerHistoryPoint {
+  ts: string
+  cpu: number
+  ram: number
+}
+
 export interface ContainerMetrics {
   name: string
   cpu_pct: number
   ram_pct: number
   ram_used_gb?: number
   ram_limit_gb?: number
+  history?: ContainerHistoryPoint[]
 }
 
 export interface MonitorMetricsResponse {

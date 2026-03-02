@@ -8,12 +8,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
+
+const containerHistorySize = 60
 
 var (
 	// Исключаем из сбора: admin-web-ui, postgres, логирование (loki, promtail, grafana), migrate.
@@ -34,13 +37,21 @@ func getDockerAPIVersion() string {
 	return "1.41"
 }
 
+// ContainerHistoryPoint — одна точка истории контейнера для графика.
+type ContainerHistoryPoint struct {
+	TS  string `json:"ts"`
+	CPU int    `json:"cpu"`
+	RAM int    `json:"ram"`
+}
+
 // ContainerMetrics — CPU и RAM по контейнеру (для монитора).
 type ContainerMetrics struct {
-	Name       string  `json:"name"`
-	CPUPct     int     `json:"cpu_pct"`
-	RAMPct     int     `json:"ram_pct"`
-	RamUsedGB  float64 `json:"ram_used_gb,omitempty"`
-	RamLimitGB float64 `json:"ram_limit_gb,omitempty"`
+	Name       string                 `json:"name"`
+	CPUPct     int                    `json:"cpu_pct"`
+	RAMPct     int                    `json:"ram_pct"`
+	RamUsedGB  float64                `json:"ram_used_gb,omitempty"`
+	RamLimitGB float64                `json:"ram_limit_gb,omitempty"`
+	History    []ContainerHistoryPoint `json:"history,omitempty"`
 }
 
 type dockerContainer struct {
@@ -76,10 +87,13 @@ type containerCPUCache struct {
 }
 
 var (
-	dockerHTTPClient   *http.Client
-	dockerClientOnce   sync.Once
-	containerCPUMu     sync.Mutex
-	containerCPUPrev   map[string]containerCPUCache
+	dockerHTTPClient    *http.Client
+	dockerClientOnce    sync.Once
+	containerCPUMu      sync.Mutex
+	containerCPUPrev    map[string]containerCPUCache
+	containerHistoryMu  sync.Mutex
+	containerHistory    map[string][]ContainerHistoryPoint
+	containerNameSuffix = regexp.MustCompile(`-\d+$`) // убираем "-1", "-2" и т.д. в конце имени
 )
 
 func getDockerHTTPClient() *http.Client {
@@ -162,12 +176,21 @@ func CollectContainerMetrics() []ContainerMetrics {
 	}
 	containerCPUMu.Unlock()
 
-	// Убираем префикс имени проекта Docker Compose (mcp_service- или mcp_service_).
+	// Убираем префикс имени проекта и суффикс "-1", "-2" и т.д.
 	stripProjectPrefix := func(s string) string {
 		s = strings.TrimPrefix(s, "mcp_service-")
 		s = strings.TrimPrefix(s, "mcp_service_")
 		return s
 	}
+	stripTrailingNumber := func(s string) string {
+		return containerNameSuffix.ReplaceAllString(s, "")
+	}
+
+	containerHistoryMu.Lock()
+	if containerHistory == nil {
+		containerHistory = make(map[string][]ContainerHistoryPoint)
+	}
+	containerHistoryMu.Unlock()
 
 	var result []ContainerMetrics
 	for _, c := range containers {
@@ -175,6 +198,7 @@ func CollectContainerMetrics() []ContainerMetrics {
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
 			name = stripProjectPrefix(name)
+			name = stripTrailingNumber(name)
 		}
 		image := c.Image
 		if skipContainer(name, image) {
@@ -238,12 +262,24 @@ func CollectContainerMetrics() []ContainerMetrics {
 			limitGB = 0
 		}
 
+		// История для графика: добавляем текущую точку и храним последние containerHistorySize.
+		now := time.Now().Format(time.RFC3339)
+		containerHistoryMu.Lock()
+		hist := containerHistory[c.ID]
+		hist = append(hist, ContainerHistoryPoint{TS: now, CPU: cpuPct, RAM: ramPct})
+		if len(hist) > containerHistorySize {
+			hist = hist[len(hist)-containerHistorySize:]
+		}
+		containerHistory[c.ID] = hist
+		containerHistoryMu.Unlock()
+
 		result = append(result, ContainerMetrics{
 			Name:       name,
 			CPUPct:     cpuPct,
 			RAMPct:     ramPct,
 			RamUsedGB:  usedGB,
 			RamLimitGB: limitGB,
+			History:    hist,
 		})
 	}
 	return result

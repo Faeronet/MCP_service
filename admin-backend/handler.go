@@ -550,12 +550,17 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 
 	containersMap := make([]map[string]interface{}, len(containers))
 	for i, c := range containers {
+		histMap := make([]map[string]interface{}, len(c.History))
+		for j, h := range c.History {
+			histMap[j] = map[string]interface{}{"ts": h.TS, "cpu": h.CPU, "ram": h.RAM}
+		}
 		containersMap[i] = map[string]interface{}{
 			"name":         c.Name,
 			"cpu_pct":      c.CPUPct,
 			"ram_pct":      c.RAMPct,
 			"ram_used_gb":  c.RamUsedGB,
 			"ram_limit_gb": c.RamLimitGB,
+			"history":      histMap,
 		}
 	}
 	payload := map[string]interface{}{
