@@ -1,12 +1,9 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
 import { FileText, Briefcase, ScrollText, BarChart3, Gauge, LogOut } from 'lucide-react'
-import { useToast } from '../context/ToastContext'
-import { ToastContainer } from './Toast'
 
 export function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { toasts, remove } = useToast()
   const logout = () => {
     localStorage.removeItem('token')
     window.dispatchEvent(new Event('auth-change'))
