@@ -682,7 +682,7 @@ func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []Histor
 	if runtime.GOOS != "linux" {
 		return mockMetrics(now)
 	}
-	if _, _, err := readProcStatCPU(); err != nil {
+	if _, _, err := readProcStatCPUUsSy(); err != nil {
 		return mockMetrics(now)
 	}
 
