@@ -511,9 +511,9 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &telegramID, &chatID, &username, &count); err != nil {
 			continue
 		}
-		displayName := username
+		displayName := strings.TrimSpace(username)
 		if displayName == "" {
-			displayName = strconv.FormatInt(telegramID, 10)
+			displayName = "—"
 		}
 		list = append(list, map[string]interface{}{
 			"session_id":     id.String(),
