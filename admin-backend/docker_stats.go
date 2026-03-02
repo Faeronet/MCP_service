@@ -162,11 +162,19 @@ func CollectContainerMetrics() []ContainerMetrics {
 	}
 	containerCPUMu.Unlock()
 
+	// Убираем префикс имени проекта Docker Compose (mcp_service- или mcp_service_).
+	stripProjectPrefix := func(s string) string {
+		s = strings.TrimPrefix(s, "mcp_service-")
+		s = strings.TrimPrefix(s, "mcp_service_")
+		return s
+	}
+
 	var result []ContainerMetrics
 	for _, c := range containers {
 		name := ""
 		if len(c.Names) > 0 {
 			name = strings.TrimPrefix(c.Names[0], "/")
+			name = stripProjectPrefix(name)
 		}
 		image := c.Image
 		if skipContainer(name, image) {

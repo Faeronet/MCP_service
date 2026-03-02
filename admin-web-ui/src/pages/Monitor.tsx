@@ -159,7 +159,7 @@ export function Monitor() {
             </div>
           )}
           {mode === 'system' && data && data.containers && data.containers.length > 0 && data.containers.map((c: ContainerMetrics, idx: number) => (
-            <div key={`container-${idx}-${c.name}`} className="monitor-section-frame monitor-section-frame--container">
+            <div key={`container-${idx}-${c.name}`} className="monitor-section-frame">
               <h3 className="monitor-section-title">{c.name}</h3>
               <div className="monitor-gauges">
                 <SpeedometerGauge value={c.cpu_pct} label="CPU" unit="%" />
@@ -179,7 +179,7 @@ export function Monitor() {
             </div>
           ))}
           {mode === 'system' && data && (!data.containers || data.containers.length === 0) && (
-            <div className="monitor-section-frame monitor-section-frame--container monitor-section-frame--empty">
+            <div className="monitor-section-frame monitor-section-frame--empty">
               <h3 className="monitor-section-title">Сервисы (контейнеры)</h3>
               <p className="text-muted monitor-containers-hint">
                 Нет данных. Проверьте, что в admin-backend смонтирован <code>/var/run/docker.sock</code> и сервис перезапущен.
