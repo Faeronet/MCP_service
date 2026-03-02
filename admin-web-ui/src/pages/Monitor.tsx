@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics } from '../api'
+import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics, type ContainerMetrics } from '../api'
 import { SpeedometerGauge } from '../components/SpeedometerGauge'
 
 type MonitorType = 'system' | 'gpu'
@@ -158,6 +158,26 @@ export function Monitor() {
               </div>
             </div>
           )}
+          {mode === 'system' && data?.containers && data.containers.length > 0 && data.containers.map((c: ContainerMetrics, idx: number) => (
+            <div key={`container-${idx}-${c.name}`} className="monitor-section-frame monitor-section-frame--container">
+              <h3 className="monitor-section-title">{c.name}</h3>
+              <div className="monitor-gauges">
+                <SpeedometerGauge value={c.cpu_pct} label="CPU" unit="%" />
+                <SpeedometerGauge
+                  value={c.ram_pct}
+                  label="RAM"
+                  unit="%"
+                  valueLabel={
+                    c.ram_used_gb != null && c.ram_limit_gb != null && c.ram_limit_gb > 0
+                      ? `${c.ram_used_gb.toFixed(2)} / ${c.ram_limit_gb.toFixed(1)} GB`
+                      : c.ram_used_gb != null
+                        ? `${c.ram_used_gb.toFixed(2)} GB`
+                        : undefined
+                  }
+                />
+              </div>
+            </div>
+          ))}
           {mode === 'gpu' && data && gpus.length > 0 && gpus.map((card: GPUMetrics, idx: number) => (
             <div key={idx} className="monitor-section-frame">
               <h3 className="monitor-section-title">{card.name?.trim() || `GPU ${idx}`}</h3>

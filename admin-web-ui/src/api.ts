@@ -118,6 +118,14 @@ export interface GPUMetrics {
   vram_total_gb?: number
 }
 
+export interface ContainerMetrics {
+  name: string
+  cpu_pct: number
+  ram_pct: number
+  ram_used_gb?: number
+  ram_limit_gb?: number
+}
+
 export interface MonitorMetricsResponse {
   system: {
     cpu_pct: number
@@ -128,6 +136,7 @@ export interface MonitorMetricsResponse {
   }
   gpu?: { gpu_pct: number; vram_pct: number }
   gpus: GPUMetrics[]
+  containers?: ContainerMetrics[]
   uptime_sec?: number
   history: Array<{
     ts: string

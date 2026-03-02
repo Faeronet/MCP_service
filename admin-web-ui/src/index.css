@@ -485,9 +485,8 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 }
 .monitor-cards-row {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 24px;
-  overflow-x: auto;
   align-items: flex-start;
 }
 .monitor-cards-row .monitor-section-frame {
@@ -495,6 +494,11 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   min-width: 280px;
   max-width: 45%;
   margin-bottom: 0;
+}
+.monitor-cards-row .monitor-section-frame--container {
+  flex: 0 0 220px;
+  min-width: 200px;
+  max-width: 280px;
 }
 .monitor-section-frame {
   border: 1px solid var(--content-border);
