@@ -354,34 +354,40 @@ function MonitorTimeChart({
         {[1, 2, 3].map(i => (
           <line key={i} x1={padding.left + (innerW * i) / 3} y1={padding.top} x2={padding.left + (innerW * i) / 3} y2={height - padding.bottom} className="monitor-grid-line monitor-grid-line--normal" />
         ))}
+        {/* Сначала все заливки и линии, чтобы порядок серий не перекрывал точки */}
         {keys.map(k => {
           const d = paths[k]
           const ent = seriesMap[k]
           if (!d || !ent?.values.length) return null
           const areaPath = d + ` L ${xScale(ent.values.length - 1)} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`
-          const maxV = ent.scale
           return (
-            <g key={k}>
+            <g key={`area-line-${k}`}>
               <path d={areaPath} fill={`url(#${gradPrefix}-grad-${k})`} className="monitor-area" />
               <path d={d} fill="none" stroke={ent.color} strokeWidth={2} className="monitor-line" />
-              {pointIndices.filter(i => i < ent.values.length).map(i => {
-                const val = ent.values[i]
-                const ts = data[i]?.ts ?? ''
-                return (
-                  <circle
-                    key={`${k}-${i}`}
-                    cx={xScale(i)}
-                    cy={yScale(val, maxV)}
-                    r={4}
-                    fill={ent.color}
-                    className="monitor-point"
-                    onMouseEnter={e => setTooltip({ key: k, index: i, value: val, ts, x: e.clientX, y: e.clientY })}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
-                )
-              })}
             </g>
           )
+        })}
+        {/* Точки поверх всех линий — все серии наводятся */}
+        {keys.map(k => {
+          const ent = seriesMap[k]
+          if (!ent?.values.length) return null
+          const maxV = ent.scale
+          return pointIndices.filter(i => i < ent.values.length).map(i => {
+            const val = ent.values[i]
+            const ts = data[i]?.ts ?? ''
+            return (
+              <circle
+                key={`point-${k}-${i}`}
+                cx={xScale(i)}
+                cy={yScale(val, maxV)}
+                r={4}
+                fill={ent.color}
+                className="monitor-point"
+                onMouseEnter={e => setTooltip({ key: k, index: i, value: val, ts, x: e.clientX, y: e.clientY })}
+                onMouseLeave={() => setTooltip(null)}
+              />
+            )
+          })
         })}
         <text x={width / 2} y={height - 6} textAnchor="middle" className="monitor-axis-label">
           {timeLabel}
