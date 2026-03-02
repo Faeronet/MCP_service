@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics, type ContainerMetrics, type ContainerHistoryPoint } from '../api'
 import { SpeedometerGauge } from '../components/SpeedometerGauge'
 import { useToast } from '../context/ToastContext'
+import { useMonitorContext } from '../context/MonitorContext'
 
 type MonitorSection = 'gpus' | 'ai' | 'read' | 'write' | 'worker' | 'other'
 type ChartMode = 'all' | 'separate'
@@ -58,12 +59,18 @@ function containerInSection(name: string, containerList: string[]): boolean {
 }
 
 export function Monitor() {
+  const { lastData: cachedData, setLastData } = useMonitorContext()
   const [section, setSection] = useState<MonitorSection>('gpus')
-  const [data, setData] = useState<MonitorMetricsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState<MonitorMetricsResponse | null>(cachedData)
+  const [loading, setLoading] = useState(!cachedData)
   const [chartModeGpu, setChartModeGpu] = useState<ChartMode>('all')
   const [chartModeByContainer, setChartModeByContainer] = useState<Record<string, ChartMode>>({})
   const toast = useToast()
+
+  useEffect(() => {
+    setData(cachedData)
+    setLoading(!cachedData)
+  }, [cachedData])
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +79,7 @@ export function Monitor() {
         const res = await getMonitorMetrics()
         if (cancelled) return
         setData(res)
+        setLastData(res)
       } catch (e) {
         if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load')
       } finally {
@@ -81,7 +89,7 @@ export function Monitor() {
     fetchData()
     const t = setInterval(fetchData, POLL_MS)
     return () => { cancelled = true; clearInterval(t) }
-  }, [])
+  }, [setLastData])
 
   const chartData = useMemo(() => (data?.history ?? []).slice(-MAX_HISTORY), [data?.history])
   const gpus = useMemo((): GPUMetrics[] => {

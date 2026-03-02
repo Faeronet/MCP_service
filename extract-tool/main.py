@@ -133,6 +133,8 @@ def get_asr():
 
 
 TEXT_EXT = {".txt", ".text", ".log", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".py", ".js", ".sh", ".yml", ".yaml"}
+# Форматы, которые экспортируются в PDF: извлекаем текст и конвертируем в PDF
+EXPORT_TO_PDF_EXT = {".docx", ".odt", ".md", ".markdown", ".html", ".htm", ".txt", ".text", ".log"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"}
 AUDIO_EXT = {".ogg", ".mp3", ".wav", ".m4a", ".flac", ".opus", ".mpga"}
 
@@ -187,6 +189,69 @@ def _extract_text_from_pdf(data: bytes) -> str:
         return ""
 
 
+def _extract_text_from_docx(data: bytes) -> str:
+    """Извлечение текста из DOCX."""
+    try:
+        from docx import Document
+        doc = Document(io.BytesIO(data))
+        return "\n\n".join(p.text.strip() for p in doc.paragraphs if p.text.strip()).strip()
+    except Exception as e:
+        log.warning("DOCX extract failed: %s", e)
+        return ""
+
+
+def _extract_text_from_odt(data: bytes) -> str:
+    """Извлечение текста из ODT."""
+    try:
+        from odf.opendocument import load
+        from odf import text, teletype
+        doc = load(io.BytesIO(data))
+        parts = []
+        for el in doc.getElementsByType(text.P) + doc.getElementsByType(text.H):
+            t = teletype.extractText(el).strip()
+            if t:
+                parts.append(t)
+        return "\n\n".join(parts).strip() if parts else ""
+    except Exception as e:
+        log.warning("ODT extract failed: %s", e)
+        return ""
+
+
+def _text_to_pdf_bytes(text: str) -> bytes:
+    """Конвертация текста в PDF (reportlab). Длинные строки переносятся по 80 символов."""
+    if not text or not text.strip():
+        return b""
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        buf = io.BytesIO()
+        c = canvas.Canvas(buf, pagesize=A4)
+        width, height = A4
+        margin = 1.5 * cm
+        x, y = margin, height - margin
+        line_height = 14
+        max_chars = 80
+        lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        for line in lines:
+            while line:
+                chunk = line[:max_chars] if len(line) > max_chars else line
+                if len(line) > max_chars:
+                    line = line[max_chars:]
+                else:
+                    line = ""
+                if y < margin:
+                    c.showPage()
+                    y = height - margin
+                c.drawString(x, y, chunk)
+                y -= line_height
+        c.save()
+        return buf.getvalue()
+    except Exception as e:
+        log.warning("text-to-PDF failed: %s", e)
+        return b""
+
+
 def _file_extension(name: str) -> str:
     name = (name or "").lower()
     if name.endswith(".tar.gz") or name.endswith(".tgz"):
@@ -198,6 +263,10 @@ def _file_extension(name: str) -> str:
 
 def _extract_single_sync(data: bytes, filename: str) -> str | None:
     ext = _file_extension(filename)
+    if ext == ".docx":
+        return _extract_text_from_docx(data)
+    if ext == ".odt":
+        return _extract_text_from_odt(data)
     if ext in TEXT_EXT:
         return _extract_text_from_text_file(data, filename)
     if ext == ".pdf" or (len(data) >= 4 and data[:4] == b"%PDF"):
@@ -275,12 +344,16 @@ def _extract_impl(data: bytes, filename: str) -> dict:
             raise ValueError("Файл или архив нельзя обработать.")
         parts = []
         for name, content in items:
-            ext = _file_extension(name)
-            if ext in TEXT_EXT:
+            item_ext = _file_extension(name)
+            if item_ext == ".docx":
+                parts.append(f"--- {name}\n" + _extract_text_from_docx(content))
+            elif item_ext == ".odt":
+                parts.append(f"--- {name}\n" + _extract_text_from_odt(content))
+            elif item_ext in TEXT_EXT:
                 parts.append(f"--- {name}\n" + _extract_text_from_text_file(content, name))
-            elif ext == ".pdf" or (len(content) >= 4 and content[:4] == b"%PDF"):
+            elif item_ext == ".pdf" or (len(content) >= 4 and content[:4] == b"%PDF"):
                 parts.append(f"--- {name}\n" + _extract_text_from_pdf(content))
-            elif ext in IMAGE_EXT or ext in AUDIO_EXT:
+            elif item_ext in IMAGE_EXT or item_ext in AUDIO_EXT:
                 t = _extract_single_sync(content, name)
                 if t is not None:
                     parts.append(f"--- {name}\n" + (t or ""))
@@ -289,11 +362,16 @@ def _extract_impl(data: bytes, filename: str) -> dict:
         log.info("Processing as image (OCR): %s", filename)
     elif ext in AUDIO_EXT:
         log.info("Processing as audio (ASR): %s", filename)
-    elif ext in TEXT_EXT or ext == ".pdf":
-        log.info("Processing as text/PDF: %s", filename)
+    elif ext in TEXT_EXT or ext == ".pdf" or ext in EXPORT_TO_PDF_EXT:
+        log.info("Processing as text/PDF/export: %s", filename)
     result = _extract_single_sync(data, filename)
     if result is not None:
-        return {"text": result}
+        out = {"text": result}
+        if ext in EXPORT_TO_PDF_EXT and result.strip():
+            pdf_bytes = _text_to_pdf_bytes(result)
+            if pdf_bytes:
+                out["pdf_base64"] = base64.b64encode(pdf_bytes).decode("ascii")
+        return out
     raise ValueError("Файл или архив нельзя обработать.")
 
 

@@ -24,7 +24,7 @@
 
 body {
   margin: 0;
-  font-family: #181a26; sans-serif;
+  font-family: 'Arimo', sans-serif;
   background: #181a26;
   color: var(--text);
   min-height: 100vh;
@@ -70,7 +70,7 @@ a:hover { color: var(--link-hover); text-decoration: underline; }
   color: var(--link);
   flex-shrink: 0;
 }
-.sidebar nav { flex: 1; }
+.sidebar nav { flex: 1; margin-top: 24px; }
 .sidebar ul { list-style: none; margin: 0; padding: 0 12px; }
 .sidebar li { margin-bottom: 4px; }
 .sidebar a, .sidebar .nav-link {
@@ -626,7 +626,7 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   font-size: 0.7rem;
 }
 .speedometer-label {
-  font-family: Georgia, 'Times New Roman', serif;
+  font-family: 'Arimo', sans-serif;
   font-size: 0.875rem;
   color: #fff;
   font-weight: 400;

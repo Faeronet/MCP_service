@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { ToastContainer } from './components/Toast'
+import { MonitorProvider } from './context/MonitorContext'
 import { useToast } from './context/ToastContext'
 import { Login } from './pages/Login'
 import { Docs } from './pages/Docs'
@@ -26,7 +27,7 @@ export default function App() {
       <ToastContainer toasts={toasts} onRemove={remove} />
       <Routes>
         <Route path="/login" element={<Login onLogin={() => setToken(localStorage.getItem('token'))} />} />
-        <Route path="/" element={token ? <Layout /> : <Navigate to="/login" replace />}>
+        <Route path="/" element={token ? <MonitorProvider><Layout /></MonitorProvider> : <Navigate to="/login" replace />}>
           <Route index element={<Navigate to="/docs" replace />} />
           <Route path="docs" element={<Docs />} />
           <Route path="jobs" element={<Jobs />} />
