@@ -9,8 +9,9 @@ COPY admin-backend/handler.go admin-backend/main_build.go admin-backend/metrics.
 RUN mv main_build.go admin-backend/main.go && mv handler.go admin-backend/ && mv metrics.go admin-backend/
 RUN go mod tidy && go build -o /admin-backend ./admin-backend
 
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates
+# Финальный образ с nvidia-smi для монитора GPU (обе карты пробрасываются через deploy in compose).
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /admin-backend /admin-backend
 EXPOSE 8080
 ENTRYPOINT ["/admin-backend"]
