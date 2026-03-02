@@ -118,6 +118,8 @@ func tryContainersList(client *http.Client, apiVersions []string) ([]byte, strin
 			lastErr = err
 			continue
 		}
+		req.Header.Set("Host", "localhost")
+		req.Header.Set("Accept", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -128,7 +130,7 @@ func tryContainersList(client *http.Client, apiVersions []string) ([]byte, strin
 		if resp.StatusCode == http.StatusOK {
 			return body, apiVer, true, nil
 		}
-		lastErr = fmt.Errorf("api v%s: %d", apiVer, resp.StatusCode)
+		lastErr = fmt.Errorf("api v%s: %d %s", apiVer, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil, "", false, lastErr
 }
@@ -137,7 +139,8 @@ func tryContainersList(client *http.Client, apiVersions []string) ([]byte, strin
 func CollectContainerMetrics() []ContainerMetrics {
 	ctx := context.Background()
 	client := getDockerHTTPClient()
-	apiVersions := []string{getDockerAPIVersion(), "1.43", "1.41", "1.40"}
+	// Пробуем версии от новой к старой (некоторые демоны отдают 400 для старых версий).
+	apiVersions := []string{"1.45", "1.44", "1.43", "1.42", "1.41", "1.40", "1.39", getDockerAPIVersion()}
 	body, apiVer, ok, listErr := tryContainersList(client, apiVersions)
 	if !ok || body == nil {
 		errStr := ""
