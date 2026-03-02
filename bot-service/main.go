@@ -273,6 +273,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 }
 
 func (b *Bot) ensureSession(ctx context.Context, chatID, userID int64, username string) (uuid.UUID, error) {
+	// Сохраняем username в core.users для отображения в памяти чата (Chat Log)
+	if username != "" {
+		_, _ = b.pool.Exec(ctx, `
+			INSERT INTO core.users (telegram_id, username) VALUES ($1, $2)
+			ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username
+		`, userID, username)
+	}
 	var id uuid.UUID
 	err := b.pool.QueryRow(ctx, `
 		INSERT INTO chat.sessions (telegram_id, chat_id, last_active)
