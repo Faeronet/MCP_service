@@ -405,18 +405,20 @@ func collectRAM() (pct int, usedGB, totalGB float64) {
 		}
 		return pct, usedGB, totalGB
 	}
-	// Хост: только used = MemTotal - MemFree - Buffers - Cached.
+	// Хост: метрика = used + buff/cache (сумма этих двух параметров выводится в монитор).
 	total, _, free, buffers, cached, err := readProcMeminfoFull()
 	if err != nil || total == 0 {
 		return 0, 0, 0
 	}
-	usedKB := total - free - buffers - cached
-	if free+buffers+cached > total {
-		usedKB = 0
+	usedKB := total - free - buffers - cached // used из строки top
+	buffCacheKB := buffers + cached           // buff/cache из строки top
+	sumKB := usedKB + buffCacheKB             // used + buff/cache
+	if sumKB > total {
+		sumKB = total
 	}
 	totalGB = float64(total) / (1024 * 1024)
-	usedGB = float64(usedKB) / (1024 * 1024)
-	pctVal := (float64(usedKB) / float64(total)) * 100
+	usedGB = float64(sumKB) / (1024 * 1024)
+	pctVal := (float64(sumKB) / float64(total)) * 100
 	if pctVal > 100 {
 		pctVal = 100
 	}
