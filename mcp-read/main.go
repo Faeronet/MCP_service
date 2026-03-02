@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -135,6 +136,34 @@ type BuildContextRequest struct {
 type BuildContextResponse struct {
 	Context string `json:"context"`
 	Error   string `json:"error,omitempty"`
+}
+
+// chunkInfo — чанк с именем и связями для фильтра по дате и форматирования контекста.
+type chunkInfo struct {
+	Name       string
+	Text       string
+	ChunkID    string
+	RelatedIDs []string
+	PrevID     string
+	NextID     string
+}
+
+// Форматы: "24 марта", "24 января", "24.03", "24.03.2025"
+var reDateMonthRu = regexp.MustCompile(`(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)`)
+var reDateDot = regexp.MustCompile(`(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?`)
+
+func extractDateFromQuery(query string) (dateStr string, ok bool) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return "", false
+	}
+	if m := reDateMonthRu.FindString(q); m != "" {
+		return m, true // "24 марта", "24 января" и т.д.
+	}
+	if m := reDateDot.FindString(q); m != "" {
+		return m, true // "24.03" or "24.03.2025"
+	}
+	return "", false
 }
 
 type qdrantSearchReq struct {
@@ -280,6 +309,10 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	collectionName := "chunks"
 	vec := h.embedQuery(ctx, req.QueryText)
 	trueVal := true
+	dateStr, hasDate := extractDateFromQuery(req.QueryText)
+	if hasDate {
+		log.Info(ctx, "build_context: date in query", logging.KV{"date", dateStr})
+	}
 
 	var contextText string
 	var found bool
@@ -310,51 +343,107 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Body.Close()
 
-		var texts []string
+		var items []chunkInfo
 		mainChunkIDs := make(map[string]struct{})
 		neighborIDs := make(map[string]struct{})
 		for _, p := range searchRes.Result {
-			if t, ok := p.Payload["text"].(string); ok {
-				texts = append(texts, t)
+			c := payloadToChunkInfo(p.Payload)
+			if c.Text != "" || c.ChunkID != "" {
+				items = append(items, c)
 			}
-			if cid, ok := p.Payload["chunk_id"].(string); ok && cid != "" {
-				mainChunkIDs[cid] = struct{}{}
+			if c.ChunkID != "" {
+				mainChunkIDs[c.ChunkID] = struct{}{}
 			}
-			for _, key := range []string{"prev_chunk_id", "next_chunk_id"} {
-				if v, ok := p.Payload[key].(string); ok && v != "" {
-					neighborIDs[v] = struct{}{}
-				}
+			if c.PrevID != "" {
+				neighborIDs[c.PrevID] = struct{}{}
+			}
+			if c.NextID != "" {
+				neighborIDs[c.NextID] = struct{}{}
 			}
 		}
 		for id := range mainChunkIDs {
 			delete(neighborIDs, id)
 		}
 		if len(neighborIDs) > 0 {
-			neighborTexts := h.fetchChunksByID(ctx, collectionName, neighborIDs)
-			if len(neighborTexts) > 0 {
-				texts = append(texts, neighborTexts...)
-			}
+			neighbors := h.fetchChunkPayloadsByID(ctx, collectionName, neighborIDs)
+			items = append(items, neighbors...)
 		}
-		if len(texts) == 0 {
+		if len(items) == 0 {
 			continue
 		}
 
+		texts := make([]string, len(items))
+		for i := range items {
+			texts[i] = items[i].Text
+		}
+
 		var topScore float64
+		var order []int
 		if h.rerankAPIURL != "" && h.rerankModel != "" {
 			if err := h.rerankLimiter.Acquire(ctx); err != nil {
 				continue
 			}
-			texts, topScore = h.rerankWithScore(ctx, req.QueryText, texts)
+			_, order, topScore = h.rerankWithScoreAndOrder(ctx, req.QueryText, texts)
 			h.rerankLimiter.Release()
 			log.Info(ctx, "build_context: round rerank", logging.KV{"round", round}, logging.KV{"top_score", topScore}, logging.KV{"docs", len(texts)})
 			if topScore < h.rerankMinScore {
 				continue
 			}
+			if order != nil && len(order) == len(items) {
+				ordered := make([]chunkInfo, len(items))
+				for i, idx := range order {
+					ordered[i] = items[idx]
+				}
+				items = ordered
+			}
 		} else {
 			topScore = 1.0
 		}
 
-		contextText = strings.Join(texts, "\n\n")
+		if hasDate {
+			// Найти чанки, в тексте которых есть дата из запроса
+			var withDate []chunkInfo
+			for i := range items {
+				if strings.Contains(items[i].Text, dateStr) {
+					withDate = append(withDate, items[i])
+				}
+			}
+			if len(withDate) == 0 {
+				log.Info(ctx, "build_context: date not found in chunks", logging.KV{"date", dateStr})
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found"})
+				return
+			}
+			// Собрать ID: чанки с датой + их связи (related, prev, next)
+			linkSet := make(map[string]struct{})
+			for _, c := range withDate {
+				linkSet[c.ChunkID] = struct{}{}
+				for _, id := range c.RelatedIDs {
+					linkSet[id] = struct{}{}
+				}
+				if c.PrevID != "" {
+					linkSet[c.PrevID] = struct{}{}
+				}
+				if c.NextID != "" {
+					linkSet[c.NextID] = struct{}{}
+				}
+			}
+			// Подгрузить все связанные чанки по linkSet (в items могут быть только prev/next)
+			linked := h.fetchChunkPayloadsByID(ctx, collectionName, linkSet)
+			items = linked
+		}
+
+		var b strings.Builder
+		for _, c := range items {
+			if c.Name != "" {
+				b.WriteString("Имя: ")
+				b.WriteString(c.Name)
+				b.WriteString("\n")
+			}
+			b.WriteString(c.Text)
+			b.WriteString("\n\n")
+		}
+		contextText = b.String()
 		if len(contextText) > req.TokenBudget*4 {
 			contextText = contextText[:req.TokenBudget*4]
 		}
@@ -385,8 +474,20 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText})
 }
 
-// fetchChunksByID возвращает тексты чанков по списку chunk_id (для связей prev/next).
+// fetchChunksByID возвращает тексты чанков по списку chunk_id (для обратной совместимости).
 func (h *MCPReadHandler) fetchChunksByID(ctx context.Context, collectionName string, chunkIDSet map[string]struct{}) []string {
+	infos := h.fetchChunkPayloadsByID(ctx, collectionName, chunkIDSet)
+	out := make([]string, 0, len(infos))
+	for _, c := range infos {
+		if c.Text != "" {
+			out = append(out, c.Text)
+		}
+	}
+	return out
+}
+
+// fetchChunkPayloadsByID возвращает полные payload чанков по chunk_id (name, text, related_chunk_ids и т.д.).
+func (h *MCPReadHandler) fetchChunkPayloadsByID(ctx context.Context, collectionName string, chunkIDSet map[string]struct{}) []chunkInfo {
 	if len(chunkIDSet) == 0 {
 		return nil
 	}
@@ -394,7 +495,6 @@ func (h *MCPReadHandler) fetchChunksByID(ctx context.Context, collectionName str
 	for id := range chunkIDSet {
 		ids = append(ids, id)
 	}
-	// Qdrant scroll: filter chunk_id in ids
 	limit := uint32(100)
 	withPayload := true
 	body := qdrantScrollReq{
@@ -428,23 +528,51 @@ func (h *MCPReadHandler) fetchChunksByID(ctx context.Context, collectionName str
 		log.Warn(ctx, "scroll decode failed", logging.KV{"error", err})
 		return nil
 	}
-	var out []string
+	var out []chunkInfo
 	for _, pt := range scrollRes.Result.Points {
-		if t, ok := pt.Payload["text"].(string); ok && t != "" {
-			out = append(out, t)
+		c := payloadToChunkInfo(pt.Payload)
+		if c.Text != "" || c.ChunkID != "" {
+			out = append(out, c)
 		}
 	}
 	return out
+}
+
+func payloadToChunkInfo(p map[string]interface{}) chunkInfo {
+	var c chunkInfo
+	if t, ok := p["text"].(string); ok {
+		c.Text = t
+	}
+	if n, ok := p["name"].(string); ok {
+		c.Name = n
+	}
+	if id, ok := p["chunk_id"].(string); ok {
+		c.ChunkID = id
+	}
+	if prev, ok := p["prev_chunk_id"].(string); ok {
+		c.PrevID = prev
+	}
+	if next, ok := p["next_chunk_id"].(string); ok {
+		c.NextID = next
+	}
+	if arr, ok := p["related_chunk_ids"].([]interface{}); ok {
+		for _, v := range arr {
+			if s, ok := v.(string); ok {
+				c.RelatedIDs = append(c.RelatedIDs, s)
+			}
+		}
+	}
+	return c
 }
 
 func normalizeQuery(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
 }
 
-// rerankWithScore вызывает RERANK_API_URL, переупорядочивает texts по relevance_score и возвращает топ-score. При ошибке — (texts, 0).
-func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, texts []string) ([]string, float64) {
+// rerankWithScoreAndOrder возвращает (reordered texts, order indices, topScore). order[i] = исходный индекс i-го по релевантности чанка.
+func (h *MCPReadHandler) rerankWithScoreAndOrder(ctx context.Context, query string, texts []string) ([]string, []int, float64) {
 	if len(texts) == 0 {
-		return texts, 0
+		return texts, nil, 0
 	}
 	docsWithID := make([]map[string]interface{}, len(texts))
 	for i, t := range texts {
@@ -467,7 +595,7 @@ func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, text
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rerankURL, bytes.NewReader(payload))
 	if err != nil {
 		log.Warn(ctx, "rerank request build", logging.KV{"error", err})
-		return texts, 0
+		return texts, nil, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if h.rerankAPIKey != "" {
@@ -476,13 +604,13 @@ func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, text
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Warn(ctx, "rerank request failed", logging.KV{"error", err}, logging.KV{"url", rerankURL})
-		return texts, 0
+		return texts, nil, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		log.Warn(ctx, "rerank non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"body", string(body)})
-		return texts, 0
+		return texts, nil, 0
 	}
 	var result struct {
 		Results []struct {
@@ -497,14 +625,16 @@ func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, text
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Warn(ctx, "rerank decode failed", logging.KV{"error", err})
-		return texts, 0
+		return texts, nil, 0
 	}
 
 	var topScore float64
-	// Формат data[] (reranker): отсортировано по similarity desc, первый — топ
+	var order []int
+	// Формат data[] (reranker): отсортировано по similarity desc
 	if len(result.Data) > 0 {
 		topScore = result.Data[0].Similarity
 		out := make([]string, 0, len(result.Data))
+		order = make([]int, 0, len(result.Data))
 		for _, d := range result.Data {
 			var idx int
 			switch v := d.ID.(type) {
@@ -517,10 +647,11 @@ func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, text
 			}
 			if idx >= 0 && idx < len(texts) {
 				out = append(out, texts[idx])
+				order = append(order, idx)
 			}
 		}
 		if len(out) > 0 {
-			return out, topScore
+			return out, order, topScore
 		}
 	}
 	// Формат scores[i]
@@ -539,10 +670,12 @@ func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, text
 		}
 		topScore = ps[0].s
 		out := make([]string, len(texts))
+		order = make([]int, len(texts))
 		for i, p := range ps {
 			out[i] = texts[p.i]
+			order[i] = p.i
 		}
-		return out, topScore
+		return out, order, topScore
 	}
 	// Формат results[]
 	if len(result.Results) > 0 {
@@ -559,16 +692,23 @@ func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, text
 		}
 		topScore = ps[0].s
 		out := make([]string, 0, len(texts))
+		order = make([]int, 0, len(texts))
 		for _, p := range ps {
 			if p.i >= 0 && p.i < len(texts) {
 				out = append(out, texts[p.i])
+				order = append(order, p.i)
 			}
 		}
 		if len(out) > 0 {
-			return out, topScore
+			return out, order, topScore
 		}
 	}
-	return texts, 0
+	return texts, nil, 0
+}
+
+func (h *MCPReadHandler) rerankWithScore(ctx context.Context, query string, texts []string) ([]string, float64) {
+	out, _, score := h.rerankWithScoreAndOrder(ctx, query, texts)
+	return out, score
 }
 
 // rerank вызывает rerankWithScore и возвращает только переупорядоченные тексты (для обратной совместимости).

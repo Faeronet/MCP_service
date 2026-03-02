@@ -253,6 +253,11 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			_ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
 			return
 		}
+		if err.Error() == "date_not_found" {
+			b.sendReply(ctx, chatID, "Данные не найдены.")
+			_ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+			return
+		}
 		log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
 		contextText = ""
 	}
@@ -500,6 +505,11 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		if err.Error() == "chunk_not_found" {
 			b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
 			_ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+			return
+		}
+		if err.Error() == "date_not_found" {
+			b.sendReply(ctx, chatID, "Данные не найдены.")
+			_ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
 			return
 		}
 		log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
