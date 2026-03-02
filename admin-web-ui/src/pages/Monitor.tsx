@@ -1,11 +1,31 @@
 import { useState, useEffect, useMemo } from 'react'
 import { getMonitorMetrics, type MonitorMetricsResponse, type GPUMetrics, type ContainerMetrics, type ContainerHistoryPoint } from '../api'
 import { SpeedometerGauge } from '../components/SpeedometerGauge'
+import { useToast } from '../context/ToastContext'
 
-type MonitorType = 'system' | 'gpu'
+type MonitorSection = 'gpus' | 'ai' | 'read' | 'write' | 'worker' | 'other'
 type ChartMode = 'all' | 'separate'
 
-const POLL_MS = 3000
+const POLL_MS = 10000
+
+/** Какие блоки показывать в каждом разделе. Контейнеры — по точному совпадению имени (lowercase). */
+const SECTION_CONFIG: Record<MonitorSection, { gpus: boolean; containers: string[] }> = {
+  gpus: { gpus: true, containers: [] },
+  ai: { gpus: true, containers: ['extract-tool', 'vllm', 'vllm-embed', 'rerank', 'minio'] },
+  read: { gpus: true, containers: ['mcp-read', 'qdrant', 'vllm-embed', 'rerank', 'vllm'] },
+  write: { gpus: true, containers: ['admin-backend', 'minio', 'rabbitmq', 'ingestion-worker', 'mcp-write', 'extract-tool', 'vllm', 'vllm-embed', 'rerank', 'qdrant'] },
+  worker: { gpus: false, containers: ['ingestion-worker', 'attachment-worker', 'rabbitmq', 'mcp-write', 'mcp-read'] },
+  other: { gpus: false, containers: ['bot-service', 'redis', 'log-indexer'] },
+}
+const SECTION_ORDER: readonly MonitorSection[] = ['gpus', 'ai', 'read', 'write', 'worker', 'other']
+const SECTION_LABELS: Record<MonitorSection, string> = {
+  gpus: "GPU's",
+  ai: 'AI',
+  read: 'Read',
+  write: 'Write',
+  worker: 'Worker',
+  other: 'Other',
+}
 const MAX_HISTORY = 60
 const CHART_WIDTH = 700
 const CHART_HEIGHT = 220
@@ -32,14 +52,18 @@ function formatUptime(sec: number): string {
   return parts.join(' ')
 }
 
+function containerInSection(name: string, containerList: string[]): boolean {
+  const n = name.toLowerCase().trim()
+  return containerList.some(key => n === key)
+}
+
 export function Monitor() {
-  const [mode, setMode] = useState<MonitorType>('system')
+  const [section, setSection] = useState<MonitorSection>('gpus')
   const [data, setData] = useState<MonitorMetricsResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [chartModeSystem, setChartModeSystem] = useState<ChartMode>('all')
   const [chartModeGpu, setChartModeGpu] = useState<ChartMode>('all')
   const [chartModeByContainer, setChartModeByContainer] = useState<Record<string, ChartMode>>({})
+  const toast = useToast()
 
   useEffect(() => {
     let cancelled = false
@@ -48,9 +72,8 @@ export function Monitor() {
         const res = await getMonitorMetrics()
         if (cancelled) return
         setData(res)
-        setError(null)
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load')
+        if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to load')
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -67,6 +90,14 @@ export function Monitor() {
     if (data.gpu) return [{ name: 'GPU', gpu_pct: data.gpu.gpu_pct, vram_pct: data.gpu.vram_pct }]
     return []
   }, [data])
+
+  const config = SECTION_CONFIG[section]
+  const showGpus = config.gpus && gpus.length > 0
+  const filteredContainers = useMemo((): ContainerMetrics[] => {
+    if (!data?.containers?.length) return []
+    const list = SECTION_CONFIG[section].containers
+    return data.containers.filter((c: ContainerMetrics) => containerInSection(c.name, list))
+  }, [data?.containers, section])
 
   if (loading && !data) {
     return (
@@ -86,135 +117,26 @@ export function Monitor() {
       <div className="page-header">
         <h1 className="page-title">Monitor</h1>
         <p className="text-muted">Нагрузка с контейнеров с ИИ-моделями.</p>
-        <div className="page-header-row">
+        <div className="page-header-row page-header-row--center">
           <div className="monitor-type-toggle">
-            <button
-              type="button"
-              className={mode === 'system' ? 'btn-primary' : 'btn-monitor-inactive'}
-              onClick={() => setMode('system')}
-            >
-              CPU, RAM
-            </button>
-            <button
-              type="button"
-              className={mode === 'gpu' ? 'btn-primary' : 'btn-monitor-inactive'}
-              onClick={() => setMode('gpu')}
-            >
-              GPU, VRAM
-            </button>
+            {SECTION_ORDER.map(s => (
+              <button
+                key={s}
+                type="button"
+                className={section === s ? 'btn-primary' : 'btn-monitor-inactive'}
+                onClick={() => setSection(s)}
+              >
+                {SECTION_LABELS[s]}
+              </button>
+            ))}
           </div>
           <div className="monitor-uptime">Uptime: {formatUptime(data?.uptime_sec ?? 0)}</div>
         </div>
       </div>
       <div className="content-panel">
-        {error && <p className="text-error">{error}</p>}
         <div className="monitor-cards-row">
-          {mode === 'system' && data && (
-            <div className="monitor-section-frame">
-              <h3 className="monitor-section-title">Система</h3>
-              <div className="monitor-gauges">
-                <SpeedometerGauge value={data.system.cpu_pct} label="CPU" unit="%" />
-                <SpeedometerGauge
-                  value={data.system.ram_pct}
-                  label="RAM"
-                  unit="%"
-                  valueLabel={
-                    data.system.ram_used_gb != null
-                      ? `${data.system.ram_used_gb.toFixed(1)} GB`
-                      : undefined
-                  }
-                />
-              </div>
-              <div className="monitor-chart-mode-toggle">
-                <button
-                  type="button"
-                  className={chartModeSystem === 'all' ? 'btn-primary' : 'btn-monitor-inactive'}
-                  onClick={() => setChartModeSystem('all')}
-                >
-                  Всё на одном
-                </button>
-                <button
-                  type="button"
-                  className={chartModeSystem === 'separate' ? 'btn-primary' : 'btn-monitor-inactive'}
-                  onClick={() => setChartModeSystem('separate')}
-                >
-                  По отдельности
-                </button>
-              </div>
-              <div className="monitor-chart-block">
-                {chartModeSystem === 'all' ? (
-                  <MonitorTimeChart data={chartData} type="system" width={CHART_WIDTH} height={CHART_HEIGHT} />
-                ) : (
-                  <>
-                    <div className="monitor-chart-panel monitor-chart-panel--compact">
-                      <h4 className="monitor-chart-title">CPU</h4>
-                      <MonitorTimeChart data={chartData} type="cpu" width={CHART_WIDTH} height={CHART_HEIGHT} />
-                    </div>
-                    <div className="monitor-chart-panel monitor-chart-panel--compact">
-                      <h4 className="monitor-chart-title">RAM</h4>
-                      <MonitorTimeChart data={chartData} type="ram" width={CHART_WIDTH} height={CHART_HEIGHT} />
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-          {mode === 'system' && data && data.containers && data.containers.length > 0 && data.containers.map((c: ContainerMetrics, idx: number) => (
-            <div key={`container-${idx}-${c.name}`} className="monitor-section-frame">
-              <h3 className="monitor-section-title">{c.name}</h3>
-              <div className="monitor-gauges">
-                <SpeedometerGauge value={c.cpu_pct} label="CPU" unit="%" />
-                <SpeedometerGauge
-                  value={c.ram_pct}
-                  label="RAM"
-                  unit="%"
-                  valueLabel={c.ram_used_gb != null ? `${c.ram_used_gb.toFixed(2)} GB` : undefined}
-                />
-              </div>
-              <div className="monitor-chart-mode-toggle">
-                <button
-                  type="button"
-                  className={(chartModeByContainer[c.name] ?? 'all') === 'all' ? 'btn-primary' : 'btn-monitor-inactive'}
-                  onClick={() => setChartModeByContainer(prev => ({ ...prev, [c.name]: 'all' }))}
-                >
-                  Всё на одном
-                </button>
-                <button
-                  type="button"
-                  className={(chartModeByContainer[c.name] ?? 'all') === 'separate' ? 'btn-primary' : 'btn-monitor-inactive'}
-                  onClick={() => setChartModeByContainer(prev => ({ ...prev, [c.name]: 'separate' }))}
-                >
-                  По отдельности
-                </button>
-              </div>
-              <div className="monitor-chart-block">
-                {(chartModeByContainer[c.name] ?? 'all') === 'all' ? (
-                  <MonitorTimeChart data={c.history ?? []} type="container" width={CHART_WIDTH} height={CHART_HEIGHT} />
-                ) : (
-                  <>
-                    <div className="monitor-chart-panel monitor-chart-panel--compact">
-                      <h4 className="monitor-chart-title">CPU</h4>
-                      <MonitorTimeChart data={c.history ?? []} type="cpu" width={CHART_WIDTH} height={CHART_HEIGHT} />
-                    </div>
-                    <div className="monitor-chart-panel monitor-chart-panel--compact">
-                      <h4 className="monitor-chart-title">RAM</h4>
-                      <MonitorTimeChart data={c.history ?? []} type="ram" width={CHART_WIDTH} height={CHART_HEIGHT} />
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-          {mode === 'system' && data && (!data.containers || data.containers.length === 0) && (
-            <div className="monitor-section-frame monitor-section-frame--empty">
-              <h3 className="monitor-section-title">Сервисы (контейнеры)</h3>
-              <p className="text-muted monitor-containers-hint">
-                Нет данных. Проверьте, что в admin-backend смонтирован <code>/var/run/docker.sock</code> и сервис перезапущен.
-              </p>
-            </div>
-          )}
-          {mode === 'gpu' && data && gpus.length > 0 && gpus.map((card: GPUMetrics, idx: number) => (
-            <div key={idx} className="monitor-section-frame">
+          {showGpus && gpus.map((card: GPUMetrics, idx: number) => (
+            <div key={`gpu-${idx}`} className="monitor-section-frame">
               <h3 className="monitor-section-title">{card.name?.trim() || `GPU ${idx}`}</h3>
               <div className="monitor-gauges">
                 <SpeedometerGauge value={card.gpu_pct} label="GPU" unit="%" />
@@ -264,6 +186,60 @@ export function Monitor() {
               </div>
             </div>
           ))}
+          {data && filteredContainers.map((c: ContainerMetrics, idx: number) => (
+            <div key={`container-${idx}-${c.name}`} className="monitor-section-frame">
+              <h3 className="monitor-section-title">{c.name}</h3>
+              <div className="monitor-gauges">
+                <SpeedometerGauge value={c.cpu_pct} label="CPU" unit="%" />
+                <SpeedometerGauge
+                  value={c.ram_pct}
+                  label="RAM"
+                  unit="%"
+                  valueLabel={c.ram_used_gb != null ? `${c.ram_used_gb.toFixed(2)} GB` : undefined}
+                />
+              </div>
+              <div className="monitor-chart-mode-toggle">
+                <button
+                  type="button"
+                  className={(chartModeByContainer[c.name] ?? 'all') === 'all' ? 'btn-primary' : 'btn-monitor-inactive'}
+                  onClick={() => setChartModeByContainer((prev: Record<string, ChartMode>) => ({ ...prev, [c.name]: 'all' }))}
+                >
+                  Всё на одном
+                </button>
+                <button
+                  type="button"
+                  className={(chartModeByContainer[c.name] ?? 'all') === 'separate' ? 'btn-primary' : 'btn-monitor-inactive'}
+                  onClick={() => setChartModeByContainer((prev: Record<string, ChartMode>) => ({ ...prev, [c.name]: 'separate' }))}
+                >
+                  По отдельности
+                </button>
+              </div>
+              <div className="monitor-chart-block">
+                {(chartModeByContainer[c.name] ?? 'all') === 'all' ? (
+                  <MonitorTimeChart data={c.history ?? []} type="container" width={CHART_WIDTH} height={CHART_HEIGHT} />
+                ) : (
+                  <>
+                    <div className="monitor-chart-panel monitor-chart-panel--compact">
+                      <h4 className="monitor-chart-title">CPU</h4>
+                      <MonitorTimeChart data={c.history ?? []} type="cpu" width={CHART_WIDTH} height={CHART_HEIGHT} />
+                    </div>
+                    <div className="monitor-chart-panel monitor-chart-panel--compact">
+                      <h4 className="monitor-chart-title">RAM</h4>
+                      <MonitorTimeChart data={c.history ?? []} type="ram" width={CHART_WIDTH} height={CHART_HEIGHT} />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+          {data && ((section === 'gpus' && gpus.length === 0) || (!showGpus && filteredContainers.length === 0)) && (
+            <div className="monitor-section-frame monitor-section-frame--empty">
+              <h3 className="monitor-section-title">{SECTION_LABELS[section]}</h3>
+              <p className="text-muted monitor-containers-hint">
+                Нет блоков в этом разделе. Проверьте, что сервисы запущены и в admin-backend смонтирован <code>/var/run/docker.sock</code>.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

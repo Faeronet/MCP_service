@@ -479,6 +479,9 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   gap: 16px;
   margin-top: 14px;
 }
+.page-header-row--center {
+  justify-content: center;
+}
 .monitor-uptime {
   font-size: 0.875rem;
   color: var(--text-muted);
