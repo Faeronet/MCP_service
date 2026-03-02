@@ -77,11 +77,18 @@ def main():
                         body = r.text
                     except Exception:
                         body = ""
-                    log.error(
-                        "mcp-write ingest_document failed: status=%s body=%s",
-                        r.status_code,
-                        body[:500] if body else "",
-                    )
+                    if r.status_code == 404 and "file_not_found" in body:
+                        log.warning(
+                            "ingest skipped: file no longer in storage (doc deleted?), job_id=%s doc_id=%s",
+                            job_id,
+                            doc_id,
+                        )
+                    else:
+                        log.error(
+                            "mcp-write ingest_document failed: status=%s body=%s",
+                            r.status_code,
+                            body[:500] if body else "",
+                        )
                 r.raise_for_status()
                 result = r.json()
 
