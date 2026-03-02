@@ -57,7 +57,7 @@ type metricsState struct {
 }
 
 type cpuSample struct {
-	total, idle uint64
+	total, usSy uint64 // usSy = user + system (только us и sy из /proc/stat)
 	at          time.Time
 }
 
@@ -74,7 +74,9 @@ type diskSample struct {
 
 var metricsStore metricsState
 
-func readProcStatCPU() (total, idle uint64, err error) {
+// readProcStatCPUUsSy читает первую строку "cpu " из /proc/stat и возвращает total (сумма всех полей) и usSy (user + system).
+// Поля: cpu user nice system idle iowait irq softirq steal guest guest_nice — индексы 1=user, 3=system.
+func readProcStatCPUUsSy() (total, usSy uint64, err error) {
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return 0, 0, err
@@ -93,15 +95,17 @@ func readProcStatCPU() (total, idle uint64, err error) {
 			u, _ := strconv.ParseUint(fields[i], 10, 64)
 			total += u
 		}
-		idle, _ = strconv.ParseUint(fields[4], 10, 64)
-		return total, idle, nil
+		user, _ := strconv.ParseUint(fields[1], 10, 64)
+		system, _ := strconv.ParseUint(fields[3], 10, 64)
+		usSy = user + system
+		return total, usSy, nil
 	}
 	return 0, 0, fmt.Errorf("cpu line not found")
 }
 
 // getProcStatTotalJiffies returns the sum of all "cpu " line fields (total jiffies across all cores).
 func getProcStatTotalJiffies() (uint64, error) {
-	total, _, err := readProcStatCPU()
+	total, _, err := readProcStatCPUUsSy()
 	return total, err
 }
 
@@ -351,21 +355,21 @@ func collectCPU(prev *cpuSample, prevCgroup *cgroupCPUSample) (pct int, next cpu
 		return 0, *prev, nextCgroup
 	}
 
-	// Fallback: host CPU from /proc/stat
-	total, idle, err := readProcStatCPU()
+	// Fallback: host CPU from /proc/stat — только user + system (us и sy)
+	total, usSy, err := readProcStatCPUUsSy()
 	if err != nil {
 		return 0, *prev, nextCgroup
 	}
-	next = cpuSample{total: total, idle: idle, at: now}
+	next = cpuSample{total: total, usSy: usSy, at: now}
 	if prev.at.IsZero() || prev.total == 0 {
 		return 0, next, nextCgroup
 	}
 	dt := total - prev.total
-	di := idle - prev.idle
+	dUsSy := usSy - prev.usSy
 	if dt == 0 {
 		return 0, next, nextCgroup
 	}
-	usage := (float64(dt-di) / float64(dt)) * 100
+	usage := (float64(dUsSy) / float64(dt)) * 100
 	if usage < 0 {
 		usage = 0
 	}
@@ -376,7 +380,7 @@ func collectCPU(prev *cpuSample, prevCgroup *cgroupCPUSample) (pct int, next cpu
 }
 
 func collectRAM() (pct int, usedGB, totalGB float64) {
-	// Всегда используем /proc/meminfo и формулу как в top: used = MemTotal - MemFree - Buffers - Cached.
+	// Память — только used: used = MemTotal - MemFree - Buffers - Cached (как в top).
 	total, _, free, buffers, cached, err := readProcMeminfoFull()
 	if err != nil || total == 0 {
 		return 0, 0, 0
