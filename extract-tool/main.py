@@ -5,11 +5,13 @@ POST /extract — универсальный вход; POST /ocr, POST /asr — 
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
 import os
 import tarfile
 import zipfile
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 
@@ -36,9 +38,38 @@ def _device():
     except Exception:
         return "cpu"
 
-app = FastAPI(title="extract-tool")
 _ocr_reader = None
 _asr_model = None
+
+
+def _preload_models() -> None:
+    """Синхронная предзагрузка OCR и ASR в фоне (вызывается из пула потоков)."""
+    log.info("Preloading OCR model...")
+    try:
+        get_ocr()
+        log.info("OCR model preloaded")
+    except Exception as e:
+        log.warning("OCR preload failed: %s", e)
+    log.info("Preloading ASR model...")
+    try:
+        get_asr()
+        log.info("ASR model preloaded")
+    except Exception as e:
+        log.warning("ASR preload failed: %s", e)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """При старте приложения предзагружаем модели в пуле потоков."""
+    log.info("Startup: preloading OCR and ASR models in background...")
+    await asyncio.to_thread(_preload_models)
+    log.info("Startup: models ready")
+    yield
+    # shutdown: при необходимости можно выгрузить модели
+    log.info("Shutdown: extract-tool")
+
+
+app = FastAPI(title="extract-tool", lifespan=lifespan)
 
 
 def _hf_token_or_none():
