@@ -9,6 +9,13 @@ const POLL_MS = 3000
 const MAX_HISTORY = 60
 const CHART_WIDTH = 700
 const CHART_HEIGHT = 220
+/** Интервал между точками на графике (секунды). */
+const POINT_INTERVAL_MS = 30000
+
+function formatTooltipTime(ts: string): string {
+  const s = new Date(ts).toString()
+  return s.replace(/\s*\([^)]*\)$/, '').trim()
+}
 
 type ChartSeriesEntry = { values: number[]; color: string; scale: number }
 type ChartSeries = Record<string, ChartSeriesEntry | undefined>
@@ -210,6 +217,8 @@ export function Monitor() {
 
 const CHART_COLORS = { cpu: '#22c55e', ram: '#3b82f6', disk_io: '#3b82f6', gpu: '#06b6d4', vram: '#eab308' }
 
+type TooltipState = { key: string; index: number; value: number; ts: string; x: number; y: number } | null
+
 function MonitorTimeChart({
   data,
   type,
@@ -225,9 +234,24 @@ function MonitorTimeChart({
   width?: number
   height?: number
 }) {
+  const [tooltip, setTooltip] = useState<TooltipState>(null)
   const padding = { top: 20, right: 50, bottom: 32, left: 44 }
   const innerW = width - padding.left - padding.right
   const innerH = height - padding.top - padding.bottom
+
+  const pointIndices = useMemo(() => {
+    if (!data.length) return []
+    const out: number[] = [0]
+    let lastT = new Date(data[0].ts).getTime()
+    data.forEach((d, i) => {
+      const t = new Date(d.ts).getTime()
+      if (i > 0 && t - lastT >= POINT_INTERVAL_MS) {
+        out.push(i)
+        lastT = t
+      }
+    })
+    return out
+  }, [data])
 
   const series = useMemo(() => {
     if (type === 'system') {
@@ -291,6 +315,20 @@ function MonitorTimeChart({
 
   return (
     <div className="monitor-chart-wrap monitor-chart-wrap--normal monitor-chart-wrap--compact">
+      {tooltip && (
+        <div
+          className="monitor-chart-tooltip"
+          style={{ left: tooltip.x + 12, top: tooltip.y - 8 }}
+          role="tooltip"
+        >
+          <div className="monitor-chart-tooltip-metric">
+            {labels[tooltip.key]} usage: {tooltip.value.toFixed(2)} %
+          </div>
+          <div className="monitor-chart-tooltip-time">
+            {formatTooltipTime(tooltip.ts)}
+          </div>
+        </div>
+      )}
       <div className="monitor-chart-legend">
         {keys.map(k => (
           <span key={k} className="monitor-legend-item">
@@ -326,16 +364,22 @@ function MonitorTimeChart({
             <g key={k}>
               <path d={areaPath} fill={`url(#${gradPrefix}-grad-${k})`} className="monitor-area" />
               <path d={d} fill="none" stroke={ent.color} strokeWidth={2} className="monitor-line" />
-              {ent.values.map((val, i) => (
-                <circle
-                  key={`${k}-${i}`}
-                  cx={xScale(i)}
-                  cy={yScale(val, maxV)}
-                  r={3}
-                  fill={ent.color}
-                  className="monitor-point"
-                />
-              ))}
+              {pointIndices.filter(i => i < ent.values.length).map(i => {
+                const val = ent.values[i]
+                const ts = data[i]?.ts ?? ''
+                return (
+                  <circle
+                    key={`${k}-${i}`}
+                    cx={xScale(i)}
+                    cy={yScale(val, maxV)}
+                    r={4}
+                    fill={ent.color}
+                    className="monitor-point"
+                    onMouseEnter={e => setTooltip({ key: k, index: i, value: val, ts, x: e.clientX, y: e.clientY })}
+                    onMouseLeave={() => setTooltip(null)}
+                  />
+                )
+              })}
             </g>
           )
         })}

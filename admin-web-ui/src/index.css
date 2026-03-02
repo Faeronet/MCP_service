@@ -687,6 +687,27 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 .monitor-chart-svg--normal .monitor-area {
   opacity: 0.6;
 }
+.monitor-chart-tooltip {
+  position: fixed;
+  z-index: 10000;
+  padding: 10px 14px;
+  background: rgba(30, 34, 38, 0.98);
+  border: 1px solid var(--content-border);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  color: #fff;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+.monitor-chart-tooltip-metric {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.monitor-chart-tooltip-time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
 .gpu-card-frame {
   border: 1px solid var(--content-border);
   border-radius: 12px;
