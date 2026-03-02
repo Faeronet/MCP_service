@@ -1,6 +1,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { listJobs, getJob } from '../api'
 
+type SortDir = 'asc' | 'desc' | null
+
+function cycleSort(current: SortDir): SortDir {
+  if (current === null) return 'asc'
+  if (current === 'asc') return 'desc'
+  return null
+}
+
 const PAGE_SIZE = 20
 
 export function Jobs() {
@@ -8,6 +16,9 @@ export function Jobs() {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Record<string, unknown> | null>(null)
   const [page, setPage] = useState(1)
+  const [idSort, setIdSort] = useState<SortDir>(null)
+  const [statusSort, setStatusSort] = useState<SortDir>(null)
+  const [createdSort, setCreatedSort] = useState<SortDir>(null)
 
   const load = async () => {
     try {
@@ -20,12 +31,33 @@ export function Jobs() {
 
   useEffect(() => { load() }, [])
 
-  const total = jobs.length
+  const sortedJobs = useMemo(() => {
+    const list = [...jobs]
+    if (list.length === 0) return list
+    const str = (x: unknown) => String(x ?? '')
+    const createdVal = (j: Record<string, unknown>) => (j.created_at ? new Date(str(j.created_at)).getTime() : 0)
+    return list.sort((a, b) => {
+      if (idSort) {
+        const c = str(a.id).localeCompare(str(b.id), undefined, { sensitivity: 'base' }) * (idSort === 'asc' ? 1 : -1)
+        if (c !== 0) return c
+      }
+      if (statusSort) {
+        const c = str(a.status).localeCompare(str(b.status), undefined, { sensitivity: 'base' }) * (statusSort === 'asc' ? 1 : -1)
+        if (c !== 0) return c
+      }
+      if (createdSort) {
+        return Math.sign(createdVal(a) - createdVal(b)) * (createdSort === 'asc' ? 1 : -1)
+      }
+      return 0
+    })
+  }, [jobs, idSort, statusSort, createdSort])
+
+  const total = sortedJobs.length
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const paginatedJobs = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE
-    return jobs.slice(start, start + PAGE_SIZE)
-  }, [jobs, page])
+    return sortedJobs.slice(start, start + PAGE_SIZE)
+  }, [sortedJobs, page])
 
   const openJob = async (id: string) => {
     try {
@@ -51,10 +83,22 @@ export function Jobs() {
                 <table className="data-table data-table-header">
                   <thead>
                     <tr>
-                      <th style={{ width: '22%' }}>ID</th>
+                      <th style={{ width: '22%' }}>
+                        <button type="button" className="th-sort-btn" onClick={() => setIdSort(cycleSort(idSort))} title="Сортировка по ID">
+                          ID {idSort === 'asc' && '↑'} {idSort === 'desc' && '↓'}
+                        </button>
+                      </th>
                       <th style={{ width: '15%' }}>Type</th>
-                      <th style={{ width: '18%' }}>Status</th>
-                      <th style={{ width: '45%' }}>Created</th>
+                      <th style={{ width: '18%' }}>
+                        <button type="button" className="th-sort-btn" onClick={() => setStatusSort(cycleSort(statusSort))} title="Сортировка по статусу">
+                          Status {statusSort === 'asc' && '↑'} {statusSort === 'desc' && '↓'}
+                        </button>
+                      </th>
+                      <th style={{ width: '45%' }}>
+                        <button type="button" className="th-sort-btn" onClick={() => setCreatedSort(cycleSort(createdSort))} title="Сортировка по дате">
+                          Created {createdSort === 'asc' && '↑'} {createdSort === 'desc' && '↓'}
+                        </button>
+                      </th>
                     </tr>
                   </thead>
                 </table>

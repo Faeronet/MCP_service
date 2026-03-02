@@ -2,6 +2,14 @@ import { useState, useEffect, useMemo } from 'react'
 import { listDocs, uploadFile, deleteDoc } from '../api'
 import { useToast } from '../context/ToastContext'
 
+type SortDir = 'asc' | 'desc' | null
+
+function cycleSort(current: SortDir): SortDir {
+  if (current === null) return 'asc'
+  if (current === 'asc') return 'desc'
+  return null
+}
+
 const PAGE_SIZE = 20
 
 export function Docs() {
@@ -9,8 +17,10 @@ export function Docs() {
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [page, setPage] = useState(1)
-  const [fileName, setFileName] = useState('')
+  const [fileLabel, setFileLabel] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [nameSort, setNameSort] = useState<SortDir>(null)
+  const [createdSort, setCreatedSort] = useState<SortDir>(null)
   const toast = useToast()
 
   const load = async () => {
@@ -26,15 +36,31 @@ export function Docs() {
 
   useEffect(() => { load() }, [])
 
-  const total = docs.length
+  const sortedDocs = useMemo(() => {
+    const list = [...docs]
+    if (list.length === 0) return list
+    const createdVal = (d: { created_at: string }) => new Date(d.created_at).getTime()
+    return list.sort((a, b) => {
+      if (nameSort) {
+        const c = String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) * (nameSort === 'asc' ? 1 : -1)
+        if (c !== 0) return c
+      }
+      if (createdSort) {
+        return Math.sign(createdVal(a) - createdVal(b)) * (createdSort === 'asc' ? 1 : -1)
+      }
+      return 0
+    })
+  }, [docs, nameSort, createdSort])
+
+  const total = sortedDocs.length
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const paginatedDocs = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE
-    return docs.slice(start, start + PAGE_SIZE)
-  }, [docs, page])
+    return sortedDocs.slice(start, start + PAGE_SIZE)
+  }, [sortedDocs, page])
 
   const hasSelection = selectedIds.size > 0
-  const allSelected = docs.length > 0 && selectedIds.size === docs.length
+  const allSelected = sortedDocs.length > 0 && selectedIds.size === sortedDocs.length
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev: Set<string>) => {
@@ -47,27 +73,38 @@ export function Docs() {
 
   const toggleSelectAll = () => {
     if (allSelected) setSelectedIds(new Set())
-    else setSelectedIds(new Set(docs.map(d => d.id)))
+    else setSelectedIds(new Set(sortedDocs.map(d => d.id)))
   }
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setFileName(file.name)
+  const onFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files?.length) return
+    const list = Array.from(files)
+    setFileLabel(list.length === 1 ? list[0].name : `Файлов: ${list.length}`)
     setUploading(true)
+    let ok = 0
+    let fail = 0
     try {
-      await uploadFile(file, file.name)
-      toast.success('Файл загружен.')
-      setFileName('')
+      for (const file of list) {
+        try {
+          await uploadFile(file, file.name)
+          ok++
+        } catch {
+          fail++
+        }
+      }
       await load()
+      if (fail === 0) toast.success(ok === 1 ? 'Файл загружен.' : `Загружено файлов: ${ok}.`)
+      else toast.error(`Загружено: ${ok}, ошибок: ${fail}.`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setUploading(false)
+      setFileLabel('')
+      e.target.value = ''
     }
-    e.target.value = ''
   }
 
   const onDeleteSelected = async () => {
@@ -97,11 +134,12 @@ export function Docs() {
         <div className="input-line">
           <label className="file-input-wrap">
             <span className="file-input-btn">Обзор…</span>
-            <span className="file-input-label">{fileName || 'Файл не выбран.'}</span>
+            <span className="file-input-label">{fileLabel || 'Файл(ы) не выбраны.'}</span>
             <input
               type="file"
               className="file-input-hidden"
-              onChange={onFile}
+              multiple
+              onChange={onFiles}
               disabled={uploading}
             />
           </label>
@@ -132,9 +170,17 @@ export function Docs() {
                 <table className="data-table data-table-header">
                   <thead>
                     <tr>
-                      <th style={{ width: '30%' }}>Name</th>
+                      <th style={{ width: '30%' }}>
+                        <button type="button" className="th-sort-btn" onClick={() => setNameSort(cycleSort(nameSort))} title="Сортировка по имени">
+                          Name {nameSort === 'asc' && '↑'} {nameSort === 'desc' && '↓'}
+                        </button>
+                      </th>
                       <th style={{ width: '42%' }}>ID</th>
-                      <th style={{ width: '23%' }}>Created</th>
+                      <th style={{ width: '23%' }}>
+                        <button type="button" className="th-sort-btn" onClick={() => setCreatedSort(cycleSort(createdSort))} title="Сортировка по дате">
+                          Created {createdSort === 'asc' && '↑'} {createdSort === 'desc' && '↓'}
+                        </button>
+                      </th>
                       <th style={{ width: 40 }}></th>
                     </tr>
                   </thead>
