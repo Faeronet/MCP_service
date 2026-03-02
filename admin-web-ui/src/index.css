@@ -518,11 +518,15 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   margin-bottom: 16px;
 }
 .monitor-chart-block {
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
 }
+.monitor-section-frame .monitor-chart-wrap--compact {
+  width: 100%;
+}
 .monitor-chart-wrap--compact {
-  width: fit-content;
+  width: 100%;
+  max-width: 100%;
 }
 .monitor-chart-panel--compact {
   width: fit-content;
@@ -645,7 +649,7 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   width: 100%;
   max-width: 100%;
   height: auto;
-  min-height: 200px;
+  min-height: 180px;
   display: block;
 }
 .monitor-grid-line {
@@ -654,7 +658,11 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 }
 .monitor-area { opacity: 0.85; }
 .monitor-line { stroke-linecap: round; stroke-linejoin: round; }
-.monitor-point { cursor: pointer; stroke: rgba(0,0,0,0.3); stroke-width: 1; }
+.monitor-point {
+  cursor: pointer;
+  stroke: rgba(0, 0, 0, 0.4);
+  stroke-width: 1.5;
+}
 .monitor-tooltip { pointer-events: auto; }
 .monitor-axis-label {
   fill: var(--text-muted);

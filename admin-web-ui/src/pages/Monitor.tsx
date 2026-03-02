@@ -7,8 +7,8 @@ type ChartMode = 'all' | 'separate'
 
 const POLL_MS = 3000
 const MAX_HISTORY = 60
-const CHART_WIDTH = 520
-const CHART_HEIGHT = 200
+const CHART_WIDTH = 700
+const CHART_HEIGHT = 220
 
 type ChartSeriesEntry = { values: number[]; color: string; scale: number }
 type ChartSeries = Record<string, ChartSeriesEntry | undefined>
@@ -233,12 +233,10 @@ function MonitorTimeChart({
     if (type === 'system') {
       const cpu = data.map(d => d.cpu)
       const ram = data.map(d => d.ram)
-      const disk = data.map(d => d.disk_io)
-      const maxVal = Math.max(100, ...cpu, ...ram, Math.max(0, ...disk) / 1000)
+      const maxVal = Math.max(100, ...cpu, ...ram)
       return {
         cpu: { values: cpu, color: CHART_COLORS.cpu, scale: maxVal },
         ram: { values: ram, color: CHART_COLORS.ram, scale: maxVal },
-        disk_io: { values: disk.map(d => d / 1000), color: CHART_COLORS.disk_io, scale: Math.max(maxVal, 8) },
       }
     }
     if (type === 'cpu') {
@@ -264,7 +262,7 @@ function MonitorTimeChart({
     }
   }, [data, type, gpuIndex, gpuSeries])
 
-  const keys: string[] = type === 'system' ? ['cpu', 'ram', 'disk_io'] : type === 'cpu' ? ['cpu'] : type === 'ram' ? ['ram'] : gpuSeries ? [gpuSeries] : ['gpu', 'vram']
+  const keys: string[] = type === 'system' ? ['cpu', 'ram'] : type === 'cpu' ? ['cpu'] : type === 'ram' ? ['ram'] : gpuSeries ? [gpuSeries] : ['gpu', 'vram']
   const seriesMap = series as ChartSeries
   const n = data.length
   const xScale = (i: number) => (n <= 1 ? padding.left : padding.left + (i / Math.max(1, n - 1)) * innerW)
@@ -301,7 +299,7 @@ function MonitorTimeChart({
           </span>
         ))}
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="monitor-chart-svg monitor-chart-svg--normal" style={{ width: '100%', maxWidth: width, minHeight: height }} preserveAspectRatio="xMidYMid meet">
+      <svg viewBox={`0 0 ${width} ${height}`} className="monitor-chart-svg monitor-chart-svg--normal" style={{ width: '100%', height: 'auto', minHeight: 180 }} preserveAspectRatio="xMidYMid meet">
         <defs>
           {keys.map(k => (
             <linearGradient key={k} id={`${gradPrefix}-grad-${k}`} x1="0" y1="1" x2="0" y2="0">
@@ -323,10 +321,21 @@ function MonitorTimeChart({
           const ent = seriesMap[k]
           if (!d || !ent?.values.length) return null
           const areaPath = d + ` L ${xScale(ent.values.length - 1)} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`
+          const maxV = ent.scale
           return (
             <g key={k}>
               <path d={areaPath} fill={`url(#${gradPrefix}-grad-${k})`} className="monitor-area" />
               <path d={d} fill="none" stroke={ent.color} strokeWidth={2} className="monitor-line" />
+              {ent.values.map((val, i) => (
+                <circle
+                  key={`${k}-${i}`}
+                  cx={xScale(i)}
+                  cy={yScale(val, maxV)}
+                  r={3}
+                  fill={ent.color}
+                  className="monitor-point"
+                />
+              ))}
             </g>
           )
         })}
