@@ -313,6 +313,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	_, _ = b.appendMessage(ctx, sessionID, "user", msg.Text)
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
 
+	// Сообщение об ожидании — как можно раньше после получения сообщения пользователя
+	typingMsgID := b.sendReplyTyping(ctx, chatID)
+
 	var contextText string
 	// Ответ на наше сообщение: берём сохранённый контекст, сразу промпт B (без запроса в Qdrant)
 	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.IsBot {
@@ -393,8 +396,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		}
 	}
 
-	// Ответ по контексту с промптом B
-	typingMsgID := b.sendReplyTyping(ctx, chatID)
+	// Ответ по контексту с промптом B (typingMsgID уже отправлен выше)
 	systemContent := b.promptB + "\n" + contextText
 	reply, err := b.callLLM(ctx, requestID, systemContent, msg.Text)
 	reply = stripThink(reply)
@@ -862,6 +864,9 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		b.sendReply(ctx, chatID, "Ошибка сессии.")
 		return
 	}
+	// Сообщение об ожидании — как можно раньше после получения вложения
+	typingMsgID := b.sendReplyTyping(ctx, chatID)
+
 	var fileID string
 	var objectKey string
 	var fileName string
@@ -883,7 +888,11 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	file, err := b.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if err != nil {
 		log.Warn(ctx, "telegram get file", logging.KV{"error", err}, logging.KV{"file_id", fileID})
-		b.sendReply(ctx, chatID, "Не удалось получить файл.")
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, "Не удалось получить файл.")
+		} else {
+			b.sendReply(ctx, chatID, "Не удалось получить файл.")
+		}
 		return
 	}
 	downloadURL := "https://api.telegram.org/file/bot" + b.bot.Token + "/" + file.FilePath
@@ -891,14 +900,22 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Warn(ctx, "download file from telegram", logging.KV{"error", err})
-		b.sendReply(ctx, chatID, "Не удалось скачать файл.")
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, "Не удалось скачать файл.")
+		} else {
+			b.sendReply(ctx, chatID, "Не удалось скачать файл.")
+		}
 		return
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		log.Warn(ctx, "read telegram file body", logging.KV{"error", err})
-		b.sendReply(ctx, chatID, "Ошибка чтения файла.")
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, "Ошибка чтения файла.")
+		} else {
+			b.sendReply(ctx, chatID, "Ошибка чтения файла.")
+		}
 		return
 	}
 	if _, err := b.minio.Put(ctx, objectKey, bytes.NewReader(data), "application/octet-stream", int64(len(data))); err != nil {
@@ -910,11 +927,19 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	extracted, userErr, err := b.callExtract(ctx, data, fileName)
 	if err != nil {
 		log.Warn(ctx, "extract failed", logging.KV{"error", err})
-		b.sendReply(ctx, chatID, "Не удалось обработать файл.")
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, "Не удалось обработать файл.")
+		} else {
+			b.sendReply(ctx, chatID, "Не удалось обработать файл.")
+		}
 		return
 	}
 	if userErr != "" {
-		b.sendReply(ctx, chatID, userErr)
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, userErr)
+		} else {
+			b.sendReply(ctx, chatID, userErr)
+		}
 		return
 	}
 	_, err = b.pool.Exec(ctx,
@@ -933,7 +958,11 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	key := fmt.Sprintf("user:%d", userID)
 	if !b.perChatLimiter.Allow(key) {
 		log.Warn(ctx, "per-user rate limit (attachment)", logging.KV{"user_id", userID})
-		b.sendReply(ctx, chatID, "Слишком много запросов, подождите.")
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, "Слишком много запросов, подождите.")
+		} else {
+			b.sendReply(ctx, chatID, "Слишком много запросов, подождите.")
+		}
 		return
 	}
 	_, _ = b.appendMessage(ctx, sessionID, "user", userMsg)
@@ -1021,7 +1050,7 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		return
 	}
 	defer b.llmLimiter.Release()
-	typingMsgID := b.sendReplyTyping(ctx, chatID)
+	// typingMsgID уже отправлен в начале handleAttachment
 	systemContent := b.promptB + "\n" + contextText
 	reply, err := b.callLLM(ctx, requestID, systemContent, userMsg)
 	reply = stripThink(reply)

@@ -63,7 +63,7 @@ export function Monitor() {
   const [section, setSection] = useState<MonitorSection>('gpus')
   const [data, setData] = useState<MonitorMetricsResponse | null>(cachedData)
   const [loading, setLoading] = useState(!cachedData)
-  const [chartModeGpu, setChartModeGpu] = useState<ChartMode>('all')
+  const [chartModeByGpu, setChartModeByGpu] = useState<Record<number, ChartMode>>({})
   const [chartModeByContainer, setChartModeByContainer] = useState<Record<string, ChartMode>>({})
   const toast = useToast()
 
@@ -162,21 +162,21 @@ export function Monitor() {
               <div className="monitor-chart-mode-toggle">
                 <button
                   type="button"
-                  className={chartModeGpu === 'all' ? 'btn-primary' : 'btn-monitor-inactive'}
-                  onClick={() => setChartModeGpu('all')}
+                  className={(chartModeByGpu[idx] ?? 'all') === 'all' ? 'btn-primary' : 'btn-monitor-inactive'}
+                  onClick={() => setChartModeByGpu((prev: Record<number, ChartMode>) => ({ ...prev, [idx]: 'all' }))}
                 >
                   Всё на одном
                 </button>
                 <button
                   type="button"
-                  className={chartModeGpu === 'separate' ? 'btn-primary' : 'btn-monitor-inactive'}
-                  onClick={() => setChartModeGpu('separate')}
+                  className={(chartModeByGpu[idx] ?? 'all') === 'separate' ? 'btn-primary' : 'btn-monitor-inactive'}
+                  onClick={() => setChartModeByGpu((prev: Record<number, ChartMode>) => ({ ...prev, [idx]: 'separate' }))}
                 >
                   По отдельности
                 </button>
               </div>
               <div className="monitor-chart-block">
-                {chartModeGpu === 'all' ? (
+                {(chartModeByGpu[idx] ?? 'all') === 'all' ? (
                   <MonitorTimeChart data={chartData} type="gpu" gpuIndex={idx} width={CHART_WIDTH} height={CHART_HEIGHT} />
                 ) : (
                   <>
