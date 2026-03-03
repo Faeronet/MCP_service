@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -288,8 +289,12 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 				searchQuery = msg.Text
 			}
 		}
-		normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
-		switch normalizedQuery {
+		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
+		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
+			contextText = "date not found"
+		} else {
+			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
+			switch normalizedQuery {
 		case "[name] all":
 			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
 			var errNames error
@@ -320,6 +325,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 				log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
 				contextText = ""
 			}
+		}
 		}
 	}
 
@@ -511,7 +517,74 @@ var monthVariants = []string{
 	"декабря", "декабрля", "декбаря", "декабрь",
 }
 var reDateMonthRu = regexp.MustCompile(`(\d{1,2})\s+(` + strings.Join(monthVariants, "|") + `)`)
-var reDateDot = regexp.MustCompile(`\d{1,2}\.\d{1,2}(?:\.\d{2,4})?`)
+var reDateDot = regexp.MustCompile(`(\d{1,2})\.(\d{1,2})(?:\.\d{2,4})?`)
+
+// monthNameToNum — маппинг вариантов названия месяца (р.п.) на номер 1–12.
+var monthNameToNum = func() map[string]int {
+	groups := [][]string{
+		{"января", "янвря", "янаря", "январь"},
+		{"февраля", "феврля", "феварля", "февраль"},
+		{"марта", "матра", "мрта", "март"},
+		{"апреля", "апереля", "апрелья", "апрель"},
+		{"мая", "май"},
+		{"июня", "июна", "июнь"},
+		{"июля", "июль"},
+		{"августа", "авгста", "август"},
+		{"сентября", "сентябрь", "сентебря", "сентябра"},
+		{"октября", "октбря", "октябрья", "октябрь"},
+		{"ноября", "ноебря", "оября", "ноядбоя", "ноябрь", "ноябра"},
+		{"декабря", "декабрля", "декбаря", "декабрь"},
+	}
+	m := make(map[string]int)
+	for i, variants := range groups {
+		for _, v := range variants {
+			m[strings.ToLower(v)] = i + 1
+		}
+	}
+	return m
+}()
+
+// maxDaysInMonth — макс. число дней в месяце (февраль высокосный = 29).
+func maxDaysInMonth(month int) int {
+	switch month {
+	case 1, 3, 5, 7, 8, 10, 12:
+		return 31
+	case 4, 6, 9, 11:
+		return 30
+	case 2:
+		return 29
+	default:
+		return 0
+	}
+}
+
+// parseDayMonthFromQuery парсит из строки запроса день и месяц. Возвращает (day, month 1–12, ok).
+func parseDayMonthFromQuery(query string) (day, month int, ok bool) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return 0, 0, false
+	}
+	if m := reDateMonthRu.FindStringSubmatch(q); len(m) >= 3 {
+		d, err := strconv.Atoi(m[1])
+		if err != nil || d < 1 || d > 31 {
+			return 0, 0, false
+		}
+		monName := strings.ToLower(strings.TrimSpace(m[2]))
+		if mon, has := monthNameToNum[monName]; has {
+			return d, mon, true
+		}
+		return d, 0, false
+	}
+	if m := reDateDot.FindStringSubmatch(q); len(m) >= 3 {
+		d, err1 := strconv.Atoi(m[1])
+		mon, err2 := strconv.Atoi(m[2])
+		if err1 != nil || err2 != nil || mon < 1 || mon > 12 || d < 1 || d > 31 {
+			return 0, 0, false
+		}
+		return d, mon, true
+	}
+	return 0, 0, false
+}
 
 // extractDateFromQuestion извлекает из текста дату (для поиска в Qdrant при NULL от модели). Учитывает опечатки в названиях месяцев.
 func extractDateFromQuestion(question string) string {
@@ -717,36 +790,41 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				searchQuery = userMsg
 			}
 		}
-		normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
-		switch normalizedQuery {
-		case "[name] all":
-			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
-			var errNames error
-			contextText, errNames = b.getAllNames(ctx, requestID)
-			if errNames != nil {
-				log.Warn(ctx, "getAllNames for attachment failed", logging.KV{"error", errNames})
-				contextText = ""
-			}
-		case "[date] list":
-			contextText = ""
-		default:
-			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
-			attachmentsText := b.getAttachmentsText(ctx, sessionID)
-			var err error
-			contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
-			if err != nil {
-				if err.Error() == "chunk_not_found" {
-					b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-					_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-					return
+		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
+		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
+			contextText = "date not found"
+		} else {
+			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
+			switch normalizedQuery {
+			case "[name] all":
+				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+				var errNames error
+				contextText, errNames = b.getAllNames(ctx, requestID)
+				if errNames != nil {
+					log.Warn(ctx, "getAllNames for attachment failed", logging.KV{"error", errNames})
+					contextText = ""
 				}
-				if err.Error() == "date_not_found" {
-					b.sendReply(ctx, chatID, "Данные не найдены.")
-					_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-					return
-				}
-				log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+			case "[date] list":
 				contextText = ""
+			default:
+				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+				attachmentsText := b.getAttachmentsText(ctx, sessionID)
+				var err error
+				contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+				if err != nil {
+					if err.Error() == "chunk_not_found" {
+						b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+						_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+						return
+					}
+					if err.Error() == "date_not_found" {
+						b.sendReply(ctx, chatID, "Данные не найдены.")
+						_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+						return
+					}
+					log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+					contextText = ""
+				}
 			}
 		}
 	}
