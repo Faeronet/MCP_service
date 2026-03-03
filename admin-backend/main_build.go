@@ -104,7 +104,7 @@ func main() {
 	mux.Handle("/api/chats", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListChats)))
 	mux.Handle("/api/chats/", authMiddleware(handler.JWTSecret, chatsRouter(handler)))
 	mux.Handle("/api/monitor/metrics", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.MonitorMetrics)))
-	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
+	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, handler.GrafanaProxy()))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "" {
