@@ -92,6 +92,7 @@ func main() {
 
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
+	botDebug := config.LoadInt("BOT_DEBUG", 0)
 
 	app := &Bot{
 		bot:            nil, // set below if token present
@@ -108,6 +109,7 @@ func main() {
 		debounce:       time.Duration(deboounceMs) * time.Millisecond,
 		chatMu:         make(map[int64]chan struct{}),
 		chatMuGuard:    &sync.Mutex{},
+		debugMode:      botDebug,
 	}
 	// Промпты из файлов: A — формулировка запроса для Qdrant, B — ответ по контексту
 	if raw, err := promptFS.ReadFile("prompts/query_extract.txt"); err == nil {
@@ -196,6 +198,41 @@ type Bot struct {
 	chatMuGuard    *sync.Mutex
 	promptA        string // промпт для выделения поискового запроса (LLM → Qdrant)
 	promptB        string // промпт для ответа по контексту (чанки + вопрос)
+	debugMode      int    // 0 = вырезать think и не показывать «на поиск в Qdrant»; 1 = оставить
+}
+
+const welcomeMessage = "Привет! Я ИИ-ассистент, отвечаю на вопросы по книге «Книга ангелов»."
+const chatAlreadyStartedMessage = "Чат уже запущен."
+const chatResetMessage = "Чат сброшен. Отправьте /start для начала."
+
+func (b *Bot) handleStart(ctx context.Context, chatID, userID int64, username string) {
+	var count int64
+	err := b.pool.QueryRow(ctx, `
+		SELECT (SELECT COUNT(*) FROM chat.messages m WHERE m.session_id = s.id)
+		FROM chat.sessions s WHERE s.telegram_id = $1 AND s.chat_id = $2
+	`, userID, chatID).Scan(&count)
+	if err == nil && count > 0 {
+		b.sendReply(ctx, chatID, chatAlreadyStartedMessage)
+		return
+	}
+	_, _ = b.ensureSession(ctx, chatID, userID, username)
+	b.sendReply(ctx, chatID, welcomeMessage)
+}
+
+func (b *Bot) handleRestart(ctx context.Context, chatID, userID int64) {
+	_, err := b.pool.Exec(ctx, `
+		WITH sid AS (
+			SELECT id FROM chat.sessions WHERE telegram_id = $1 AND chat_id = $2
+		)
+		DELETE FROM chat.answer_context WHERE session_id IN (SELECT id FROM sid);
+		DELETE FROM chat.messages WHERE session_id IN (SELECT id FROM sid);
+		DELETE FROM chat.attachments WHERE session_id IN (SELECT id FROM sid);
+		DELETE FROM chat.sessions WHERE telegram_id = $1 AND chat_id = $2
+	`, userID, chatID)
+	if err != nil {
+		log.Warn(ctx, "handleRestart delete failed", logging.KV{"error", err})
+	}
+	b.sendReply(ctx, chatID, chatResetMessage)
 }
 
 func (b *Bot) serializedChat(chatID int64, fn func()) {
@@ -245,7 +282,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	if msg.Text == "" {
 		return
 	}
-	if isSkipCommand(msg.Text) {
+	text := strings.TrimSpace(msg.Text)
+	if isRestartCommand(text) {
+		b.handleRestart(ctx, chatID, userID)
+		return
+	}
+	if isStartCommand(text) {
+		b.handleStart(ctx, chatID, userID, msg.Chat.UserName)
 		return
 	}
 
@@ -285,7 +328,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			log.Warn(ctx, "extract search query failed, using raw message", logging.KV{"error", errExtract})
 			searchQuery = msg.Text
 		}
-		searchQuery = stripThink(searchQuery)
+		if b.debugMode == 0 {
+			searchQuery = stripThink(searchQuery)
+		}
 		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
 			searchQuery = extractDateFromQuestion(msg.Text)
 			if searchQuery == "" {
@@ -315,7 +360,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
 			switch normalizedQuery {
 		case "[name] all":
-			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			if b.debugMode == 1 {
+				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			}
 			var errNames error
 			contextText, errNames = b.getAllNames(ctx, requestID)
 			if errNames != nil {
@@ -326,7 +373,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			// Не ищем в Qdrant — сразу в LLM с промптом B и пустым контекстом
 			contextText = ""
 		default:
-			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			if b.debugMode == 1 {
+				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			}
 			attachmentsText := b.getAttachmentsText(ctx, sessionID)
 			var err error
 			contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
@@ -671,10 +720,14 @@ func stripThink(s string) string {
 	return strings.TrimSpace(reThinkBlock.ReplaceAllString(s, ""))
 }
 
-// isSkipCommand возвращает true для команд вроде /start, /restart — в LLM не отправляем, ответа пока нет.
-func isSkipCommand(text string) bool {
-	t := strings.TrimSpace(strings.ToLower(text))
-	return t == "/start" || t == "/restart" || strings.HasPrefix(t, "/start ") || strings.HasPrefix(t, "/restart ")
+func isStartCommand(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	return t == "/start" || strings.HasPrefix(t, "/start ")
+}
+
+func isRestartCommand(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	return t == "/restart" || t == "/reset" || strings.HasPrefix(t, "/restart ") || strings.HasPrefix(t, "/reset ")
 }
 
 // extractSearchQuery вызывает LLM с промптом A: по вопросу пользователя возвращает запрос для поиска в Qdrant.
@@ -732,13 +785,18 @@ func (b *Bot) sendReply(ctx context.Context, chatID int64, text string) {
 	b.sendReplyWithID(ctx, chatID, text)
 }
 
-// sendReplyWithID отправляет сообщение и возвращает MessageID в Telegram (0 при ошибке).
+// sendReplyWithID отправляет сообщение и возвращает MessageID в Telegram (0 при ошибке). Применяется Markdown.
 func (b *Bot) sendReplyWithID(ctx context.Context, chatID int64, text string) int {
 	if b.bot == nil {
 		return 0
 	}
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
 	sent, err := b.bot.Send(msg)
+	if err != nil {
+		msg.ParseMode = ""
+		sent, err = b.bot.Send(msg)
+	}
 	if err != nil {
 		log.Warn(ctx, "send reply", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
 		return 0
@@ -855,7 +913,9 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			log.Warn(ctx, "extract search query for attachment failed", logging.KV{"error", errExtract})
 			searchQuery = userMsg
 		}
-		searchQuery = stripThink(searchQuery)
+		if b.debugMode == 0 {
+			searchQuery = stripThink(searchQuery)
+		}
 		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
 			searchQuery = extractDateFromQuestion(userMsg)
 			if searchQuery == "" {
@@ -885,7 +945,9 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
 			switch normalizedQuery {
 			case "[name] all":
-				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+				if b.debugMode == 1 {
+					b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+				}
 				var errNames error
 				contextText, errNames = b.getAllNames(ctx, requestID)
 				if errNames != nil {
@@ -895,7 +957,9 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			case "[date] list":
 				contextText = ""
 			default:
-				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+				if b.debugMode == 1 {
+					b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+				}
 				attachmentsText := b.getAttachmentsText(ctx, sessionID)
 				var err error
 				contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")

@@ -288,6 +288,7 @@ services:
       dockerfile: bot-service/Dockerfile
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      BOT_DEBUG: ${BOT_DEBUG:-0}
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
