@@ -245,6 +245,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	if msg.Text == "" {
 		return
 	}
+	if isSkipCommand(msg.Text) {
+		return
+	}
 
 	key := fmt.Sprintf("user:%d", userID)
 	if !b.perChatLimiter.Allow(key) {
@@ -666,6 +669,12 @@ func translateMonthToRussian(s string) string {
 
 func stripThink(s string) string {
 	return strings.TrimSpace(reThinkBlock.ReplaceAllString(s, ""))
+}
+
+// isSkipCommand возвращает true для команд вроде /start, /restart — в LLM не отправляем, ответа пока нет.
+func isSkipCommand(text string) bool {
+	t := strings.TrimSpace(strings.ToLower(text))
+	return t == "/start" || t == "/restart" || strings.HasPrefix(t, "/start ") || strings.HasPrefix(t, "/restart ")
 }
 
 // extractSearchQuery вызывает LLM с промптом A: по вопросу пользователя возвращает запрос для поиска в Qdrant.
