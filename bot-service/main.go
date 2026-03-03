@@ -394,20 +394,35 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 
 	// Ответ по контексту с промптом B
+	typingMsgID := b.sendReplyTyping(ctx, chatID)
 	systemContent := b.promptB + "\n" + contextText
 	reply, err := b.callLLM(ctx, requestID, systemContent, msg.Text)
+	reply = stripThink(reply)
 	if err != nil {
 		log.Error(ctx, "llm call", logging.KV{"error", err}, logging.KV{"vllm_base", b.vllmBase})
 		hint := "Модель недоступна. Проверьте, что vLLM запущен (docker compose --profile vllm up -d) и в .env указан VLLM_OPENAI_BASE."
 		if errStr := err.Error(); len(errStr) < 120 {
 			hint = "Ошибка LLM: " + errStr
 		}
-		b.sendReply(ctx, chatID, hint)
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, hint)
+		} else {
+			b.sendReply(ctx, chatID, hint)
+		}
 		return
 	}
 	msgID, _ := b.appendMessage(ctx, sessionID, "assistant", reply)
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
-	telegramMsgID := b.sendReplyWithID(ctx, chatID, reply)
+	var telegramMsgID int
+	if typingMsgID > 0 {
+		if b.editMessageText(ctx, chatID, typingMsgID, reply) {
+			telegramMsgID = typingMsgID
+		} else {
+			telegramMsgID = b.sendReplyWithID(ctx, chatID, reply)
+		}
+	} else {
+		telegramMsgID = b.sendReplyWithID(ctx, chatID, reply)
+	}
 	if msgID != uuid.Nil && telegramMsgID > 0 {
 		_ = b.updateMessageTelegramID(ctx, msgID, telegramMsgID)
 		_ = b.saveAnswerContext(ctx, sessionID, msgID, contextText)
@@ -804,6 +819,30 @@ func (b *Bot) sendReplyWithID(ctx context.Context, chatID int64, text string) in
 	return sent.MessageID
 }
 
+// sendReplyTyping отправляет «...» и возвращает MessageID (0 при ошибке). Потом его редактируют в итоговый ответ.
+func (b *Bot) sendReplyTyping(ctx context.Context, chatID int64) int {
+	return b.sendReplyWithID(ctx, chatID, "...")
+}
+
+// editMessageText редактирует ранее отправленное сообщение. При ошибке возвращает false.
+func (b *Bot) editMessageText(ctx context.Context, chatID int64, messageID int, text string) bool {
+	if b.bot == nil || messageID <= 0 {
+		return false
+	}
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.ParseMode = "Markdown"
+	_, err := b.bot.Send(edit)
+	if err != nil {
+		edit.ParseMode = ""
+		_, err = b.bot.Send(edit)
+	}
+	if err != nil {
+		log.Warn(ctx, "edit message", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
+		return false
+	}
+	return true
+}
+
 func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID int64, requestID string) {
 	msg := u.Message
 	if b.bot == nil {
@@ -982,11 +1021,18 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		return
 	}
 	defer b.llmLimiter.Release()
+	typingMsgID := b.sendReplyTyping(ctx, chatID)
 	systemContent := b.promptB + "\n" + contextText
 	reply, err := b.callLLM(ctx, requestID, systemContent, userMsg)
+	reply = stripThink(reply)
 	if err != nil {
 		log.Warn(ctx, "llm call for attachment", logging.KV{"error", err})
-		b.sendReply(ctx, chatID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
+		hint := "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата."
+		if typingMsgID > 0 {
+			b.editMessageText(ctx, chatID, typingMsgID, hint)
+		} else {
+			b.sendReply(ctx, chatID, hint)
+		}
 		return
 	}
 	msgID, _ := b.appendMessage(ctx, sessionID, "assistant", reply)
@@ -1005,7 +1051,16 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			replyToUser = replyToUser[:maxReplyLen-20] + "\n..."
 		}
 	}
-	telegramMsgID := b.sendReplyWithID(ctx, chatID, replyToUser)
+	var telegramMsgID int
+	if typingMsgID > 0 {
+		if b.editMessageText(ctx, chatID, typingMsgID, replyToUser) {
+			telegramMsgID = typingMsgID
+		} else {
+			telegramMsgID = b.sendReplyWithID(ctx, chatID, replyToUser)
+		}
+	} else {
+		telegramMsgID = b.sendReplyWithID(ctx, chatID, replyToUser)
+	}
 	if msgID != uuid.Nil && telegramMsgID > 0 {
 		_ = b.updateMessageTelegramID(ctx, msgID, telegramMsgID)
 		_ = b.saveAnswerContext(ctx, sessionID, msgID, contextText)
