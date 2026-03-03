@@ -289,6 +289,15 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 				searchQuery = msg.Text
 			}
 		}
+		userDateStr := extractDateFromQuestion(msg.Text)
+		if userDateStr != "" {
+			_, _, modelHasDate := parseDayMonthFromQuery(searchQuery)
+			trimmed := strings.TrimSpace(searchQuery)
+			if !modelHasDate || isOnlyMonth(trimmed) || isOnlyDay(trimmed) {
+				searchQuery = userDateStr
+			}
+		}
+		searchQuery = translateMonthToRussian(searchQuery)
 		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
 			contextText = "date not found"
@@ -598,6 +607,56 @@ func extractDateFromQuestion(question string) string {
 	return ""
 }
 
+// isOnlyMonth возвращает true, если строка — только название месяца (рус. или англ.), без числа.
+func isOnlyMonth(s string) bool {
+	t := strings.TrimSpace(strings.ToLower(s))
+	if t == "" {
+		return false
+	}
+	if _, has := monthNameToNum[t]; has {
+		return true
+	}
+	_, has := enMonthToRuLower[t]
+	return has
+}
+
+// isOnlyDay возвращает true, если строка — только число 1–31 (день месяца).
+func isOnlyDay(s string) bool {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return false
+	}
+	n, err := strconv.Atoi(t)
+	return err == nil && n >= 1 && n <= 31
+}
+
+// Английские названия месяцев (р.п. или им.п.) → русские в р.п. (для замены в ответе модели).
+var enMonthToRu = map[string]string{
+	"January": "января", "February": "февраля", "March": "марта", "April": "апреля",
+	"May": "мая", "June": "июня", "July": "июля", "August": "августа",
+	"September": "сентября", "October": "октября", "November": "ноября", "December": "декабря",
+	"Jan": "января", "Feb": "февраля", "Mar": "марта", "Apr": "апреля",
+	"Jun": "июня", "Jul": "июля", "Aug": "августа", "Sep": "сентября",
+	"Oct": "октября", "Nov": "ноября", "Dec": "декабря",
+}
+var enMonthToRuLower = func() map[string]string {
+	m := make(map[string]string)
+	for k, v := range enMonthToRu {
+		m[strings.ToLower(k)] = v
+	}
+	return m
+}()
+
+// translateMonthToRussian заменяет в строке английские названия месяцев на русские (р.п.).
+func translateMonthToRussian(s string) string {
+	out := s
+	for en, ru := range enMonthToRu {
+		out = strings.ReplaceAll(out, en, ru)
+		out = strings.ReplaceAll(out, strings.ToLower(en), ru)
+	}
+	return out
+}
+
 func stripThink(s string) string {
 	return strings.TrimSpace(reThinkBlock.ReplaceAllString(s, ""))
 }
@@ -787,6 +846,15 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				searchQuery = userMsg
 			}
 		}
+		userDateStr := extractDateFromQuestion(userMsg)
+		if userDateStr != "" {
+			_, _, modelHasDate := parseDayMonthFromQuery(searchQuery)
+			trimmed := strings.TrimSpace(searchQuery)
+			if !modelHasDate || isOnlyMonth(trimmed) || isOnlyDay(trimmed) {
+				searchQuery = userDateStr
+			}
+		}
+		searchQuery = translateMonthToRussian(searchQuery)
 		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
 			contextText = "date not found"
