@@ -313,17 +313,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 			if err != nil {
 				if err.Error() == "chunk_not_found" {
-					b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-					_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-					return
+					contextText = "По подходящим данным в базе ничего не найдено."
+				} else if err.Error() == "date_not_found" {
+					contextText = "Данные не найдены."
+				} else {
+					log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
+					contextText = ""
 				}
-				if err.Error() == "date_not_found" {
-					b.sendReply(ctx, chatID, "Данные не найдены.")
-					_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-					return
-				}
-				log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
-				contextText = ""
 			}
 		}
 		}
@@ -559,6 +555,7 @@ func maxDaysInMonth(month int) int {
 }
 
 // parseDayMonthFromQuery парсит из строки запроса день и месяц. Возвращает (day, month 1–12, ok).
+// День может быть 0 (для проверки day < 1) или до 31; валидация по maxDaysInMonth делается снаружи.
 func parseDayMonthFromQuery(query string) (day, month int, ok bool) {
 	q := strings.TrimSpace(query)
 	if q == "" {
@@ -566,7 +563,7 @@ func parseDayMonthFromQuery(query string) (day, month int, ok bool) {
 	}
 	if m := reDateMonthRu.FindStringSubmatch(q); len(m) >= 3 {
 		d, err := strconv.Atoi(m[1])
-		if err != nil || d < 1 || d > 31 {
+		if err != nil || d < 0 || d > 31 {
 			return 0, 0, false
 		}
 		monName := strings.ToLower(strings.TrimSpace(m[2]))
@@ -578,7 +575,7 @@ func parseDayMonthFromQuery(query string) (day, month int, ok bool) {
 	if m := reDateDot.FindStringSubmatch(q); len(m) >= 3 {
 		d, err1 := strconv.Atoi(m[1])
 		mon, err2 := strconv.Atoi(m[2])
-		if err1 != nil || err2 != nil || mon < 1 || mon > 12 || d < 1 || d > 31 {
+		if err1 != nil || err2 != nil || mon < 1 || mon > 12 || d < 0 || d > 31 {
 			return 0, 0, false
 		}
 		return d, mon, true
@@ -813,17 +810,13 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 				if err != nil {
 					if err.Error() == "chunk_not_found" {
-						b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-						_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-						return
+						contextText = "По подходящим данным в базе ничего не найдено."
+					} else if err.Error() == "date_not_found" {
+						contextText = "Данные не найдены."
+					} else {
+						log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+						contextText = ""
 					}
-					if err.Error() == "date_not_found" {
-						b.sendReply(ctx, chatID, "Данные не найдены.")
-						_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-						return
-					}
-					log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
-					contextText = ""
 				}
 			}
 		}
