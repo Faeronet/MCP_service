@@ -743,14 +743,14 @@ func (h *Handler) GrafanaProxy() http.Handler {
 		body, _ := io.ReadAll(resp.Body)
 		ct := resp.Header.Get("Content-Type")
 		if (strings.Contains(ct, "text/html") || strings.Contains(ct, "javascript")) && len(body) > 0 {
-			body = grafanaRewriteStaticPaths(body)
+			body = grafanaRewriteStaticPaths(body, r)
 		}
 		w.Write(body)
 	})
 }
 
-// grafanaRewriteStaticPaths fixes asset paths so the browser requests /api/grafana/public/...
-func grafanaRewriteStaticPaths(b []byte) []byte {
+// grafanaRewriteStaticPaths fixes asset paths and injects <base> so the browser loads everything via /api/grafana/.
+func grafanaRewriteStaticPaths(b []byte, r *http.Request) []byte {
 	s := string(b)
 	replacements := []string{
 		`"/public/`, `"` + grafanaProxyPrefix + `/public/`,
@@ -771,6 +771,18 @@ func grafanaRewriteStaticPaths(b []byte) []byte {
 	}
 	s = strings.ReplaceAll(s, `<base href="/">`, `<base href="`+grafanaProxyPrefix+`/">`)
 	s = strings.ReplaceAll(s, `<base href='/'>`, `<base href='`+grafanaProxyPrefix+`/'>`)
+	// Вставляем <base href="proto://host/api/grafana/"> после <head>, чтобы все относительные пути шли через прокси
+	if r != nil && r.Host != "" && strings.Contains(s, "<head>") {
+		proto := "https"
+		if r.TLS == nil {
+			proto = "http"
+		}
+		if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+			proto = v
+		}
+		baseTag := `<base href="` + proto + "://" + r.Host + grafanaProxyPrefix + `/">`
+		s = strings.Replace(s, "<head>", "<head>\n  "+baseTag, 1)
+	}
 	return []byte(s)
 }
 

@@ -130,8 +130,10 @@ services:
       GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:5173/api/grafana}
       # За прокси, который срезает путь — false (v10). Иначе "failed to load application files".
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
-      # Не качать ключи подписей с grafana.com (избегаем 451 при блокировке/санкциях)
+      # Не обращаться к grafana.com (избегаем 451 при блокировке в сети)
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "*"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_UPDATE_CHECKER_ENABLED: "false"
       # Доступ через прокси admin-backend: JWT проверяется на прокси, в Grafana пускаем как анонимный Viewer
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
