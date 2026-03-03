@@ -699,6 +699,15 @@ func (h *Handler) GrafanaProxy() http.Handler {
 			proxyReq.Header[k] = v
 		}
 		proxyReq.Header.Set("Host", u.Host)
+		if r.Host != "" {
+			proxyReq.Header.Set("X-Forwarded-Host", r.Host)
+		}
+		if r.TLS != nil {
+			proxyReq.Header.Set("X-Forwarded-Proto", "https")
+		} else {
+			proxyReq.Header.Set("X-Forwarded-Proto", "http")
+		}
+		proxyReq.Header.Set("X-Forwarded-Prefix", grafanaProxyPrefix)
 		resp, err := http.DefaultClient.Do(proxyReq)
 		if err != nil {
 			http.Error(w, `{"error":"grafana"}`, http.StatusBadGateway)
@@ -740,11 +749,9 @@ func (h *Handler) GrafanaProxy() http.Handler {
 	})
 }
 
-// grafanaRewriteStaticPaths fixes asset paths when Grafana root_url has no subpath (e.g. localhost:3001).
-// So the browser requests /api/grafana/public/... instead of /public/...
+// grafanaRewriteStaticPaths fixes asset paths so the browser requests /api/grafana/public/...
 func grafanaRewriteStaticPaths(b []byte) []byte {
 	s := string(b)
-	// Paths that must be under our proxy prefix so the backend receives them
 	replacements := []string{
 		`"/public/`, `"` + grafanaProxyPrefix + `/public/`,
 		`'/public/`, `'` + grafanaProxyPrefix + `/public/`,
@@ -754,10 +761,16 @@ func grafanaRewriteStaticPaths(b []byte) []byte {
 		`href='/public/`, `href='` + grafanaProxyPrefix + `/public/`,
 		`src="/public/`, `src="` + grafanaProxyPrefix + `/public/`,
 		`src='/public/`, `src='` + grafanaProxyPrefix + `/public/`,
+		`url("/public/`, `url("` + grafanaProxyPrefix + `/public/`,
+		`url('/public/`, `url('` + grafanaProxyPrefix + `/public/`,
+		`url("/img/`, `url("` + grafanaProxyPrefix + `/img/`,
+		`url('/img/`, `url('` + grafanaProxyPrefix + `/img/`,
 	}
 	for i := 0; i < len(replacements); i += 2 {
 		s = strings.ReplaceAll(s, replacements[i], replacements[i+1])
 	}
+	s = strings.ReplaceAll(s, `<base href="/">`, `<base href="`+grafanaProxyPrefix+`/">`)
+	s = strings.ReplaceAll(s, `<base href='/'>`, `<base href='`+grafanaProxyPrefix+`/'>`)
 	return []byte(s)
 }
 
