@@ -687,7 +687,11 @@ func (h *Handler) GrafanaProxy() http.Handler {
 	grafanaURL := config.LoadString("GRAFANA_URL", "http://grafana:3000")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := url.Parse(grafanaURL)
+		// Передаём полный путь /api/grafana/... в Grafana (serve_from_sub_path=true)
 		u.Path = r.URL.Path
+		if u.Path == "" {
+			u.Path = "/"
+		}
 		q := r.URL.Query()
 		q.Del("token")
 		u.RawQuery = q.Encode()
