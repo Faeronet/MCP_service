@@ -166,6 +166,49 @@ func extractDateFromQuery(query string) (dateStr string, ok bool) {
 	return "", false
 }
 
+// queryDayLessThan10 возвращает true, если в dateStr день месяца < 10 (например "5 марта", "09.03").
+func queryDayLessThan10(dateStr string) bool {
+	day := parseDayFromDateStr(dateStr)
+	return day > 0 && day < 10
+}
+
+// parseDayFromDateStr извлекает день (1–31) из строки даты "5 марта" или "24.03.2025". 0 если не распознано.
+func parseDayFromDateStr(s string) int {
+	s = strings.TrimSpace(s)
+	if m := reDateMonthRu.FindStringSubmatch(s); len(m) >= 2 {
+		if d, err := strconv.Atoi(m[1]); err == nil && d >= 1 && d <= 31 {
+			return d
+		}
+	}
+	if m := reDateDot.FindStringSubmatch(s); len(m) >= 2 {
+		if d, err := strconv.Atoi(m[1]); err == nil && d >= 1 && d <= 31 {
+			return d
+		}
+	}
+	return 0
+}
+
+// chunkHasDateWithDayLessThan10 проверяет, есть ли в тексте чанка дата с днём < 10.
+func chunkHasDateWithDayLessThan10(text string) bool {
+	// Проверяем формат "N месяца"
+	for _, sub := range reDateMonthRu.FindAllStringSubmatch(text, -1) {
+		if len(sub) >= 2 {
+			if d, err := strconv.Atoi(sub[1]); err == nil && d >= 1 && d < 10 {
+				return true
+			}
+		}
+	}
+	// Проверяем формат N.M или N.M.YYYY (день — первое число)
+	for _, sub := range reDateDot.FindAllStringSubmatch(text, -1) {
+		if len(sub) >= 2 {
+			if d, err := strconv.Atoi(sub[1]); err == nil && d >= 1 && d < 10 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type qdrantSearchReq struct {
 	Vector   []float32 `json:"vector"`
 	Limit    uint64    `json:"limit"`
@@ -408,11 +451,19 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 					withDate = append(withDate, items[i])
 				}
 			}
+			// Если в запросе день < 10, оставляем только чанки, где дата в тексте тоже с днём < 10
+			if len(withDate) > 0 && queryDayLessThan10(dateStr) {
+				var filtered []chunkInfo
+				for _, c := range withDate {
+					if chunkHasDateWithDayLessThan10(c.Text) {
+						filtered = append(filtered, c)
+					}
+				}
+				withDate = filtered
+			}
 			if len(withDate) == 0 {
-				log.Info(ctx, "build_context: date not found in chunks", logging.KV{"date", dateStr})
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found"})
-				return
+				log.Info(ctx, "build_context: date not in chunks or day filter", logging.KV{"date", dateStr}, logging.KV{"round", round})
+				continue
 			}
 			// Собрать ID: чанки с датой + их связи (related, prev, next)
 			linkSet := make(map[string]struct{})
@@ -452,6 +503,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
+		if hasDate {
+			log.Info(ctx, "build_context: date not found after rounds", logging.KV{"rounds", maxSearchRounds}, logging.KV{"date", dateStr})
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found"})
+			return
+		}
 		log.Info(ctx, "build_context: chunk not found after rounds", logging.KV{"rounds", maxSearchRounds})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found"})
