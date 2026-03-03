@@ -282,6 +282,12 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			searchQuery = msg.Text
 		}
 		searchQuery = stripThink(searchQuery)
+		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
+			searchQuery = extractDateFromQuestion(msg.Text)
+			if searchQuery == "" {
+				searchQuery = msg.Text
+			}
+		}
 		// Дебаг: показываем пользователю, что ушло на поиск в Qdrant (не удалять после ответа)
 		b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
 		attachmentsText := b.getAttachmentsText(ctx, sessionID)
@@ -447,6 +453,39 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 
 // stripThink убирает блоки think из ответа модели (для поискового запроса), чтобы в Qdrant уходил только сам запрос.
 var reThinkBlock = regexp.MustCompile(`(?is)<think[^>]*>.*?` + "</think>")
+
+// Варианты написания месяцев (с опечатками) для извлечения даты из вопроса при NULL от модели.
+var monthVariants = []string{
+	"января", "янвря", "янаря", "январь",
+	"февраля", "феврля", "феварля", "февраль",
+	"марта", "матра", "мрта", "март",
+	"апреля", "апереля", "апрелья", "апрель",
+	"мая", "май",
+	"июня", "июна", "июнь",
+	"июля", "июль", "июля",
+	"августа", "авгста", "август",
+	"сентября", "сентябрь", "сентебря", "сентябра",
+	"октября", "октбря", "октябрья", "октябрь",
+	"ноября", "ноебря", "оября", "ноядбоя", "ноябрь", "ноябра",
+	"декабря", "декабрля", "декбаря", "декабрь",
+}
+var reDateMonthRu = regexp.MustCompile(`(\d{1,2})\s+(` + strings.Join(monthVariants, "|") + `)`)
+var reDateDot = regexp.MustCompile(`\d{1,2}\.\d{1,2}(?:\.\d{2,4})?`)
+
+// extractDateFromQuestion извлекает из текста дату (для поиска в Qdrant при NULL от модели). Учитывает опечатки в названиях месяцев.
+func extractDateFromQuestion(question string) string {
+	q := strings.TrimSpace(question)
+	if q == "" {
+		return ""
+	}
+	if m := reDateMonthRu.FindString(q); m != "" {
+		return strings.TrimSpace(m)
+	}
+	if m := reDateDot.FindString(q); m != "" {
+		return m
+	}
+	return ""
+}
 
 func stripThink(s string) string {
 	return strings.TrimSpace(reThinkBlock.ReplaceAllString(s, ""))
@@ -631,6 +670,12 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			searchQuery = userMsg
 		}
 		searchQuery = stripThink(searchQuery)
+		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
+			searchQuery = extractDateFromQuestion(userMsg)
+			if searchQuery == "" {
+				searchQuery = userMsg
+			}
+		}
 		b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
 		attachmentsText := b.getAttachmentsText(ctx, sessionID)
 		var err error
