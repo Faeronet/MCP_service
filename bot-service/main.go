@@ -288,24 +288,38 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 				searchQuery = msg.Text
 			}
 		}
-		// Дебаг: показываем пользователю, что ушло на поиск в Qdrant (не удалять после ответа)
-		b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
-		attachmentsText := b.getAttachmentsText(ctx, sessionID)
-		var err error
-		contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
-		if err != nil {
-			if err.Error() == "chunk_not_found" {
-				b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-				_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-				return
+		normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
+		switch normalizedQuery {
+		case "[name] all":
+			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			var errNames error
+			contextText, errNames = b.getAllNames(ctx, requestID)
+			if errNames != nil {
+				log.Warn(ctx, "getAllNames failed", logging.KV{"error", errNames})
+				contextText = ""
 			}
-			if err.Error() == "date_not_found" {
-				b.sendReply(ctx, chatID, "Данные не найдены.")
-				_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-				return
-			}
-			log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
+		case "[date] list":
+			// Не ищем в Qdrant — сразу в LLM с промптом B и пустым контекстом
 			contextText = ""
+		default:
+			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			attachmentsText := b.getAttachmentsText(ctx, sessionID)
+			var err error
+			contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			if err != nil {
+				if err.Error() == "chunk_not_found" {
+					b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+					_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+					return
+				}
+				if err.Error() == "date_not_found" {
+					b.sendReply(ctx, chatID, "Данные не найдены.")
+					_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+					return
+				}
+				log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
+				contextText = ""
+			}
 		}
 	}
 
@@ -437,6 +451,33 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 	if resp.StatusCode != http.StatusOK {
 		bb, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
+	}
+	var out struct {
+		Context string `json:"context"`
+		Error   string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.Error != "" {
+		return "", fmt.Errorf("%s", out.Error)
+	}
+	return out.Context, nil
+}
+
+// getAllNames возвращает контекст из всех уникальных name в Qdrant (для запроса "[name] all").
+func (b *Bot) getAllNames(ctx context.Context, requestID string) (string, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.mcpReadURL+"/mcp/all_names", bytes.NewReader([]byte("{}")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", requestID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bb, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("mcp-read all_names %d: %s", resp.StatusCode, string(bb))
 	}
 	var out struct {
 		Context string `json:"context"`
@@ -676,23 +717,37 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				searchQuery = userMsg
 			}
 		}
-		b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
-		attachmentsText := b.getAttachmentsText(ctx, sessionID)
-		var err error
-		contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
-		if err != nil {
-			if err.Error() == "chunk_not_found" {
-				b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-				_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-				return
+		normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
+		switch normalizedQuery {
+		case "[name] all":
+			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			var errNames error
+			contextText, errNames = b.getAllNames(ctx, requestID)
+			if errNames != nil {
+				log.Warn(ctx, "getAllNames for attachment failed", logging.KV{"error", errNames})
+				contextText = ""
 			}
-			if err.Error() == "date_not_found" {
-				b.sendReply(ctx, chatID, "Данные не найдены.")
-				_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-				return
-			}
-			log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+		case "[date] list":
 			contextText = ""
+		default:
+			b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+			attachmentsText := b.getAttachmentsText(ctx, sessionID)
+			var err error
+			contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			if err != nil {
+				if err.Error() == "chunk_not_found" {
+					b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+					_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+					return
+				}
+				if err.Error() == "date_not_found" {
+					b.sendReply(ctx, chatID, "Данные не найдены.")
+					_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+					return
+				}
+				log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+				contextText = ""
+			}
 		}
 	}
 	if err := b.llmLimiter.Acquire(ctx); err != nil {

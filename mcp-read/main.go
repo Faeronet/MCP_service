@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/mcp/build_context", requestIDMiddleware(handler.BuildContext))
+	mux.HandleFunc("/mcp/all_names", requestIDMiddleware(handler.AllNames))
 
 	srv := &http.Server{Addr: ":8082", Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	log.Info(ctx, "mcp-read listening on :8082")
@@ -221,17 +223,19 @@ type qdrantSearchResult struct {
 	} `json:"result"`
 }
 
-// scrollReq/scrollResp для запроса соседних чанков по chunk_id (prev/next)
+// scrollReq/scrollResp для запроса соседних чанков по chunk_id (prev/next) и для AllNames.
 type qdrantScrollReq struct {
 	Filter      map[string]interface{} `json:"filter,omitempty"`
 	Limit       *uint32                `json:"limit,omitempty"`
 	WithPayload *bool                  `json:"with_payload,omitempty"`
+	Offset      interface{}            `json:"offset,omitempty"`
 }
 type qdrantScrollResp struct {
 	Result struct {
-		Points []struct {
+		Points         []struct {
 			Payload map[string]interface{} `json:"payload"`
 		} `json:"points"`
+		NextPageOffset interface{} `json:"next_page_offset"`
 	} `json:"result"`
 }
 
@@ -529,6 +533,75 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText})
+}
+
+const maxScrollPagesForNames = 50
+const scrollPageSize = 200
+
+// AllNames возвращает контекст из всех уникальных полей name в коллекции chunks (для запроса "[name] all").
+func (h *MCPReadHandler) AllNames(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	collectionName := "chunks"
+	namesSet := make(map[string]struct{})
+	var offset interface{}
+	pageLimit := uint32(scrollPageSize)
+	withPayload := true
+	for page := 0; page < maxScrollPagesForNames; page++ {
+		body := qdrantScrollReq{Limit: &pageLimit, WithPayload: &withPayload}
+		if offset != nil {
+			body.Offset = offset
+		}
+		payload, _ := json.Marshal(body)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.qdrantURL+"/collections/"+collectionName+"/points/scroll", bytes.NewReader(payload))
+		if err != nil {
+			log.Warn(ctx, "all_names scroll build", logging.KV{"error", err})
+			break
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Warn(ctx, "all_names scroll request", logging.KV{"error", err})
+			break
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			log.Warn(ctx, "all_names scroll non-200", logging.KV{"status", resp.StatusCode})
+			break
+		}
+		var scrollRes qdrantScrollResp
+		if err := json.NewDecoder(resp.Body).Decode(&scrollRes); err != nil {
+			resp.Body.Close()
+			log.Warn(ctx, "all_names scroll decode", logging.KV{"error", err})
+			break
+		}
+		resp.Body.Close()
+		for _, pt := range scrollRes.Result.Points {
+			if n, ok := pt.Payload["name"].(string); ok && strings.TrimSpace(n) != "" {
+				namesSet[strings.TrimSpace(n)] = struct{}{}
+			}
+		}
+		offset = scrollRes.Result.NextPageOffset
+		if offset == nil {
+			break
+		}
+	}
+	names := make([]string, 0, len(namesSet))
+	for n := range namesSet {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		b.WriteString("Имя: ")
+		b.WriteString(n)
+		b.WriteString("\n")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: b.String()})
 }
 
 // fetchChunksByID возвращает тексты чанков по списку chunk_id (для обратной совместимости).
