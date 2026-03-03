@@ -687,7 +687,7 @@ func (h *Handler) GrafanaProxy() http.Handler {
 	grafanaURL := config.LoadString("GRAFANA_URL", "http://grafana:3000")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := url.Parse(grafanaURL)
-		// Передаём полный путь /api/grafana/... в Grafana (serve_from_sub_path=true)
+		// StripPrefix срезает /api/grafana, в Grafana уходит путь от корня: /, /public/...
 		u.Path = r.URL.Path
 		if u.Path == "" {
 			u.Path = "/"
@@ -745,9 +745,12 @@ func (h *Handler) GrafanaProxy() http.Handler {
 		}
 		w.WriteHeader(resp.StatusCode)
 		body, _ := io.ReadAll(resp.Body)
-		ct := resp.Header.Get("Content-Type")
-		if (strings.Contains(ct, "text/html") || strings.Contains(ct, "javascript")) && len(body) > 0 {
-			body = grafanaRewriteStaticPaths(body, r)
+		// Не перезаписываем body, если ответ в gzip — иначе поток ломается и «failed to load»
+		if resp.Header.Get("Content-Encoding") != "gzip" && resp.Header.Get("Content-Encoding") != "br" {
+			ct := resp.Header.Get("Content-Type")
+			if (strings.Contains(ct, "text/html") || strings.Contains(ct, "javascript")) && len(body) > 0 {
+				body = grafanaRewriteStaticPaths(body, r)
+			}
 		}
 		w.Write(body)
 	})
