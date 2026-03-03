@@ -298,6 +298,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			}
 		}
 		searchQuery = translateMonthToRussian(searchQuery)
+		if userDateStr != "" {
+			userDay, userMon, userOk := parseDayMonthFromQuery(userDateStr)
+			modelDay, modelMon, modelOk := parseDayMonthFromQuery(searchQuery)
+			if userOk && modelOk && (userDay != modelDay || userMon != modelMon) {
+				searchQuery = userDateStr
+			}
+		}
 		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
 			contextText = "date not found"
@@ -855,6 +862,13 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			}
 		}
 		searchQuery = translateMonthToRussian(searchQuery)
+		if userDateStr != "" {
+			userDay, userMon, userOk := parseDayMonthFromQuery(userDateStr)
+			modelDay, modelMon, modelOk := parseDayMonthFromQuery(searchQuery)
+			if userOk && modelOk && (userDay != modelDay || userMon != modelMon) {
+				searchQuery = userDateStr
+			}
+		}
 		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
 			contextText = "date not found"
