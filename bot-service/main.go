@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,6 +27,9 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed prompts/query_extract.txt prompts/answer.txt
+var promptFS embed.FS
 
 var log = logging.New("bot-service")
 
@@ -88,20 +93,33 @@ func main() {
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
 
 	app := &Bot{
-		bot:           nil, // set below if token present
-		pool:          pool,
-		minio:         minioClient,
-		queue:         rmq,
-		mcpReadURL:    mcpReadURL,
+		bot:            nil, // set below if token present
+		pool:           pool,
+		minio:          minioClient,
+		queue:          rmq,
+		mcpReadURL:     mcpReadURL,
 		extractToolURL: extractToolURL,
-		vllmBase:      vllmBase,
-		llmModel:      llmModel,
-		llmAPIKey:     llmAPIKey,
-		llmLimiter:    llmLimiter,
+		vllmBase:       vllmBase,
+		llmModel:       llmModel,
+		llmAPIKey:      llmAPIKey,
+		llmLimiter:     llmLimiter,
 		perChatLimiter: perChatLimiter,
-		debounce:      time.Duration(deboounceMs) * time.Millisecond,
-		chatMu:        make(map[int64]chan struct{}),
-		chatMuGuard:   &sync.Mutex{},
+		debounce:       time.Duration(deboounceMs) * time.Millisecond,
+		chatMu:         make(map[int64]chan struct{}),
+		chatMuGuard:    &sync.Mutex{},
+	}
+	// Промпты из файлов: A — формулировка запроса для Qdrant, B — ответ по контексту
+	if raw, err := promptFS.ReadFile("prompts/query_extract.txt"); err == nil {
+		app.promptA = strings.TrimSpace(string(raw))
+	}
+	if raw, err := promptFS.ReadFile("prompts/answer.txt"); err == nil {
+		app.promptB = strings.TrimSpace(string(raw))
+	}
+	if app.promptA == "" {
+		app.promptA = "Сформулируй короткий поисковый запрос по сообщению пользователя для поиска в базе. Только запрос, без пояснений."
+	}
+	if app.promptB == "" {
+		app.promptB = "Ты помощник. Отвечай по контексту ниже. Кратко, на языке вопроса.\n\nКонтекст:"
 	}
 
 	// Worker pool for updates
@@ -175,6 +193,8 @@ type Bot struct {
 	debounce       time.Duration
 	chatMu         map[int64]chan struct{}
 	chatMuGuard    *sync.Mutex
+	promptA        string // промпт для выделения поискового запроса (LLM → Qdrant)
+	promptB        string // промпт для ответа по контексту (чанки + вопрос)
 }
 
 func (b *Bot) serializedChat(chatID int64, fn func()) {
@@ -247,7 +267,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
 
 	var contextText string
-	// Ответ на наше сообщение: берём сохранённый контекст того ответа, без запроса в Qdrant
+	// Ответ на наше сообщение: берём сохранённый контекст, сразу промпт B (без запроса в Qdrant)
 	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.IsBot {
 		if ctxStored, ok := b.getContextByTelegramMessageID(ctx, sessionID, msg.ReplyToMessage.MessageID); ok && ctxStored != "" {
 			contextText = ctxStored
@@ -255,9 +275,18 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		}
 	}
 	if contextText == "" {
+		// Сначала LLM с промптом A: выделяем, что искать в Qdrant
+		searchQuery, errExtract := b.extractSearchQuery(ctx, requestID, msg.Text)
+		if errExtract != nil {
+			log.Warn(ctx, "extract search query failed, using raw message", logging.KV{"error", errExtract})
+			searchQuery = msg.Text
+		}
+		searchQuery = stripThink(searchQuery)
+		// Дебаг: показываем пользователю, что ушло на поиск в Qdrant (не удалять после ответа)
+		b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
 		attachmentsText := b.getAttachmentsText(ctx, sessionID)
 		var err error
-		contextText, err = b.buildContext(ctx, requestID, msg.Text, attachmentsText, 4000, "default")
+		contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 		if err != nil {
 			if err.Error() == "chunk_not_found" {
 				b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
@@ -274,7 +303,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		}
 	}
 
-	reply, err := b.callLLM(ctx, requestID, contextText, msg.Text)
+	// Ответ по контексту с промптом B
+	systemContent := b.promptB + "\n" + contextText
+	reply, err := b.callLLM(ctx, requestID, systemContent, msg.Text)
 	if err != nil {
 		log.Error(ctx, "llm call", logging.KV{"error", err}, logging.KV{"vllm_base", b.vllmBase})
 		hint := "Модель недоступна. Проверьте, что vLLM запущен (docker compose --profile vllm up -d) и в .env указан VLLM_OPENAI_BASE."
@@ -414,10 +445,27 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 	return out.Context, nil
 }
 
-func (b *Bot) callLLM(ctx context.Context, requestID, contextText, userQuery string) (string, error) {
+// stripThink убирает блоки think из ответа модели (для поискового запроса), чтобы в Qdrant уходил только сам запрос.
+var reThinkBlock = regexp.MustCompile(`(?is)<think[^>]*>.*?` + "</think>")
+
+func stripThink(s string) string {
+	return strings.TrimSpace(reThinkBlock.ReplaceAllString(s, ""))
+}
+
+// extractSearchQuery вызывает LLM с промптом A: по вопросу пользователя возвращает запрос для поиска в Qdrant.
+func (b *Bot) extractSearchQuery(ctx context.Context, requestID, userQuestion string) (string, error) {
+	reply, err := b.callLLM(ctx, requestID, b.promptA, userQuestion)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(reply), nil
+}
+
+// callLLM вызывает vLLM: systemContent — системный промпт (для ответа по контексту: промпт B + контекст).
+func (b *Bot) callLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
 	// OpenAI-compatible chat completion to vLLM
 	messages := []map[string]string{
-		{"role": "system", "content": "You are a helpful assistant. Use the following context to answer.\n\n" + contextText},
+		{"role": "system", "content": systemContent},
 		{"role": "user", "content": userQuery},
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
@@ -568,21 +616,39 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	}
 	_, _ = b.appendMessage(ctx, sessionID, "user", userMsg)
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
-	attachmentsText := b.getAttachmentsText(ctx, sessionID)
-	contextText, err := b.buildContext(ctx, requestID, userMsg, attachmentsText, 4000, "default")
-	if err != nil {
-		if err.Error() == "chunk_not_found" {
-			b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
-			_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
-			return
+
+	var contextText string
+	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.IsBot {
+		if ctxStored, ok := b.getContextByTelegramMessageID(ctx, sessionID, msg.ReplyToMessage.MessageID); ok && ctxStored != "" {
+			contextText = ctxStored
+			log.Info(ctx, "using reply-to context for attachment", logging.KV{"chat_id", chatID})
 		}
-		if err.Error() == "date_not_found" {
-			b.sendReply(ctx, chatID, "Данные не найдены.")
-			_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
-			return
+	}
+	if contextText == "" {
+		searchQuery, errExtract := b.extractSearchQuery(ctx, requestID, userMsg)
+		if errExtract != nil {
+			log.Warn(ctx, "extract search query for attachment failed", logging.KV{"error", errExtract})
+			searchQuery = userMsg
 		}
-		log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
-		contextText = ""
+		searchQuery = stripThink(searchQuery)
+		b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
+		attachmentsText := b.getAttachmentsText(ctx, sessionID)
+		var err error
+		contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+		if err != nil {
+			if err.Error() == "chunk_not_found" {
+				b.sendReply(ctx, chatID, "По подходящим данным в базе ничего не найдено.")
+				_, _ = b.appendMessage(ctx, sessionID, "assistant", "По подходящим данным в базе ничего не найдено.")
+				return
+			}
+			if err.Error() == "date_not_found" {
+				b.sendReply(ctx, chatID, "Данные не найдены.")
+				_, _ = b.appendMessage(ctx, sessionID, "assistant", "Данные не найдены.")
+				return
+			}
+			log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
+			contextText = ""
+		}
 	}
 	if err := b.llmLimiter.Acquire(ctx); err != nil {
 		log.Warn(ctx, "llm queue full for attachment", logging.KV{"error", err})
@@ -590,7 +656,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		return
 	}
 	defer b.llmLimiter.Release()
-	reply, err := b.callLLM(ctx, requestID, contextText, userMsg)
+	systemContent := b.promptB + "\n" + contextText
+	reply, err := b.callLLM(ctx, requestID, systemContent, userMsg)
 	if err != nil {
 		log.Warn(ctx, "llm call for attachment", logging.KV{"error", err})
 		b.sendReply(ctx, chatID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
