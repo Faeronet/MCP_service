@@ -538,7 +538,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 const maxScrollPagesForNames = 50
 const scrollPageSize = 200
 
-// AllNames возвращает контекст из всех уникальных полей name в коллекции chunks (для запроса "[name] all").
+// AllNames возвращает контекст: все уникальные name из chunks + содержимое (текст) каждого чанка для запроса "[name] all".
 func (h *MCPReadHandler) AllNames(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -546,7 +546,8 @@ func (h *MCPReadHandler) AllNames(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	collectionName := "chunks"
-	namesSet := make(map[string]struct{})
+	// name -> текст чанка (первое вхождение по имени, без повторов)
+	nameToContent := make(map[string]string)
 	var offset interface{}
 	pageLimit := uint32(scrollPageSize)
 	withPayload := true
@@ -580,17 +581,24 @@ func (h *MCPReadHandler) AllNames(w http.ResponseWriter, r *http.Request) {
 		}
 		resp.Body.Close()
 		for _, pt := range scrollRes.Result.Points {
-			if n, ok := pt.Payload["name"].(string); ok && strings.TrimSpace(n) != "" {
-				namesSet[strings.TrimSpace(n)] = struct{}{}
+			n, okName := pt.Payload["name"].(string)
+			if !okName || strings.TrimSpace(n) == "" {
+				continue
 			}
+			n = strings.TrimSpace(n)
+			if _, seen := nameToContent[n]; seen {
+				continue
+			}
+			text, _ := pt.Payload["text"].(string)
+			nameToContent[n] = strings.TrimSpace(text)
 		}
 		offset = scrollRes.Result.NextPageOffset
 		if offset == nil {
 			break
 		}
 	}
-	names := make([]string, 0, len(namesSet))
-	for n := range namesSet {
+	names := make([]string, 0, len(nameToContent))
+	for n := range nameToContent {
 		names = append(names, n)
 	}
 	sort.Strings(names)
@@ -599,6 +607,10 @@ func (h *MCPReadHandler) AllNames(w http.ResponseWriter, r *http.Request) {
 		b.WriteString("Имя: ")
 		b.WriteString(n)
 		b.WriteString("\n")
+		if nameToContent[n] != "" {
+			b.WriteString(nameToContent[n])
+			b.WriteString("\n\n")
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: b.String()})
