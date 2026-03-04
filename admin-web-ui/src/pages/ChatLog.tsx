@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { listChats, getChatMessages, type ChatListItem, type ChatMessage } from '../api'
 import { useToast } from '../context/ToastContext'
+
+const CHAT_MESSAGES_POLL_MS = 5000
 
 function formatTime(iso: string): string {
   try {
@@ -9,6 +11,11 @@ function formatTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function truncateForReply(text: string, maxLen: number = 120): string {
+  const t = text.replace(/\s+/g, ' ').trim()
+  return t.length <= maxLen ? t : t.slice(0, maxLen) + '…'
 }
 
 export function ChatLog() {
@@ -20,13 +27,28 @@ export function ChatLog() {
   const modalBodyRef = useRef<HTMLDivElement | null>(null)
   const toast = useToast()
 
+  const fetchMessages = useCallback(
+    (sessionId: string) => {
+      return getChatMessages(sessionId)
+        .then(({ messages: m }) => setMessages(Array.isArray(m) ? m : []))
+        .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load messages'))
+    },
+    [toast]
+  )
+
+  const didInitialScrollRef = useRef(false)
   useEffect(() => {
-    if (!messagesLoading && messages.length > 0 && modalBodyRef.current) {
+    if (!modalSession) {
+      didInitialScrollRef.current = false
+      return
+    }
+    if (!messagesLoading && messages.length > 0 && modalBodyRef.current && !didInitialScrollRef.current) {
+      didInitialScrollRef.current = true
       const el = modalBodyRef.current
       el.scrollTop = el.scrollHeight
       requestAnimationFrame(() => { el.scrollTop = el.scrollHeight })
     }
-  }, [messagesLoading, messages.length])
+  }, [modalSession, messagesLoading, messages.length])
 
   const loadChats = async () => {
     setLoading(true)
@@ -50,17 +72,41 @@ export function ChatLog() {
       return
     }
     setMessagesLoading(true)
-    getChatMessages(modalSession.session_id)
-      .then(({ messages: m }) => setMessages(Array.isArray(m) ? m : []))
-      .catch(e => toast.error(e instanceof Error ? e.message : 'Failed to load messages'))
-      .finally(() => setMessagesLoading(false))
-  }, [modalSession?.session_id])
+    fetchMessages(modalSession.session_id).finally(() => setMessagesLoading(false))
+  }, [modalSession?.session_id, fetchMessages])
+
+  useEffect(() => {
+    if (!modalSession) return
+    const t = setInterval(() => {
+      fetchMessages(modalSession.session_id)
+    }, CHAT_MESSAGES_POLL_MS)
+    return () => clearInterval(t)
+  }, [modalSession?.session_id, fetchMessages])
 
   const closeModal = () => setModalSession(null)
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) closeModal()
   }
+
+  const scrollToTelegramMessageId = (telegramMessageId: number) => {
+    const container = modalBodyRef.current
+    if (!container) return
+    const target = container.querySelector(`[data-telegram-message-id="${telegramMessageId}"]`) as HTMLElement | null
+    if (!target) return
+    const containerRect = container.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const scrollTop = container.scrollTop + (targetRect.top - containerRect.top) - containerRect.height / 2 + targetRect.height / 2
+    container.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' })
+  }
+
+  const messageByTelegramId = useMemo(() => {
+    const map = new Map<number, ChatMessage>()
+    for (const m of messages) {
+      if (m.telegram_message_id != null) map.set(m.telegram_message_id, m)
+    }
+    return map
+  }, [messages])
 
   return (
     <div className="page-layout">
@@ -132,33 +178,55 @@ export function ChatLog() {
               </button>
             </div>
             <div className="chat-modal-body" ref={modalBodyRef}>
-              {messagesLoading ? (
+              {messagesLoading && messages.length === 0 ? (
                 <p className="text-muted">Загрузка…</p>
               ) : messages.length === 0 ? (
                 <p className="text-muted">Нет сообщений</p>
               ) : (
                 <div className="chat-messages">
-                  {messages.map((msg, i) => (
-                    <div
-                      key={i}
-                      className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'}`}
-                    >
-                      <div className="chat-msg-bubble">
-                        <div className="chat-msg-meta">
-                          <span className="chat-msg-who">
-                            {msg.role === 'user' ? 'Пользователь' : 'Ассистент'}
-                          </span>
-                          <span className="chat-msg-time">{formatTime(msg.created_at)}</span>
-                          {msg.role === 'assistant' && msg.response_time_sec != null && (
-                            <span className="chat-msg-response-time">
-                              Ответ за {msg.response_time_sec} с
-                            </span>
+                  {messages.map((msg, i) => {
+                    const replyToMsg = msg.reply_to_telegram_message_id != null
+                      ? messageByTelegramId.get(msg.reply_to_telegram_message_id)
+                      : undefined
+                    return (
+                      <div
+                        key={msg.id ?? i}
+                        className={`chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'}`}
+                        data-message-id={msg.id ?? undefined}
+                        data-telegram-message-id={msg.telegram_message_id ?? undefined}
+                      >
+                        <div className="chat-msg-bubble">
+                          {replyToMsg != null && (
+                            <button
+                              type="button"
+                              className="chat-msg-reply-to"
+                              onClick={() => scrollToTelegramMessageId(msg.reply_to_telegram_message_id!)}
+                              title="Перейти к сообщению, на которое отвечали"
+                            >
+                              <span className="chat-msg-reply-to-who">
+                                {replyToMsg.role === 'assistant' ? 'Ассистент' : 'Пользователь'}
+                              </span>
+                              <span className="chat-msg-reply-to-text">
+                                {truncateForReply(replyToMsg.content)}
+                              </span>
+                            </button>
                           )}
+                          <div className="chat-msg-meta">
+                            <span className="chat-msg-who">
+                              {msg.role === 'user' ? 'Пользователь' : 'Ассистент'}
+                            </span>
+                            <span className="chat-msg-time">{formatTime(msg.created_at)}</span>
+                            {msg.role === 'assistant' && msg.response_time_sec != null && (
+                              <span className="chat-msg-response-time">
+                                Ответ за {msg.response_time_sec} с
+                              </span>
+                            )}
+                          </div>
+                          <div className="chat-msg-content">{msg.content}</div>
                         </div>
-                        <div className="chat-msg-content">{msg.content}</div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>

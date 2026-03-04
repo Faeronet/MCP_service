@@ -554,7 +554,7 @@ func (h *Handler) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid session_id"}`, http.StatusBadRequest)
 		return
 	}
-	q := `SELECT role, content, created_at FROM chat.messages WHERE session_id = $1 ORDER BY created_at ASC`
+	q := `SELECT id, role, content, created_at, telegram_message_id, reply_to_telegram_message_id FROM chat.messages WHERE session_id = $1 ORDER BY created_at ASC`
 	rows, err := h.Pool.Query(ctx, q, sessionID)
 	if err != nil {
 		http.Error(w, `{"error":"query"}`, http.StatusInternalServerError)
@@ -564,15 +564,24 @@ func (h *Handler) GetChatMessages(w http.ResponseWriter, r *http.Request) {
 	var messages []map[string]interface{}
 	var lastUserAt *time.Time
 	for rows.Next() {
+		var id uuid.UUID
 		var role, content string
 		var createdAt time.Time
-		if err := rows.Scan(&role, &content, &createdAt); err != nil {
+		var telegramMsgID, replyToTelegramMsgID *int64
+		if err := rows.Scan(&id, &role, &content, &createdAt, &telegramMsgID, &replyToTelegramMsgID); err != nil {
 			continue
 		}
 		msg := map[string]interface{}{
+			"id":         id.String(),
 			"role":       role,
-			"content":   content,
+			"content":    content,
 			"created_at": createdAt.Format(time.RFC3339),
+		}
+		if telegramMsgID != nil {
+			msg["telegram_message_id"] = *telegramMsgID
+		}
+		if replyToTelegramMsgID != nil && *replyToTelegramMsgID != 0 {
+			msg["reply_to_telegram_message_id"] = *replyToTelegramMsgID
 		}
 		if role == "assistant" && lastUserAt != nil {
 			sec := createdAt.Sub(*lastUserAt).Seconds()

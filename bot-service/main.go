@@ -310,7 +310,11 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		log.Error(ctx, "ensure session", logging.KV{"error", err})
 		return
 	}
-	_, _ = b.appendMessage(ctx, sessionID, "user", msg.Text)
+	replyToTgID := 0
+	if msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.IsBot {
+		replyToTgID = msg.ReplyToMessage.MessageID
+	}
+	_, _ = b.appendMessageWithReply(ctx, sessionID, "user", msg.Text, replyToTgID)
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
 
 	// Сообщение об ожидании — как можно раньше после получения сообщения пользователя

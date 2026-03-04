@@ -979,3 +979,40 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 .chat-msg--user .chat-msg-content {
   color: #fff;
 }
+
+/* Ответ по контексту (как в Telegram): цитата над текстом, клик — скролл к сообщению */
+.chat-msg-reply-to {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 8px;
+  padding: 6px 0 6px 10px;
+  border-left: 3px solid rgba(255, 255, 255, 0.5);
+  border-radius: 0 4px 4px 0;
+  background: rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.chat-msg--user .chat-msg-reply-to {
+  border-left-color: rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.2);
+}
+.chat-msg-reply-to:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+.chat-msg-reply-to-who {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0.9;
+  margin-bottom: 2px;
+}
+.chat-msg-reply-to-text {
+  display: block;
+  font-size: 0.8125rem;
+  opacity: 0.85;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -120,10 +120,15 @@ export async function listChats(): Promise<{ chats: ChatListItem[] }> {
 }
 
 export interface ChatMessage {
+  id?: string
   role: string
   content: string
   created_at: string
   response_time_sec?: number
+  /** ID сообщения в Telegram (есть у ответов бота) */
+  telegram_message_id?: number
+  /** Ответ пользователя по контексту этого сообщения (telegram_message_id сообщения бота) */
+  reply_to_telegram_message_id?: number
 }
 
 export async function getChatMessages(sessionId: string): Promise<{ messages: ChatMessage[] }> {
