@@ -198,7 +198,7 @@ type Bot struct {
 	chatMuGuard    *sync.Mutex
 	promptA        string // промпт для выделения поискового запроса (LLM → Qdrant)
 	promptB        string // промпт для ответа по контексту (чанки + вопрос)
-	debugMode      int    // 0 = вырезать think и не показывать «на поиск в Qdrant»; 1 = оставить
+	debugMode      int    // 0 = вырезать think в финальном ответе, не показывать «на поиск в Qdrant»; 1 = оставить think в ответе и показывать отладочное сообщение
 }
 
 const welcomeMessage = "Привет! Я ИИ-ассистент, отвечаю на вопросы по книге «Книга ангелов»."
@@ -335,9 +335,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			log.Warn(ctx, "extract search query failed, using raw message", logging.KV{"error", errExtract})
 			searchQuery = msg.Text
 		}
-		if b.debugMode == 0 {
-			searchQuery = stripThink(searchQuery)
-		}
+		// Поисковый запрос в Qdrant — вырезать think всегда (и в дебаге тоже)
+		searchQuery = stripThink(searchQuery)
 		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
 			searchQuery = extractDateFromQuestion(msg.Text)
 			if searchQuery == "" {
@@ -403,7 +402,10 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	// Ответ по контексту с промптом B (typingMsgID уже отправлен выше)
 	systemContent := b.promptB + "\n" + contextText
 	reply, err := b.callLLM(ctx, requestID, systemContent, msg.Text)
-	reply = stripThink(reply)
+	// В финальном ответе вырезать think только когда не дебаг; в дебаге оставить для просмотра
+	if b.debugMode == 0 {
+		reply = stripThink(reply)
+	}
 	if err != nil {
 		log.Error(ctx, "llm call", logging.KV{"error", err}, logging.KV{"vllm_base", b.vllmBase})
 		hint := "Модель недоступна. Проверьте, что vLLM запущен (docker compose --profile vllm up -d) и в .env указан VLLM_OPENAI_BASE."
@@ -995,9 +997,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			log.Warn(ctx, "extract search query for attachment failed", logging.KV{"error", errExtract})
 			searchQuery = userMsg
 		}
-		if b.debugMode == 0 {
-			searchQuery = stripThink(searchQuery)
-		}
+		// Поисковый запрос в Qdrant — вырезать think всегда
+		searchQuery = stripThink(searchQuery)
 		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
 			searchQuery = extractDateFromQuestion(userMsg)
 			if searchQuery == "" {
@@ -1067,7 +1068,10 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	// typingMsgID уже отправлен в начале handleAttachment
 	systemContent := b.promptB + "\n" + contextText
 	reply, err := b.callLLM(ctx, requestID, systemContent, userMsg)
-	reply = stripThink(reply)
+	// В финальном ответе вырезать think только когда не дебаг; в дебаге оставить для просмотра
+	if b.debugMode == 0 {
+		reply = stripThink(reply)
+	}
 	if err != nil {
 		log.Warn(ctx, "llm call for attachment", logging.KV{"error", err})
 		hint := "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата."
