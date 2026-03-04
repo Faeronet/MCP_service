@@ -454,7 +454,17 @@ func (b *Bot) ensureSession(ctx context.Context, chatID, userID int64, username 
 }
 
 func (b *Bot) appendMessage(ctx context.Context, sessionID uuid.UUID, role, content string) (uuid.UUID, error) {
+	return b.appendMessageWithReply(ctx, sessionID, role, content, 0)
+}
+
+// appendMessageWithReply сохраняет сообщение; для role=user replyToTelegramID — ID сообщения в Telegram, на которое отвечаем (0 = не ответ).
+func (b *Bot) appendMessageWithReply(ctx context.Context, sessionID uuid.UUID, role, content string, replyToTelegramID int) (uuid.UUID, error) {
 	var id uuid.UUID
+	if replyToTelegramID != 0 && role == "user" {
+		err := b.pool.QueryRow(ctx, `INSERT INTO chat.messages (session_id, role, content, reply_to_telegram_message_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+			sessionID, role, content, replyToTelegramID).Scan(&id)
+		return id, err
+	}
 	err := b.pool.QueryRow(ctx, `INSERT INTO chat.messages (session_id, role, content) VALUES ($1, $2, $3) RETURNING id`, sessionID, role, content).Scan(&id)
 	return id, err
 }
