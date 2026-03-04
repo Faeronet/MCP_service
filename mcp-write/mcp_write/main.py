@@ -1,6 +1,13 @@
 """
 MCP Write: ingestion tool. chunk/embed/rerank quality/build_links/upsert.
 Deterministic chunk_id, edge_id; upsert-only to Qdrant.
+
+Система A (INGESTION_SYSTEM=A или по умолчанию): текущий пайплайн — чанки по параграфам/LLM,
+полный text в payload, name = первое слово. Для отката оставить A.
+
+Система B (INGESTION_SYSTEM=B): после извлечения текста парсим ключевые поля по меткам,
+в чанк пишем только ключи (name + obitanie, specificnost, ... до первой точки после каждой метки),
+остальной контекст не сохраняем; chunk_id, doc_id, prev/next сохраняем.
 """
 import io
 import logging
@@ -46,6 +53,26 @@ RERANK_MODEL = (os.getenv("RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip()
 LLM_MODEL = (os.getenv("LLM_MODEL") or "Qwen/Qwen3-0.6B").strip()
 USE_LLM_CHUNKING = os.getenv("USE_LLM_CHUNKING", "").lower() in ("1", "true", "yes")
 USE_LLM_RERANK_QUERY = os.getenv("USE_LLM_RERANK_QUERY", "").lower() in ("1", "true", "yes")
+
+# A = текущий пайплайн (чанки + полный text). B = только ключи по меткам до первой точки.
+_ingestion_sys = (os.getenv("INGESTION_SYSTEM") or "A").strip().upper()
+INGESTION_SYSTEM: str = "B" if _ingestion_sys == "B" else "A"
+
+# Система B: метки для извлечения ключей (всё после метки до первой точки «.»; не «..» не «;»).
+# Если метки нет в документе — ключ не создаём (жёсткая проверка).
+SYSTEM_B_LABELS: list[tuple[str, str | None]] = [
+    ("name", None),  # ключ 1: первое слово документа
+    ("obitanie", "Обитание:"),
+    ("specificnost", "Специфичность:"),
+    ("znak_zodiaka", "Знак зодиака:"),
+    ("kachestva_energii", "Качества энергии ангела:"),
+    ("iskazheniya_energii", "Искажения или недостаток энергии ангела:"),
+    ("situacii_problemy", "Ситуации и общие проблемы(влияние АНГЕЛА):"),
+    ("proyavlenie", "Проявление:"),
+    ("gospodstvo", "Господство:"),
+    ("adept", "Адепт:"),
+    ("pomogaet", "Помогает:"),
+]
 
 qdrant: Optional[QdrantClient] = None
 minio_client: Optional[Minio] = None
@@ -254,6 +281,44 @@ def health():
     return {"status": "ok"}
 
 
+def _extract_after_label_until_first_period(full_text: str, label: str) -> str | None:
+    """Текст после метки до первой одиночной точки (не «..», не «;»). Метка без кавычек в тексте.
+    Если метки нет — возвращаем None (жёсткая проверка отсутствия)."""
+    if not label or not full_text or label not in full_text:
+        return None
+    idx = full_text.find(label)
+    if idx == -1:
+        return None
+    after = full_text[idx + len(label) :].lstrip()
+    for i, c in enumerate(after):
+        if c == ".":
+            if i + 1 < len(after) and after[i + 1] == ".":
+                continue
+            return after[:i].strip()
+    return after.strip()
+
+
+def _parse_system_b_keys(raw: str) -> dict[str, str]:
+    """Система B: парсит документ по меткам. Только присутствующие ключи; строго до первой точки."""
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    parts = raw.split()
+    if parts:
+        out["name"] = parts[0].strip()
+    for key_name, label in SYSTEM_B_LABELS[1:]:
+        if not label:
+            continue
+        if label not in raw:
+            continue
+        val = _extract_after_label_until_first_period(raw, label)
+        if val is None or not val.strip():
+            continue
+        out[key_name] = val.strip()
+    return out
+
+
 def _extract_text_from_file(data: bytes, key: str) -> str:
     """Извлекает текст из файла: PDF через pypdf, остальное — decode."""
     is_pdf = key.lower().endswith(".pdf") or (len(data) >= 4 and data[:4] == b"%PDF")
@@ -279,6 +344,68 @@ def _extract_text_from_file(data: bytes, key: str) -> str:
 def _ingest_error(code: int, detail: str, **kwargs: Any) -> None:
     log.warning("ingest_document error %s: %s %s", code, detail, kwargs)
     raise HTTPException(status_code=code, detail=detail)
+
+
+def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, Any]:
+    """Система B: только ключи (name + метки до первой точки), chunk_id, doc_id; связи prev/next для будущего."""
+    if qdrant is None or minio_client is None:
+        _ingest_error(503, "service not ready")
+    keys = _parse_system_b_keys(raw)
+    if not keys:
+        log.info("ingest_document system_b: no keys extracted for doc_id=%s", req.doc_id)
+        return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
+    name = keys.get("name", "")
+    normalized = " ".join(f"{k}={v}" for k, v in sorted(keys.items()))
+    chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, "sec_0", normalized)
+    vector = embed_text(normalized)
+    if len(vector) != VECTOR_SIZE:
+        vector = (vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+    payload: dict[str, Any] = {
+        "chunk_id": chunk_id,
+        "doc_id": req.doc_id,
+        "version_id": req.version_id,
+        "section_path": "sec_0",
+        "name": name,
+    }
+    for k, v in keys.items():
+        if k != "name" and v:
+            payload[k] = v
+    # Для mcp-read/build_context: один текст из ключей (остальной контекст не храним)
+    payload["text"] = "\n".join(f"{k}: {v}" for k, v in sorted(keys.items()))
+    if req.metadata:
+        skip = ("chunk_id", "doc_id", "version_id", "section_path", "name") + tuple(keys.keys())
+        for k, v in req.metadata.items():
+            if k not in skip:
+                payload[k] = v
+    points_payload = [{
+        "id": chunk_id_to_point_id(chunk_id),
+        "vector": vector,
+        "payload": payload,
+    }]
+    ensure_collection()
+    url = f"{QDRANT_URL.strip('/')}/collections/{COLLECTION}/points"
+    body = {"points": points_payload}
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            r = client.put(url, json=body)
+        if r.status_code == 404:
+            ensure_collection()
+            with httpx.Client(timeout=60.0) as client:
+                r = client.put(url, json=body)
+        if r.status_code >= 400:
+            err = r.text
+            log.warning("qdrant upsert system_b HTTP %s: %s", r.status_code, err[:500])
+            if "dimension" in err.lower() or "vector" in err.lower():
+                _ingest_error(400, f"qdrant dimension mismatch: {err[:200]}. Delete collection chunks and retry.", doc_id=req.doc_id)
+            raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err[:200]}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning("qdrant upsert system_b failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {e!s}") from e
+    log.info("ingest_document system_b: 1 point doc_id=%s keys=%s", req.doc_id, list(keys.keys()))
+    return {"status": "ok", "chunks_upserted": 1, "doc_id": req.doc_id, "version_id": req.version_id}
+
 
 @app.post("/mcp/ingest_document")
 def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
@@ -310,6 +437,10 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     if not raw or not raw.strip():
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
+    if INGESTION_SYSTEM == "B":
+        return _ingest_document_system_b(req, raw)
+
+    # ---------- Система A ----------
     # Первое слово извлечённого текста — в ключ name у всех чанков этого документа
     first_word = ""
     parts = (raw or "").strip().split()

@@ -329,18 +329,22 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		}
 	}
 	if contextText == "" {
-		// Сначала LLM с промптом A: выделяем, что искать в Qdrant
-		searchQuery, errExtract := b.extractSearchQuery(ctx, requestID, msg.Text)
-		if errExtract != nil {
-			log.Warn(ctx, "extract search query failed, using raw message", logging.KV{"error", errExtract})
-			searchQuery = msg.Text
-		}
-		// Поисковый запрос в Qdrant — вырезать think всегда (и в дебаге тоже)
-		searchQuery = stripThink(searchQuery)
-		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
+		var searchQuery string
+		// Поисковый запрос без LLM: вырезаем из вопроса слова про ангелов и отправляем остаток в Qdrant
+		searchQuery = stripAngelSynonymsFromQuery(msg.Text)
+		if searchQuery == "" {
 			searchQuery = extractDateFromQuestion(msg.Text)
 			if searchQuery == "" {
 				searchQuery = msg.Text
+			}
+		}
+		// Спецзапросы по ключевым словам в исходном сообщении (с упоминанием ангелов)
+		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Text))
+		if hasAngelWord(msg.Text) {
+			if strings.Contains(lowerMsg, "все") || strings.Contains(lowerMsg, "всех") {
+				searchQuery = "[name] all"
+			} else if strings.Contains(lowerMsg, "дат") {
+				searchQuery = "[date] list"
 			}
 		}
 		userDateStr := extractDateFromQuestion(msg.Text)
@@ -597,6 +601,64 @@ func (b *Bot) getAllNames(ctx context.Context, requestID string) (string, error)
 
 // stripThink убирает блоки think из ответа модели (для поискового запроса), чтобы в Qdrant уходил только сам запрос.
 var reThinkBlock = regexp.MustCompile(`(?is)<think[^>]*>.*?` + "</think>")
+
+// Синонимы «ангел» и т.п. для вырезания из запроса перед поиском в Qdrant (без LLM на первом этапе). Порядок: длинные фразы первыми.
+var angelSynonymsForStrip = []string{
+	"ангелы-хранители", "ангелов-хранителей", "ангелам-хранителям", "ангелами-хранителями",
+	"ангел-хранитель", "ангела-хранителя", "ангелу-хранителю", "ангелом-хранителем", "ангеле-хранителе",
+	"ангелы", "ангелов", "ангелам", "ангелами", "ангелах",
+	"ангел", "ангела", "ангелу", "ангелом", "ангеле",
+	"хранители", "хранителей", "хранителям", "хранителями",
+	"хранитель", "хранителя", "хранителю", "хранителем", "хранителе",
+}
+
+// stripAngelSynonymsFromQuery вырезает из текста слова про ангелов и синонимы (целыми словами); остаток — запрос для поиска в Qdrant.
+func stripAngelSynonymsFromQuery(s string) string {
+	out := strings.TrimSpace(s)
+	if out == "" {
+		return ""
+	}
+	for _, phrase := range angelSynonymsForStrip {
+		if phrase == "" {
+			continue
+		}
+		// Целое слово: граница = не-буква или начало/конец строки
+		re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(phrase) + `([^\p{L}]|$)`)
+		out = re.ReplaceAllString(out, "$1 $2")
+	}
+	return strings.TrimSpace(collapseSpaces(out))
+}
+
+func collapseSpaces(s string) string {
+	var b strings.Builder
+	prevSpace := true
+	for _, r := range strings.TrimSpace(s) {
+		if r == ' ' || r == '\t' {
+			if !prevSpace {
+				b.WriteRune(' ')
+				prevSpace = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		prevSpace = false
+	}
+	return b.String()
+}
+
+// hasAngelWord возвращает true, если в тексте есть одно из слов про ангелов (для определения [name] all / [date] list).
+func hasAngelWord(s string) bool {
+	for _, phrase := range angelSynonymsForStrip {
+		if phrase == "" {
+			continue
+		}
+		re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(phrase) + `([^\p{L}]|$)`)
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
+}
 
 // Варианты написания месяцев (с опечатками) для извлечения даты из вопроса при NULL от модели.
 var monthVariants = []string{
@@ -992,17 +1054,20 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		}
 	}
 	if contextText == "" {
-		searchQuery, errExtract := b.extractSearchQuery(ctx, requestID, userMsg)
-		if errExtract != nil {
-			log.Warn(ctx, "extract search query for attachment failed", logging.KV{"error", errExtract})
-			searchQuery = userMsg
-		}
-		// Поисковый запрос в Qdrant — вырезать think всегда
-		searchQuery = stripThink(searchQuery)
-		if searchQuery == "" || strings.EqualFold(strings.TrimSpace(searchQuery), "null") {
+		var searchQuery string
+		searchQuery = stripAngelSynonymsFromQuery(userMsg)
+		if searchQuery == "" {
 			searchQuery = extractDateFromQuestion(userMsg)
 			if searchQuery == "" {
 				searchQuery = userMsg
+			}
+		}
+		lowerMsg := strings.ToLower(strings.TrimSpace(userMsg))
+		if hasAngelWord(userMsg) {
+			if strings.Contains(lowerMsg, "все") || strings.Contains(lowerMsg, "всех") {
+				searchQuery = "[name] all"
+			} else if strings.Contains(lowerMsg, "дат") {
+				searchQuery = "[date] list"
 			}
 		}
 		userDateStr := extractDateFromQuestion(userMsg)
