@@ -488,6 +488,35 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			// Подгрузить все связанные чанки по linkSet (в items могут быть только prev/next)
 			linked := h.fetchChunkPayloadsByID(ctx, collectionName, linkSet)
 			items = linked
+		} else {
+			// Не дата: оставляем только чанки, в тексте которых содержится то, что пришло на поиск (каждое слово запроса)
+			queryTrim := strings.TrimSpace(req.QueryText)
+			if queryTrim != "" {
+				queryLower := strings.ToLower(queryTrim)
+				words := strings.Fields(queryLower)
+				var containing []chunkInfo
+				for _, c := range items {
+					chunkLower := strings.ToLower(c.Text)
+					allFound := true
+					for _, w := range words {
+						if w == "" {
+							continue
+						}
+						if !strings.Contains(chunkLower, w) {
+							allFound = false
+							break
+						}
+					}
+					if allFound {
+						containing = append(containing, c)
+					}
+				}
+				if len(containing) == 0 {
+					log.Info(ctx, "build_context: query words not contained in any chunk", logging.KV{"round", round}, logging.KV{"query", queryTrim})
+					continue
+				}
+				items = containing
+			}
 		}
 
 		var b strings.Builder
