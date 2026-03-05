@@ -27,6 +27,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jdkato/prose/v2"
 )
 
 //go:embed prompts/query_extract.txt prompts/answer.txt
@@ -330,8 +331,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 	if contextText == "" {
 		var searchQuery string
-		// Поисковый запрос без LLM: вырезаем из вопроса слова про ангелов и отправляем остаток в Qdrant
-		searchQuery = stripAngelSynonymsFromQuery(msg.Text)
+		// Поисковый запрос без LLM: извлекаем сущности (даты, части тела, национальности, знаки зодиака, фразы)
+		searchQuery = extractSearchEntitiesFromQuestion(msg.Text)
 		if searchQuery == "" {
 			searchQuery = extractDateFromQuestion(msg.Text)
 			if searchQuery == "" {
@@ -602,31 +603,107 @@ func (b *Bot) getAllNames(ctx context.Context, requestID string) (string, error)
 // stripThink убирает блоки think из ответа модели (для поискового запроса), чтобы в Qdrant уходил только сам запрос.
 var reThinkBlock = regexp.MustCompile(`(?is)<think[^>]*>.*?` + "</think>")
 
-// Синонимы «ангел» и т.п. для вырезания из запроса перед поиском в Qdrant (без LLM на первом этапе). Порядок: длинные фразы первыми.
-var angelSynonymsForStrip = []string{
-	"ангелы-хранители", "ангелов-хранителей", "ангелам-хранителям", "ангелами-хранителями",
-	"ангел-хранитель", "ангела-хранителя", "ангелу-хранителю", "ангелом-хранителем", "ангеле-хранителе",
+// Синонимы «ангел» и т.п. для определения [name] all / [date] list (не для вырезания).
+var angelSynonymsForDetection = []string{
+	"ангелы-хранители", "ангелов-хранителей", "ангел-хранитель", "ангела-хранителя",
 	"ангелы", "ангелов", "ангелам", "ангелами", "ангелах",
 	"ангел", "ангела", "ангелу", "ангелом", "ангеле",
-	"хранители", "хранителей", "хранителям", "хранителями",
-	"хранитель", "хранителя", "хранителю", "хранителем", "хранителе",
+	"хранители", "хранителей", "хранитель", "хранителя", "хранителю", "хранителем", "хранителе",
 }
 
-// stripAngelSynonymsFromQuery вырезает из текста слова про ангелов и синонимы (целыми словами); остаток — запрос для поиска в Qdrant.
-func stripAngelSynonymsFromQuery(s string) string {
-	out := strings.TrimSpace(s)
-	if out == "" {
-		return ""
-	}
-	for _, phrase := range angelSynonymsForStrip {
+// hasAngelWord возвращает true, если в тексте есть одно из слов про ангелов (для определения [name] all / [date] list).
+func hasAngelWord(s string) bool {
+	lower := strings.ToLower(s)
+	for _, phrase := range angelSynonymsForDetection {
 		if phrase == "" {
 			continue
 		}
-		// Целое слово: граница = не-буква или начало/конец строки
 		re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(phrase) + `([^\p{L}]|$)`)
-		out = re.ReplaceAllString(out, "$1 $2")
+		if re.MatchString(lower) {
+			return true
+		}
 	}
-	return strings.TrimSpace(collapseSpaces(out))
+	return false
+}
+
+// Извлечение сущностей из вопроса для поиска в Qdrant: даты, части тела, национальности, знаки зодиака, фразы после «исцелить», «влияет на», «властвует над» и т.п.
+var (
+	reHealPhrase     = regexp.MustCompile(`(?i)(?:исцелить|исцеляют|исцеляющих?|могут исцелить|способных исцелить|способны исцелить)\s+([^,.!?]+?)(?:\s*[,.!?]|$)`)
+	reInfluenceOn   = regexp.MustCompile(`(?i)(?:влияет на|влияние на|влияют на)\s+([^,.!?]+?)(?:\s*[,.!?]|$)`)
+	reRulesOver     = regexp.MustCompile(`(?i)(?:властвует над|властвуют над)\s+([^,.!?]+?)(?:\s*[,.!?]|$)`)
+)
+
+var bodyPartWords = []string{"ноги", "руки", "голова", "сердце", "глаза", "уши", "горло", "спина", "печень", "почки", "лёгкие", "желудок", "кожа", "зубы", "кости", "суставы", "мозг", "нервы", "зрение", "слух", "голос"}
+var nationalityWords = []string{"евреи", "евреев", "армяне", "армян", "грузины", "русские", "украинцы", "татары", "греки", "турки", "поляки", "немцы", "французы", "итальянцы", "испанцы", "англичане", "китайцы", "японцы", "индийцы", "арабы"}
+var zodiacWords = []string{"овен", "тельца", "тельцу", "близнецы", "близнецов", "рак", "рака", "лев", "льва", "льву", "дева", "девы", "весы", "весов", "скорпион", "скорпиона", "стрелец", "стрельца", "козерог", "козерога", "водолей", "водолея", "рыбы", "рыб", "телец", "льва", "девы", "весов", "скорпиона", "стрельца", "козерога", "водолея"}
+
+// extractSearchEntitiesFromQuestion извлекает из вопроса пользователя сущности для поиска в Qdrant: Prose NER + даты, части тела, национальности, знаки зодиака, фразы после «исцелить»/«влияет на»/«властвует над».
+func extractSearchEntitiesFromQuestion(question string) string {
+	s := strings.TrimSpace(question)
+	if s == "" {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	seen := make(map[string]struct{})
+	var parts []string
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return
+		}
+		tl := strings.ToLower(t)
+		if _, ok := seen[tl]; ok {
+			return
+		}
+		seen[tl] = struct{}{}
+		parts = append(parts, t)
+	}
+
+	// Prose: извлечение именованных сущностей (PERSON, ORG, GPE, DATE и т.д.; лучше работает с английским, для русского дополняем паттернами ниже)
+	if doc, err := prose.NewDocument(s); err == nil {
+		for _, ent := range doc.Entities() {
+			add(ent.Text)
+		}
+	}
+
+	if d := extractDateFromQuestion(s); d != "" {
+		add(d)
+	}
+	for _, sub := range reHealPhrase.FindAllStringSubmatch(s, -1) {
+		if len(sub) >= 2 {
+			add(sub[1])
+		}
+	}
+	for _, sub := range reInfluenceOn.FindAllStringSubmatch(s, -1) {
+		if len(sub) >= 2 {
+			add(sub[1])
+		}
+	}
+	for _, sub := range reRulesOver.FindAllStringSubmatch(s, -1) {
+		if len(sub) >= 2 {
+			add(sub[1])
+		}
+	}
+	for _, w := range bodyPartWords {
+		if strings.Contains(lower, w) {
+			add(w)
+		}
+	}
+	for _, w := range nationalityWords {
+		if strings.Contains(lower, w) {
+			add(w)
+		}
+	}
+	for _, w := range zodiacWords {
+		if strings.Contains(lower, w) {
+			add(w)
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(collapseSpaces(strings.Join(parts, " ")))
 }
 
 func collapseSpaces(s string) string {
@@ -644,20 +721,6 @@ func collapseSpaces(s string) string {
 		prevSpace = false
 	}
 	return b.String()
-}
-
-// hasAngelWord возвращает true, если в тексте есть одно из слов про ангелов (для определения [name] all / [date] list).
-func hasAngelWord(s string) bool {
-	for _, phrase := range angelSynonymsForStrip {
-		if phrase == "" {
-			continue
-		}
-		re := regexp.MustCompile(`(?i)(^|[^\p{L}])` + regexp.QuoteMeta(phrase) + `([^\p{L}]|$)`)
-		if re.MatchString(s) {
-			return true
-		}
-	}
-	return false
 }
 
 // Варианты написания месяцев (с опечатками) для извлечения даты из вопроса при NULL от модели.
@@ -1055,7 +1118,7 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	}
 	if contextText == "" {
 		var searchQuery string
-		searchQuery = stripAngelSynonymsFromQuery(userMsg)
+		searchQuery = extractSearchEntitiesFromQuestion(userMsg)
 		if searchQuery == "" {
 			searchQuery = extractDateFromQuestion(userMsg)
 			if searchQuery == "" {
