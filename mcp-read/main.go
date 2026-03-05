@@ -12,12 +12,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 	"github.com/telegram-ai-assistant/root/pkg/ratelimit"
-
 	"github.com/redis/go-redis/v9"
 )
 
@@ -321,6 +321,30 @@ func (h *MCPReadHandler) embedQuery(ctx context.Context, query string) []float32
 	return vec
 }
 
+const minStemRunes = 3
+
+// chunkContainsQueryWord возвращает true, если в chunkLower есть слово w или его основа (без окончания),
+// чтобы совпадали разные формы: измена/измены/измене, любовь/любви/любовью.
+func chunkContainsQueryWord(chunkLower, w string) bool {
+	if strings.Contains(chunkLower, w) {
+		return true
+	}
+	runes := []rune(w)
+	if len(runes) <= minStemRunes {
+		return false
+	}
+	for cut := 1; cut <= 3 && len(runes)-cut >= minStemRunes; cut++ {
+		stem := string(runes[:len(runes)-cut])
+		if utf8.RuneCountInString(stem) < minStemRunes {
+			break
+		}
+		if strings.Contains(chunkLower, stem) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -489,7 +513,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			linked := h.fetchChunkPayloadsByID(ctx, collectionName, linkSet)
 			items = linked
 		} else {
-			// Не дата: оставляем только чанки, в тексте которых содержится то, что пришло на поиск (каждое слово запроса)
+			// Не дата: оставляем только чанки, в тексте которых содержится то, что пришло на поиск (слово или его основа, чтобы ловить измена/измены, любовь/любви)
 			queryTrim := strings.TrimSpace(req.QueryText)
 			if queryTrim != "" {
 				queryLower := strings.ToLower(queryTrim)
@@ -502,7 +526,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 						if w == "" {
 							continue
 						}
-						if !strings.Contains(chunkLower, w) {
+						if !chunkContainsQueryWord(chunkLower, w) {
 							allFound = false
 							break
 						}
