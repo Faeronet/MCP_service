@@ -5,9 +5,10 @@ Deterministic chunk_id, edge_id; upsert-only to Qdrant.
 Система A (INGESTION_SYSTEM=A или по умолчанию): текущий пайплайн — чанки по параграфам/LLM,
 полный text в payload, name = первое слово. Для отката оставить A.
 
-Система B (INGESTION_SYSTEM=B): после извлечения текста парсим ключевые поля по меткам,
-в чанк пишем только ключи (name + obitanie, specificnost, ... до первой точки после каждой метки),
-остальной контекст не сохраняем; chunk_id, doc_id, prev/next сохраняем.
+Система B (INGESTION_SYSTEM=B): в основную коллекцию chunks — только name, situacii_problemy, proyavlenie, gospodstvo.
+Обитание — в коллекцию obitanie (все ангелы с одним обитанием в одном чанке: chunk_id, doc_id, obitanie, names).
+Знак зодиака — в коллекцию znak_zodiaka (группировка по значению). Специфичность — в коллекцию specificnost (свой чанк на ангела).
+После записи в Qdrant — полный текст документа в Postgres: core.document_context(chunk_id, context).
 """
 import io
 import logging
@@ -45,6 +46,9 @@ EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or "BAAI/bge-m3").strip()
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", os.getenv("EMBEDDING_DIM", "1024")))  # bge-m3 = 1024
 
 COLLECTION = "chunks"
+COLLECTION_OBITANIE = "obitanie"
+COLLECTION_ZNAK_ZODIAKA = "znak_zodiaka"
+COLLECTION_SPECIFICNOST = "specificnost"
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
 RERANK_BASE = (os.getenv("RERANK_BINDING_HOST") or os.getenv("RERANK_API_URL") or "http://rerank:8787/api/v1").strip().rstrip("/")
@@ -78,16 +82,16 @@ qdrant: Optional[QdrantClient] = None
 minio_client: Optional[Minio] = None
 
 
-def ensure_collection() -> None:
-    """Создать коллекцию chunks, если её нет (после удаления пользователем)."""
+def ensure_collection(name: str = COLLECTION) -> None:
+    """Создать коллекцию, если её нет (после удаления пользователем)."""
     if qdrant is None:
         return
     try:
         qdrant.create_collection(
-            COLLECTION,
+            name,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
         )
-        log.info("created collection %s with vector_size=%s", COLLECTION, VECTOR_SIZE)
+        log.info("created collection %s with vector_size=%s", name, VECTOR_SIZE)
     except UnexpectedResponse as e:
         if e.status_code != 409:
             raise
@@ -346,8 +350,69 @@ def _ingest_error(code: int, detail: str, **kwargs: Any) -> None:
     raise HTTPException(status_code=code, detail=detail)
 
 
+def _qdrant_retrieve_point(collection: str, point_id: int) -> dict[str, Any] | None:
+    """Получить точку по id. Возвращает payload или None."""
+    url = f"{QDRANT_URL.strip('/')}/collections/{collection}/points/{point_id}"
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.get(url)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        result = data.get("result")
+        if not result:
+            return None
+        return result.get("payload") or {}
+    except Exception as e:
+        log.warning("qdrant retrieve failed: %s", e)
+        return None
+
+
+def _qdrant_upsert(collection: str, point_id: int, vector: list[float], payload: dict[str, Any]) -> None:
+    ensure_collection(collection)
+    url = f"{QDRANT_URL.strip('/')}/collections/{collection}/points"
+    body = {"points": [{"id": point_id, "vector": vector, "payload": payload}]}
+    with httpx.Client(timeout=60.0) as client:
+        r = client.put(url, json=body)
+    if r.status_code == 404:
+        ensure_collection(collection)
+        with httpx.Client(timeout=60.0) as client:
+            r = client.put(url, json=body)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"qdrant upsert {collection}: {r.text[:200]}")
+
+
+def _save_document_context_postgres(chunk_id: str, context: str) -> None:
+    """Записать в core.document_context: chunk_id и полный текст документа."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(POSTGRES_DSN)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO core.document_context (chunk_id, context)
+                    VALUES (%s, %s)
+                    ON CONFLICT (chunk_id) DO UPDATE SET context = EXCLUDED.context
+                    """,
+                    (chunk_id, context),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("document_context insert failed: %s", e)
+
+
 def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, Any]:
-    """Система B: только ключи (name + метки до первой точки), chunk_id, doc_id; связи prev/next для будущего."""
+    """
+    Система B:
+    - Основная коллекция chunks: только name, situacii_problemy, proyavlenie, gospodstvo.
+    - Обитание: отдельная коллекция obitanie; все ангелы с одним обитанием в одном чанке (chunk_id, doc_id, obitanie, names).
+    - Знак зодиака: отдельная коллекция znak_zodiaka; группировка по значению.
+    - Специфичность: отдельная коллекция specificnost; у каждого ангела свой чанк (chunk_id, doc_id, name, specificnost).
+    - После записи в Qdrant — полный текст документа в Postgres (core.document_context: chunk_id, context).
+    """
     if qdrant is None or minio_client is None:
         _ingest_error(503, "service not ready")
     keys = _parse_system_b_keys(raw)
@@ -355,54 +420,121 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         log.info("ingest_document system_b: no keys extracted for doc_id=%s", req.doc_id)
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
     name = keys.get("name", "")
-    normalized = " ".join(f"{k}={v}" for k, v in sorted(keys.items()))
-    chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, "sec_0", normalized)
-    vector = embed_text(normalized)
-    if len(vector) != VECTOR_SIZE:
-        vector = (vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
-    payload: dict[str, Any] = {
-        "chunk_id": chunk_id,
+    # Основной чанк: только имя + Ситуации и общие проблемы, Проявление, Господство
+    main_payload_keys = {"name", "situacii_problemy", "proyavlenie", "gospodstvo"}
+    main_keys = {k: v for k, v in keys.items() if k in main_payload_keys and v}
+    if not main_keys:
+        log.info("ingest_document system_b: no main keys for doc_id=%s", req.doc_id)
+        return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
+    main_normalized = " ".join(f"{k}={v}" for k, v in sorted(main_keys.items()))
+    main_chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, "sec_0", main_normalized)
+    main_vector = embed_text(main_normalized)
+    if len(main_vector) != VECTOR_SIZE:
+        main_vector = (main_vector + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+    main_payload: dict[str, Any] = {
+        "chunk_id": main_chunk_id,
         "doc_id": req.doc_id,
         "version_id": req.version_id,
         "section_path": "sec_0",
-        "name": name,
+        **main_keys,
     }
-    for k, v in keys.items():
-        if k != "name" and v:
-            payload[k] = v
-    if req.metadata:
-        skip = ("chunk_id", "doc_id", "version_id", "section_path", "name") + tuple(keys.keys())
-        for k, v in req.metadata.items():
-            if k not in skip:
-                payload[k] = v
-    points_payload = [{
-        "id": chunk_id_to_point_id(chunk_id),
-        "vector": vector,
-        "payload": payload,
-    }]
-    ensure_collection()
-    url = f"{QDRANT_URL.strip('/')}/collections/{COLLECTION}/points"
-    body = {"points": points_payload}
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            r = client.put(url, json=body)
-        if r.status_code == 404:
-            ensure_collection()
-            with httpx.Client(timeout=60.0) as client:
-                r = client.put(url, json=body)
-        if r.status_code >= 400:
-            err = r.text
-            log.warning("qdrant upsert system_b HTTP %s: %s", r.status_code, err[:500])
-            if "dimension" in err.lower() or "vector" in err.lower():
-                _ingest_error(400, f"qdrant dimension mismatch: {err[:200]}. Delete collection chunks and retry.", doc_id=req.doc_id)
-            raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {err[:200]}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.warning("qdrant upsert system_b failed: %s", e)
-        raise HTTPException(status_code=502, detail=f"qdrant upsert failed: {e!s}") from e
-    log.info("ingest_document system_b: 1 point doc_id=%s keys=%s", req.doc_id, list(keys.keys()))
-    return {"status": "ok", "chunks_upserted": 1, "doc_id": req.doc_id, "version_id": req.version_id}
+    ensure_collection(COLLECTION)
+    _qdrant_upsert(COLLECTION, chunk_id_to_point_id(main_chunk_id), main_vector, main_payload)
+    chunks_count = 1
+
+    # Коллекция obitanie: один чанк на значение обитания, добавляем имя в существующий или создаём новый
+    obitanie_val = keys.get("obitanie", "").strip()
+    if obitanie_val:
+        ensure_collection(COLLECTION_OBITANIE)
+        obitanie_chunk_id = deterministic_chunk_id("obitanie", obitanie_val, "group", obitanie_val)
+        point_id = chunk_id_to_point_id(obitanie_chunk_id)
+        existing = _qdrant_retrieve_point(COLLECTION_OBITANIE, point_id)
+        if existing:
+            names = list(existing.get("names") or [])
+            doc_ids = list(existing.get("doc_ids") or [])
+            if name and name not in names:
+                names.append(name)
+            doc_ids.append(req.doc_id)
+            payload_obitanie = {
+                "chunk_id": obitanie_chunk_id,
+                "obitanie": obitanie_val,
+                "names": names,
+                "doc_ids": doc_ids,
+            }
+        else:
+            payload_obitanie = {
+                "chunk_id": obitanie_chunk_id,
+                "obitanie": obitanie_val,
+                "names": [name] if name else [],
+                "doc_ids": [req.doc_id],
+            }
+        text_for_vec = obitanie_val + " " + " ".join(payload_obitanie["names"])
+        vec_obitanie = embed_text(text_for_vec)
+        if len(vec_obitanie) != VECTOR_SIZE:
+            vec_obitanie = (vec_obitanie + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        _qdrant_upsert(COLLECTION_OBITANIE, point_id, vec_obitanie, payload_obitanie)
+        chunks_count += 1
+
+    # Коллекция znak_zodiaka: один чанк на значение знака
+    znak_val = keys.get("znak_zodiaka", "").strip()
+    if znak_val:
+        ensure_collection(COLLECTION_ZNAK_ZODIAKA)
+        znak_chunk_id = deterministic_chunk_id("znak_zodiaka", znak_val, "group", znak_val)
+        point_id = chunk_id_to_point_id(znak_chunk_id)
+        existing = _qdrant_retrieve_point(COLLECTION_ZNAK_ZODIAKA, point_id)
+        if existing:
+            names = list(existing.get("names") or [])
+            doc_ids = list(existing.get("doc_ids") or [])
+            if name and name not in names:
+                names.append(name)
+            doc_ids.append(req.doc_id)
+            payload_znak = {
+                "chunk_id": znak_chunk_id,
+                "znak_zodiaka": znak_val,
+                "names": names,
+                "doc_ids": doc_ids,
+            }
+        else:
+            payload_znak = {
+                "chunk_id": znak_chunk_id,
+                "znak_zodiaka": znak_val,
+                "names": [name] if name else [],
+                "doc_ids": [req.doc_id],
+            }
+        text_for_vec = znak_val + " " + " ".join(payload_znak["names"])
+        vec_znak = embed_text(text_for_vec)
+        if len(vec_znak) != VECTOR_SIZE:
+            vec_znak = (vec_znak + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        _qdrant_upsert(COLLECTION_ZNAK_ZODIAKA, point_id, vec_znak, payload_znak)
+        chunks_count += 1
+
+    # Коллекция specificnost: у каждого ангела свой чанк
+    specificnost_val = keys.get("specificnost", "").strip()
+    if specificnost_val:
+        ensure_collection(COLLECTION_SPECIFICNOST)
+        spec_chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, "specificnost", name + specificnost_val)
+        point_id = chunk_id_to_point_id(spec_chunk_id)
+        payload_spec = {
+            "chunk_id": spec_chunk_id,
+            "doc_id": req.doc_id,
+            "name": name,
+            "specificnost": specificnost_val,
+        }
+        text_for_vec = name + " " + specificnost_val
+        vec_spec = embed_text(text_for_vec)
+        if len(vec_spec) != VECTOR_SIZE:
+            vec_spec = (vec_spec + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        _qdrant_upsert(COLLECTION_SPECIFICNOST, point_id, vec_spec, payload_spec)
+        chunks_count += 1
+
+    # Postgres: полный текст документа по main_chunk_id
+    _save_document_context_postgres(main_chunk_id, raw)
+
+    log.info(
+        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s specificnost=%s",
+        req.doc_id, main_chunk_id, bool(obitanie_val), bool(znak_val), bool(specificnost_val),
+    )
+    return {"status": "ok", "chunks_upserted": chunks_count, "doc_id": req.doc_id, "version_id": req.version_id}
 
 
 @app.post("/mcp/ingest_document")
