@@ -384,12 +384,10 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			// Не ищем в Qdrant — сразу в LLM с промптом B и пустым контекстом
 			contextText = ""
 		default:
-			if b.debugMode == 1 {
-				b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
-			}
 			attachmentsText := b.getAttachmentsText(ctx, sessionID)
 			var err error
-			contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			var buildChunkIDs []string
+			contextText, buildChunkIDs, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 			if err != nil {
 				if err.Error() == "chunk_not_found" {
 					contextText = "По подходящим данным в базе ничего не найдено."
@@ -399,6 +397,13 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 					log.Warn(ctx, "build_context failed, using empty context", logging.KV{"error", err})
 					contextText = ""
 				}
+			}
+			if b.debugMode == 1 {
+				msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+				if len(buildChunkIDs) > 0 {
+					msg += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
+				}
+				b.sendReply(ctx, chatID, msg)
 			}
 		}
 		}
@@ -538,13 +543,13 @@ func (b *Bot) getAttachmentsText(ctx context.Context, sessionID uuid.UUID) strin
 	return strings.Join(parts, "\n\n")
 }
 
-func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (string, error) {
+func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (context string, chunkIDs []string, err error) {
 	body := map[string]interface{}{
-		"query_text":          query,
-		"acl_token":           "placeholder",
-		"token_budget":        tokenBudget,
-		"mode":                mode,
-		"attachments_text":    attachmentsText,
+		"query_text":       query,
+		"acl_token":        "placeholder",
+		"token_budget":     tokenBudget,
+		"mode":             mode,
+		"attachments_text": attachmentsText,
 	}
 	payload, _ := json.Marshal(body)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.mcpReadURL+"/mcp/build_context", bytes.NewReader(payload))
@@ -553,24 +558,25 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bb, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
+		return "", nil, fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
 	}
 	var out struct {
-		Context string `json:"context"`
-		Error   string `json:"error"`
+		Context  string   `json:"context"`
+		ChunkIDs []string `json:"chunk_ids"`
+		Error    string   `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if out.Error != "" {
-		return "", fmt.Errorf("%s", out.Error)
+		return "", nil, fmt.Errorf("%s", out.Error)
 	}
-	return out.Context, nil
+	return out.Context, out.ChunkIDs, nil
 }
 
 // getAllNames возвращает контекст из всех уникальных name в Qdrant (для запроса "[name] all").
@@ -1258,12 +1264,10 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			case "[date] list":
 				contextText = ""
 			default:
-				if b.debugMode == 1 {
-					b.sendReply(ctx, chatID, "🔍 На поиск в Qdrant отправлено:\n"+searchQuery)
-				}
 				attachmentsText := b.getAttachmentsText(ctx, sessionID)
 				var err error
-				contextText, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+				var buildChunkIDs []string
+				contextText, buildChunkIDs, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 				if err != nil {
 					if err.Error() == "chunk_not_found" {
 						contextText = "По подходящим данным в базе ничего не найдено."
@@ -1273,6 +1277,13 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 						log.Warn(ctx, "build_context for attachment failed", logging.KV{"error", err})
 						contextText = ""
 					}
+				}
+				if b.debugMode == 1 {
+					msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+					if len(buildChunkIDs) > 0 {
+						msg += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
+					}
+					b.sendReply(ctx, chatID, msg)
 				}
 			}
 		}

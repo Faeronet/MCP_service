@@ -136,8 +136,9 @@ type BuildContextRequest struct {
 }
 
 type BuildContextResponse struct {
-	Context string `json:"context"`
-	Error   string `json:"error,omitempty"`
+	Context  string   `json:"context"`
+	ChunkIDs []string `json:"chunk_ids,omitempty"`
+	Error    string   `json:"error,omitempty"`
 }
 
 // chunkInfo — чанк с именем и связями для фильтра по дате и форматирования контекста.
@@ -341,7 +342,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		val, err := h.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: val})
+			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: val}) // ChunkIDs пустой при ответе из кэша
 			return
 		}
 	}
@@ -362,6 +363,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var contextText string
+	var chunkIDs []string
 	var found bool
 	for round := 1; round <= maxSearchRounds; round++ {
 		limit := uint64(20 * round)
@@ -502,6 +504,17 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		if len(contextText) > req.TokenBudget*4 {
 			contextText = contextText[:req.TokenBudget*4]
 		}
+		chunkIDSet := make(map[string]struct{})
+		for _, c := range items {
+			if c.ChunkID != "" {
+				chunkIDSet[c.ChunkID] = struct{}{}
+			}
+		}
+		chunkIDs = make([]string, 0, len(chunkIDSet))
+		for id := range chunkIDSet {
+			chunkIDs = append(chunkIDs, id)
+		}
+		sort.Strings(chunkIDs)
 		found = true
 		break
 	}
@@ -532,7 +545,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText})
+	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs})
 }
 
 const maxScrollPagesForNames = 50
