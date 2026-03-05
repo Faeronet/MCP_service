@@ -645,15 +645,16 @@ func makeSet(words []string) map[string]struct{} {
 	return m
 }
 
-// Триггеры для извлечения фразы после них по токенам Prose: ключ — слово (нижний регистр), значение — сколько токенов пропустить перед фразой (1 = «на»/«над»/«при»).
+// Триггеры для извлечения фразы после них по токенам Prose: ключ — слово (нижний регистр), значение — сколько токенов пропустить перед фразой.
 var phraseTriggerSkip = map[string]int{
 	"исцелить": 0, "исцеляют": 0, "исцеляющих": 0, "исцеляющего": 0,
 	"способных": 0, "способны": 0, "могут": 0,
 	"влияет": 1, "влияние": 1, "влияют": 1,
-	"властвует": 1, "властвуют": 1,
+	"властвует": 1, "властвуют": 1, "влавствует": 1, // опечатка «влавствует»
 	"помогает": 1, "помогают": 1, "помощь": 1,
-	"при": 2, // «при проблемах с» -> пропустить 2 токена
+	"при": 1, // по умолчанию «при X»; для «при проблемах с» — динамически skip 3
 	"от": 0, "для": 0,
+	"на": 0, "над": 0, // «влияет на X», «властвует над X» — X из предлога при любом глаголе
 }
 
 // extractSearchEntitiesFromQuestion извлекает сущности только через Prose: Entities() + фразы после триггеров по Tokens(); без фиксированных словарей — подходит для любых тем.
@@ -710,6 +711,14 @@ func extractSearchEntitiesFromQuestion(question string) string {
 		if (tl == "помогает" || tl == "помогают" || tl == "помощь") && i+1 < len(tokens) && strings.ToLower(tokens[i+1].Text) != "при" {
 			skip = 0
 		}
+		// «при проблемах с бессонницей» — пропустить 3 токена; иначе «при бессоннице» — пропустить 1.
+		if tl == "при" && i+2 < len(tokens) {
+			next1 := strings.ToLower(tokens[i+1].Text)
+			next2 := strings.ToLower(tokens[i+2].Text)
+			if next1 == "проблемах" && next2 == "с" {
+				skip = 3
+			}
+		}
 		start := i + 1 + skip
 		if start >= len(tokens) {
 			continue
@@ -723,7 +732,8 @@ func extractSearchEntitiesFromQuestion(question string) string {
 			phrase = append(phrase, t)
 		}
 		if len(phrase) > 0 {
-			add(strings.Join(phrase, " "))
+			phraseStr := strings.TrimRight(strings.Join(phrase, " "), ".,?!;")
+			add(phraseStr)
 		}
 	}
 
