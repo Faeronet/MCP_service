@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
@@ -322,28 +321,10 @@ func (h *MCPReadHandler) embedQuery(ctx context.Context, query string) []float32
 	return vec
 }
 
-const minStemRunes = 3
-
-// chunkContainsQueryWord возвращает true, если в chunkLower есть слово w или его основа (без окончания),
-// чтобы совпадали разные формы: измена/измены/измене, любовь/любви/любовью.
+// chunkContainsQueryWord проверяет, что в тексте чанка есть искомое слово (точное вхождение подстроки).
+// Без совпадения по основе, чтобы не тянуть лишнее: «ноги» не совпадает с «ногти», только с «ноги».
 func chunkContainsQueryWord(chunkLower, w string) bool {
-	if strings.Contains(chunkLower, w) {
-		return true
-	}
-	runes := []rune(w)
-	if len(runes) <= minStemRunes {
-		return false
-	}
-	for cut := 1; cut <= 3 && len(runes)-cut >= minStemRunes; cut++ {
-		stem := string(runes[:len(runes)-cut])
-		if utf8.RuneCountInString(stem) < minStemRunes {
-			break
-		}
-		if strings.Contains(chunkLower, stem) {
-			return true
-		}
-	}
-	return false
+	return w != "" && strings.Contains(chunkLower, w)
 }
 
 func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
