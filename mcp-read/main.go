@@ -589,8 +589,15 @@ func (h *MCPReadHandler) AllNames(w http.ResponseWriter, r *http.Request) {
 			if _, seen := nameToContent[n]; seen {
 				continue
 			}
-			text, _ := pt.Payload["text"].(string)
-			nameToContent[n] = strings.TrimSpace(text)
+			var content string
+			if t, ok := pt.Payload["text"].(string); ok && t != "" {
+				content = t
+			} else if t, ok := pt.Payload["content"].(string); ok && t != "" {
+				content = t
+			} else {
+				content = buildTextFromPayload(pt.Payload)
+			}
+			nameToContent[n] = strings.TrimSpace(content)
 		}
 		offset = scrollRes.Result.NextPageOffset
 		if offset == nil {
@@ -680,10 +687,46 @@ func (h *MCPReadHandler) fetchChunkPayloadsByID(ctx context.Context, collectionN
 	return out
 }
 
+// payloadReservedKeys — ключи payload, не входящие в текстовый контекст (система B без поля text).
+var payloadReservedKeys = map[string]struct{}{
+	"chunk_id": {}, "doc_id": {}, "version_id": {}, "section_path": {},
+	"prev_chunk_id": {}, "next_chunk_id": {}, "related_chunk_ids": {}, "links": {}, "rerank_position": {},
+	"text": {}, "content": {}, // text убрали; content — тело чанка в системе A, в контекст подставляется напрямую
+}
+
+func buildTextFromPayload(p map[string]interface{}) string {
+	var keys []string
+	for k := range p {
+		if _, reserved := payloadReservedKeys[k]; reserved {
+			continue
+		}
+		if _, ok := p[k].(string); ok {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		if v, ok := p[k].(string); ok && v != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(k)
+			b.WriteString(": ")
+			b.WriteString(v)
+		}
+	}
+	return b.String()
+}
+
 func payloadToChunkInfo(p map[string]interface{}) chunkInfo {
 	var c chunkInfo
-	if t, ok := p["text"].(string); ok {
+	if t, ok := p["text"].(string); ok && t != "" {
 		c.Text = t
+	} else if t, ok := p["content"].(string); ok && t != "" {
+		c.Text = t
+	} else {
+		c.Text = buildTextFromPayload(p)
 	}
 	if n, ok := p["name"].(string); ok {
 		c.Name = n

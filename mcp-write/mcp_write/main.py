@@ -370,8 +370,6 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
     for k, v in keys.items():
         if k != "name" and v:
             payload[k] = v
-    # Для mcp-read/build_context: один текст из ключей (остальной контекст не храним)
-    payload["text"] = "\n".join(f"{k}: {v}" for k, v in sorted(keys.items()))
     if req.metadata:
         skip = ("chunk_id", "doc_id", "version_id", "section_path", "name") + tuple(keys.keys())
         for k, v in req.metadata.items():
@@ -503,7 +501,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             "doc_id": req.doc_id,
             "version_id": req.version_id,
             "section_path": f"sec_{i}",
-            "text": text,
+            "content": text,
             "name": first_word,
         }
         if i > 0:
@@ -516,7 +514,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
             payload["links"] = links_by_index[i]
             payload["related_chunk_ids"] = [ln["chunk_id"] for ln in links_by_index[i]]
         if req.metadata:
-            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "text", "name", "rerank_position", "related_chunk_ids", "links")
+            skip = ("prev_chunk_id", "next_chunk_id", "chunk_id", "doc_id", "version_id", "section_path", "content", "name", "rerank_position", "related_chunk_ids", "links")
             for k, v in req.metadata.items():
                 if k not in skip:
                     payload[k] = v

@@ -655,6 +655,9 @@ var phraseTriggerSkip = map[string]int{
 	"при": 1, // по умолчанию «при X»; для «при проблемах с» — динамически skip 3
 	"от": 0, "для": 0,
 	"на": 0, "над": 0, // «влияет на X», «властвует над X» — X из предлога при любом глаголе
+	"с": 0, "в": 0, "о": 0, "об": 0, "по": 0, "к": 0, "у": 0,
+	"из": 0, "за": 0, "про": 0, "под": 0, "до": 0, "после": 0, "между": 0, "перед": 0, "через": 0,
+	// с/в/о/по/к/у/из/за/про/под/до/после/между/перед/через X — ангел из сферы, за мир, расскажи про X, под знаком, до рассвета и т.д.
 }
 
 // extractSearchEntitiesFromQuestion извлекает сущности только через Prose: Entities() + фразы после триггеров по Tokens(); без фиксированных словарей — подходит для любых тем.
@@ -670,6 +673,11 @@ func extractSearchEntitiesFromQuestion(question string) string {
 	seen := make(map[string]struct{})
 	var parts []string
 	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			return
+		}
+		t = toNounNominativePhrase(t)
 		t = strings.TrimSpace(t)
 		if t == "" {
 			return
@@ -758,6 +766,51 @@ func collapseSpaces(s string) string {
 		prevSpace = false
 	}
 	return b.String()
+}
+
+// Правила приведения русского слова к форме существительного (именительный падеж): браком->брак, ногами->ноги, турцией->турция.
+// Порядок: от длинных суффиксов к коротким.
+var nounNominativeSuffixes = []struct{ suffix, repl string }{
+	{"ами", "и"},   // ногами->ноги, руками->руки
+	{"ями", "и"},   // евреями->евреи
+	{"нице", "ница"}, // бессоннице->бессонница
+	{"ах", "и"},    // ногах->ноги
+	{"ом", ""},     // браком->брак, домом->дом
+	{"ой", "а"},    // ногой->нога, рукой->рука
+	{"ей", "я"},    // турцией->турция
+	{"ке", "ка"},   // руке->рука
+	{"ям", "и"},    // евреям->евреи
+	{"ев", "и"},    // евреев->евреи
+	{"ов", ""},     // столов->стол, ангелов->ангел
+	{"у", ""},      // браку->брак, слону->слон
+	{"ю", ""},      // слону->слон (вариант)
+}
+
+func toNounNominative(word string) string {
+	w := strings.TrimSpace(word)
+	if w == "" {
+		return w
+	}
+	lower := strings.ToLower(w)
+	for _, r := range nounNominativeSuffixes {
+		if len(lower) <= len(r.suffix) {
+			continue
+		}
+		if strings.HasSuffix(lower, r.suffix) {
+			base := w[:len(w)-len(r.suffix)]
+			return base + r.repl
+		}
+	}
+	return w
+}
+
+// toNounNominativePhrase приводит каждое слово во фразе к форме существительного (для поиска: браком->брак, ногами->ноги).
+func toNounNominativePhrase(phrase string) string {
+	parts := strings.Fields(phrase)
+	for i, p := range parts {
+		parts[i] = toNounNominative(p)
+	}
+	return strings.Join(parts, " ")
 }
 
 // Варианты написания месяцев (с опечатками) для извлечения даты из вопроса при NULL от модели.
