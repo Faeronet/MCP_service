@@ -143,12 +143,13 @@ type BuildContextResponse struct {
 
 // chunkInfo — чанк с именем и связями для фильтра по дате и форматирования контекста.
 type chunkInfo struct {
-	Name       string
-	Text       string
-	ChunkID    string
-	RelatedIDs []string
-	PrevID     string
-	NextID     string
+	Name          string
+	Text          string
+	SearchableText string // все значения полей payload через пробел — для проверки «содержится в чанке» (поля вроде situacii_problemy)
+	ChunkID       string
+	RelatedIDs    []string
+	PrevID        string
+	NextID        string
 }
 
 // Форматы: "24 марта", "24 января", "24.03", "24.03.2025"
@@ -520,7 +521,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 				words := strings.Fields(queryLower)
 				var containing []chunkInfo
 				for _, c := range items {
-					chunkLower := strings.ToLower(c.Text)
+					chunkLower := strings.ToLower(c.Text + " " + c.SearchableText)
 					allFound := true
 					for _, w := range words {
 						if w == "" {
@@ -785,6 +786,21 @@ func buildTextFromPayload(p map[string]interface{}) string {
 	return b.String()
 }
 
+// buildSearchableText возвращает конкатенацию всех строковых значений payload (кроме служебных ключей) — для проверки вхождения запроса в полях вроде situacii_problemy.
+func buildSearchableText(p map[string]interface{}) string {
+	var parts []string
+	for k, v := range p {
+		if _, reserved := payloadReservedKeys[k]; reserved {
+			continue
+		}
+		if s, ok := v.(string); ok && s != "" {
+			parts = append(parts, s)
+		}
+	}
+	sort.Strings(parts) // стабильный порядок по ключам? нет, мы теряем ключи. но порядок не важен для поиска
+	return strings.Join(parts, " ")
+}
+
 func payloadToChunkInfo(p map[string]interface{}) chunkInfo {
 	var c chunkInfo
 	if t, ok := p["text"].(string); ok && t != "" {
@@ -794,6 +810,7 @@ func payloadToChunkInfo(p map[string]interface{}) chunkInfo {
 	} else {
 		c.Text = buildTextFromPayload(p)
 	}
+	c.SearchableText = buildSearchableText(p)
 	if n, ok := p["name"].(string); ok {
 		c.Name = n
 	}
