@@ -573,6 +573,43 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		break
 	}
 
+	// Если векторный поиск не нашёл подходящих чанков для не-даты — делаем полный скан (scroll) и ищем по текстовому вхождению
+	if !found && !hasDate {
+		queryTrim := strings.TrimSpace(req.QueryText)
+		if queryTrim != "" {
+			log.Info(ctx, "build_context: vector search failed, falling back to full scroll", logging.KV{"query", queryTrim})
+			items := h.scrollAllChunksContaining(ctx, collectionName, queryTrim)
+			if len(items) > 0 {
+				var b strings.Builder
+				for _, c := range items {
+					if c.Name != "" {
+						b.WriteString("Имя: ")
+						b.WriteString(c.Name)
+						b.WriteString("\n")
+					}
+					b.WriteString(c.Text)
+					b.WriteString("\n\n")
+				}
+				contextText = b.String()
+				if len(contextText) > req.TokenBudget*4 {
+					contextText = contextText[:req.TokenBudget*4]
+				}
+				chunkIDSet := make(map[string]struct{})
+				for _, c := range items {
+					if c.ChunkID != "" {
+						chunkIDSet[c.ChunkID] = struct{}{}
+					}
+				}
+				chunkIDs = make([]string, 0, len(chunkIDSet))
+				for id := range chunkIDSet {
+					chunkIDs = append(chunkIDs, id)
+				}
+				sort.Strings(chunkIDs)
+				found = true
+			}
+		}
+	}
+
 	if !found {
 		if hasDate {
 			log.Info(ctx, "build_context: date not found after rounds", logging.KV{"rounds", maxSearchRounds}, logging.KV{"date", dateStr})
@@ -600,6 +637,74 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs})
+}
+
+// scrollAllChunksContaining сканирует все чанки коллекции и возвращает те, в чьих payload-полях есть каждое слово запроса (или его основа).
+func (h *MCPReadHandler) scrollAllChunksContaining(ctx context.Context, collectionName, queryText string) []chunkInfo {
+	queryLower := strings.ToLower(strings.TrimSpace(queryText))
+	words := strings.Fields(queryLower)
+	if len(words) == 0 {
+		return nil
+	}
+
+	var result []chunkInfo
+	var offset interface{} // nil для первой страницы, затем point id
+	pageSize := uint32(200)
+	withPayload := true
+	maxPages := 100
+
+	for page := 0; page < maxPages; page++ {
+		body := qdrantScrollReq{
+			Limit:       &pageSize,
+			WithPayload: &withPayload,
+		}
+		if offset != nil {
+			body.Offset = offset
+		}
+		payload, _ := json.Marshal(body)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.qdrantURL+"/collections/"+collectionName+"/points/scroll", bytes.NewReader(payload))
+		if err != nil {
+			break
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			break
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			break
+		}
+		var scrollRes qdrantScrollResp
+		if err := json.NewDecoder(resp.Body).Decode(&scrollRes); err != nil {
+			resp.Body.Close()
+			break
+		}
+		resp.Body.Close()
+
+		for _, pt := range scrollRes.Result.Points {
+			c := payloadToChunkInfo(pt.Payload)
+			chunkLower := strings.ToLower(c.Text + " " + c.SearchableText)
+			allFound := true
+			for _, w := range words {
+				if !chunkContainsQueryWord(chunkLower, w) {
+					allFound = false
+					break
+				}
+			}
+			if allFound && (c.Text != "" || c.ChunkID != "") {
+				result = append(result, c)
+			}
+		}
+
+		offset = scrollRes.Result.NextPageOffset
+		if offset == nil {
+			break
+		}
+	}
+
+	log.Info(ctx, "scrollAllChunksContaining: done", logging.KV{"query", queryText}, logging.KV{"found", len(result)})
+	return result
 }
 
 const maxScrollPagesForNames = 50
