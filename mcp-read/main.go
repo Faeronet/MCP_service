@@ -360,7 +360,8 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.embedLimiter.Release()
 
-	collectionName := "chunks"
+	collectionName := collectionForQuery(req.QueryText)
+	log.Info(ctx, "build_context: collection by query", logging.KV{"collection", collectionName}, logging.KV{"query", req.QueryText})
 	vec := h.embedQuery(ctx, req.QueryText)
 	trueVal := true
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
@@ -387,6 +388,11 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
+			if resp.StatusCode == 404 && collectionName != "chunks" {
+				log.Info(ctx, "build_context: collection not found, fallback to chunks", logging.KV{"collection", collectionName})
+				collectionName = "chunks"
+				continue
+			}
 			log.Warn(ctx, "qdrant non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"round", round})
 			continue
 		}
@@ -921,6 +927,39 @@ func payloadToChunkInfo(p map[string]interface{}) chunkInfo {
 
 func normalizeQuery(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
+}
+
+// collectionForQuery по ключевым словам в вопросе выбирает коллекцию для поиска.
+// Учитываются основы слов (множественное число, падежи): качество/качества, искажение/искажения, специфичность/спецификация, знак зодиака.
+// Порядок проверки: знак зодиака → качество энергии → искажение энергии → специфичность → chunks.
+func collectionForQuery(query string) string {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return "chunks"
+	}
+	// Знак зодиака: "знак зодиак", "знаки зодиак", "знаке зодиак" и т.д.
+	if strings.Contains(q, "знак") && strings.Contains(q, "зодиак") {
+		return "znak_zodiaka"
+	}
+	// Качество / качества энергии: "качеств" (качество, качества, качеству), "качество энергии", "качества энергии"
+	if strings.Contains(q, "качеств") {
+		return "kachestva_energii"
+	}
+	if strings.Contains(q, "качество") && strings.Contains(q, "энерги") {
+		return "kachestva_energii"
+	}
+	// Искажение / искажения энергии: "искажен" (искажение, искажения, искажений), "искажение энергии"
+	if strings.Contains(q, "искажен") {
+		return "iskazheniya_energii"
+	}
+	if strings.Contains(q, "искажение") && strings.Contains(q, "энерги") {
+		return "iskazheniya_energii"
+	}
+	// Специфичность / спецификация: "специфичност", "спецификац"
+	if strings.Contains(q, "специфичност") || strings.Contains(q, "спецификац") {
+		return "specificnost"
+	}
+	return "chunks"
 }
 
 // rerankWithScoreAndOrder возвращает (reordered texts, order indices, topScore). order[i] = исходный индекс i-го по релевантности чанка.
