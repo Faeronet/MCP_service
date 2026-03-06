@@ -402,7 +402,23 @@ def _get_rest_context(raw: str, keys: dict[str, str]) -> str:
         prev = e
     if prev < len(raw):
         parts.append(raw[prev:])
-    return " ".join(p.strip() for p in parts if p.strip()).strip()
+    rest = " ".join(p.strip() for p in parts if p.strip()).strip()
+    # Финальная очистка начала: убрать ведущие точки/пробелы и повтор имени
+    rest = _strip_leading_dots_and_name(rest, keys.get("name") or "")
+    return rest
+
+
+def _strip_leading_dots_and_name(s: str, name: str) -> str:
+    """Убрать из начала строки пробелы/точки и при необходимости «Имя » / «Имя - »."""
+    s = (s or "").strip()
+    name = (name or "").strip()
+    while s and s[0] in " .\t\n\r":
+        s = s[1:].strip()
+    if name and (s.startswith(name + " ") or s.startswith(name + " -") or s.startswith(name + ".")):
+        s = s[len(name) :].strip()
+        while s and s[0] in " .\t\n\r":
+            s = s[1:].strip()
+    return s
 
 
 def _extract_text_from_file(data: bytes, key: str) -> str:
