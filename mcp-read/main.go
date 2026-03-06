@@ -1070,46 +1070,65 @@ func normalizeQuery(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
 }
 
+// wordBoundaryRu — граница слова для кириллицы (в Go \b не подходит для не-ASCII).
+const wordBoundaryRu = `(?:^|[^\p{L}])`
+const wordBoundaryRuEnd = `(?:[^\p{L}]|$)`
+
+// containsWordRu возвращает true, если в s есть слово word как отдельное слово (кириллица).
+func containsWordRu(s, word string) bool {
+	re, err := regexp.Compile(`(?i)` + wordBoundaryRu + regexp.QuoteMeta(word) + wordBoundaryRuEnd)
+	if err != nil {
+		return strings.Contains(strings.ToLower(s), strings.ToLower(word))
+	}
+	return re.MatchString(s)
+}
+
 // collectionForQuery по ключевым словам в вопросе выбирает коллекцию для поиска.
-// Учитываются целые слова/фразы (чтобы не роутить на "качественно" и т.п.): знак зодиака, качество/качества, искажение/искажения, специфичность/спецификация.
-// Порядок: знак зодиака → качество энергии → искажение энергии → специфичность → chunks.
+// Триггеры: знак зодиака; качество, качества, качество энергии, качества энергии (и опечатка качесво); искажение, искажения, искажение энергии, искажения энергии; специфичность/спецификация.
 func collectionForQuery(query string) string {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return "chunks"
 	}
-	// Знак зодиака: фраза из двух слов
-	if reContainsWord(q, `знак\w*`) && reContainsWord(q, `зодиак\w*`) {
+	// Знак зодиака
+	if (strings.Contains(q, "знак") && strings.Contains(q, "зодиак")) ||
+		containsWordRu(q, "знак зодиака") || containsWordRu(q, "знаки зодиака") {
 		return "znak_zodiaka"
 	}
-	// Качество энергии: фраза или слово "качество"/"качества"
+	// Качество: слово или фраза с энергией (качество, качества, качество энергии, качества энергии, качесво)
 	if strings.Contains(q, "качество энергии") || strings.Contains(q, "качества энергии") ||
-		reContainsWord(q, `качество`) || reContainsWord(q, `качества`) {
+		containsWordRu(q, "качество") || containsWordRu(q, "качества") || strings.Contains(q, "качесво") {
 		return "kachestva_energii"
 	}
-	// Искажение энергии
+	// Искажение
 	if strings.Contains(q, "искажение энергии") || strings.Contains(q, "искажения энергии") ||
-		reContainsWord(q, `искажение`) || reContainsWord(q, `искажения`) {
+		containsWordRu(q, "искажение") || containsWordRu(q, "искажения") {
 		return "iskazheniya_energii"
 	}
 	// Специфичность / спецификация
-	if reContainsWord(q, `специфичность`) || reContainsWord(q, `спецификация`) ||
-		reContainsWord(q, `специфичности`) || reContainsWord(q, `спецификации`) {
+	if containsWordRu(q, "специфичность") || containsWordRu(q, "спецификация") ||
+		containsWordRu(q, "специфичности") || containsWordRu(q, "спецификации") {
 		return "specificnost"
 	}
 	return "chunks"
 }
 
-// reContainsWord возвращает true, если в s есть целое слово, совпадающее с паттерном (паттерн — \b...\b не нужен, добавим внутри).
-func reContainsWord(s, pattern string) bool {
-	re, err := regexp.Compile(`(?i)\b` + pattern + `\b`)
-	if err != nil {
-		return false
+// stripWordRu убирает из s слова (как отдельные слова) по границам Unicode (\p{L}).
+func stripWordRu(s string, words ...string) string {
+	if len(words) == 0 {
+		return s
 	}
-	return re.MatchString(s)
+	parts := make([]string, len(words))
+	for i, w := range words {
+		parts[i] = regexp.QuoteMeta(w)
+	}
+	alt := strings.Join(parts, "|")
+	re := regexp.MustCompile(`(?i)(^|[^\p{L}])(` + alt + `)($|[^\p{L}])`)
+	return re.ReplaceAllString(s, "$1 $3")
 }
 
-// stripRoutingKeywords убирает из запроса только те ключевые слова, по которым выбрана коллекция, чтобы в Qdrant искать по сути вопроса.
+// stripRoutingKeywords убирает из запроса триггеры маршрутизации, чтобы в Qdrant уходил только суть вопроса.
+// Используются границы слов для кириллицы.
 func stripRoutingKeywords(query, collection string) string {
 	if collection == "chunks" || query == "" {
 		return strings.TrimSpace(query)
@@ -1117,23 +1136,19 @@ func stripRoutingKeywords(query, collection string) string {
 	q := strings.TrimSpace(query)
 	switch collection {
 	case "znak_zodiaka":
-		rePhrase := regexp.MustCompile(`(?i)\bзнак\w*\s+зодиак\w*\b`)
-		q = rePhrase.ReplaceAllString(q, " ")
-		reWord := regexp.MustCompile(`(?i)\b(знак\w*|зодиак\w*)\b`)
-		q = reWord.ReplaceAllString(q, " ")
+		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])(знак\s+зодиак\w*)($|[^\p{L}])`)
+		q = rePhrase.ReplaceAllString(q, "$1 $3")
+		q = stripWordRu(q, "знак", "знаки", "знака", "знаку", "знаков", "зодиака", "зодиак")
 	case "kachestva_energii":
-		rePhrase := regexp.MustCompile(`(?i)\b(качество|качества)\s+энерги\w*\b`)
-		q = rePhrase.ReplaceAllString(q, " ")
-		reWord := regexp.MustCompile(`(?i)\b(качество|качества)\b`)
-		q = reWord.ReplaceAllString(q, " ")
+		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((качество|качества)\s+энерги\w*)($|[^\p{L}])`)
+		q = rePhrase.ReplaceAllString(q, "$1 $4")
+		q = stripWordRu(q, "качество", "качества", "качесво")
 	case "iskazheniya_energii":
-		rePhrase := regexp.MustCompile(`(?i)\b(искажение|искажения)\s+энерги\w*\b`)
-		q = rePhrase.ReplaceAllString(q, " ")
-		reWord := regexp.MustCompile(`(?i)\b(искажение|искажения)\b`)
-		q = reWord.ReplaceAllString(q, " ")
+		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((искажение|искажения)\s+энерги\w*)($|[^\p{L}])`)
+		q = rePhrase.ReplaceAllString(q, "$1 $4")
+		q = stripWordRu(q, "искажение", "искажения")
 	case "specificnost":
-		reWord := regexp.MustCompile(`(?i)\b(специфичность|спецификация|специфичности|спецификации)\b`)
-		q = reWord.ReplaceAllString(q, " ")
+		q = stripWordRu(q, "специфичность", "спецификация", "специфичности", "спецификации")
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(q), " "))
 }
