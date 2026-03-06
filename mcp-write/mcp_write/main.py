@@ -74,7 +74,7 @@ SYSTEM_B_LABELS: list[tuple[str, str | None]] = [
     ("specificnost", "Специфичность:"),
     ("znak_zodiaka", "Знак зодиака:"),
     ("kachestva_energii", "Качества энергии ангела:"),
-    ("iskazheniya_energii", "Искажения (недостаток либо переизбыток энергии ангела):"),
+    ("iskazheniya_energii", "Искажения (недостаток энергии ангела):"),
     ("situacii_problemy", "Ситуации и общие проблемы(влияние АНГЕЛА):"),
     ("proyavlenie", "Проявление:"),
     ("gospodstvo", "Господство:"),
