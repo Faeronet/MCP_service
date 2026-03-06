@@ -387,7 +387,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			attachmentsText := b.getAttachmentsText(ctx, sessionID)
 			var err error
 			var buildChunkIDs []string
-			contextText, buildChunkIDs, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			var buildCollection string
+			contextText, buildChunkIDs, buildCollection, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 			if err != nil {
 				if err.Error() == "chunk_not_found" {
 					contextText = "По подходящим данным в базе ничего не найдено."
@@ -400,6 +401,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			}
 			if b.debugMode == 1 {
 				msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+				if buildCollection != "" {
+					msg += "\n\nКоллекция: " + buildCollection
+				}
 				if len(buildChunkIDs) > 0 {
 					msg += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
 				}
@@ -543,7 +547,7 @@ func (b *Bot) getAttachmentsText(ctx context.Context, sessionID uuid.UUID) strin
 	return strings.Join(parts, "\n\n")
 }
 
-func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (context string, chunkIDs []string, err error) {
+func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (context string, chunkIDs []string, searchCollection string, err error) {
 	body := map[string]interface{}{
 		"query_text":       query,
 		"acl_token":        "placeholder",
@@ -558,25 +562,26 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bb, _ := io.ReadAll(resp.Body)
-		return "", nil, fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
+		return "", nil, "", fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
 	}
 	var out struct {
-		Context  string   `json:"context"`
-		ChunkIDs []string `json:"chunk_ids"`
-		Error    string   `json:"error"`
+		Context          string   `json:"context"`
+		ChunkIDs         []string `json:"chunk_ids"`
+		SearchCollection string   `json:"search_collection"`
+		Error            string   `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	if out.Error != "" {
-		return "", nil, fmt.Errorf("%s", out.Error)
+		return "", nil, "", fmt.Errorf("%s", out.Error)
 	}
-	return out.Context, out.ChunkIDs, nil
+	return out.Context, out.ChunkIDs, out.SearchCollection, nil
 }
 
 // getAllNames возвращает контекст из всех уникальных name в Qdrant (для запроса "[name] all").
@@ -1267,7 +1272,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				attachmentsText := b.getAttachmentsText(ctx, sessionID)
 				var err error
 				var buildChunkIDs []string
-				contextText, buildChunkIDs, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+				var buildCollection string
+				contextText, buildChunkIDs, buildCollection, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 				if err != nil {
 					if err.Error() == "chunk_not_found" {
 						contextText = "По подходящим данным в базе ничего не найдено."
@@ -1280,6 +1286,9 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				}
 				if b.debugMode == 1 {
 					msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+					if buildCollection != "" {
+						msg += "\n\nКоллекция: " + buildCollection
+					}
 					if len(buildChunkIDs) > 0 {
 						msg += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
 					}

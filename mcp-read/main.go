@@ -135,9 +135,10 @@ type BuildContextRequest struct {
 }
 
 type BuildContextResponse struct {
-	Context  string   `json:"context"`
-	ChunkIDs []string `json:"chunk_ids,omitempty"`
-	Error    string   `json:"error,omitempty"`
+	Context          string   `json:"context"`
+	ChunkIDs         []string `json:"chunk_ids,omitempty"`
+	SearchCollection string   `json:"search_collection,omitempty"` // в какой коллекции выполнялся поиск (для дебага)
+	Error            string   `json:"error,omitempty"`
 }
 
 // chunkInfo — чанк с именем и связями для фильтра по дате и форматирования контекста.
@@ -371,6 +372,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	var contextText string
 	var chunkIDs []string
+	var successCollection string // коллекция, в которой нашли результат (для ответа в дебаге)
 	var found bool
 	for round := 1; round <= maxSearchRounds; round++ {
 		limit := uint64(20 * round)
@@ -556,6 +558,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			chunkIDs = append(chunkIDs, id)
 		}
 		sort.Strings(chunkIDs)
+		successCollection = collectionName
 		found = true
 		break
 	}
@@ -592,6 +595,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 					chunkIDs = append(chunkIDs, id)
 				}
 				sort.Strings(chunkIDs)
+				successCollection = collectionName
 				found = true
 			}
 		}
@@ -623,7 +627,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs})
+	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs, SearchCollection: successCollection})
 }
 
 // scrollAllChunksContaining сканирует все чанки коллекции и возвращает те, в чьих payload-полях есть каждое слово запроса (или его основа).
