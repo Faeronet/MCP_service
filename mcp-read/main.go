@@ -1112,9 +1112,10 @@ func collectionForQuery(query string) string {
 	if q == "" {
 		return "chunks"
 	}
-	// Знак зодиака: фраза или оба слова
+	// Знак зодиака: фраза «знак зодиака» или одно слово зодиак/зодиака/зодиаком и т.д.
 	if (strings.Contains(q, "знак") && strings.Contains(q, "зодиак")) ||
-		containsWordRu(q, "знак зодиака") || containsWordRu(q, "знаки зодиака") || containsWordRu(q, "знака зодиака") {
+		containsWordRu(q, "знак зодиака") || containsWordRu(q, "знаки зодиака") || containsWordRu(q, "знака зодиака") ||
+		containsWordRu(q, "зодиак") || containsWordRu(q, "зодиака") || containsWordRu(q, "зодиаком") || containsWordRu(q, "зодиаку") {
 		return "znak_zodiaka"
 	}
 	// Обитание: обитание, обитает, живёт, место жительства, жил
@@ -1141,70 +1142,96 @@ func collectionForQuery(query string) string {
 	return "chunks"
 }
 
-// stripWordRu убирает из s слова (как отдельные слова) по границам Unicode (\p{L}).
-func stripWordRu(s string, words ...string) string {
+// stripTriggersByWords вырезает триггеры, разбивая запрос на слова: сначала фразы (последовательности слов), затем отдельные слова. Регистронезависимо.
+func stripTriggersByWords(s string, phraseList [][]string, wordSet map[string]struct{}) string {
+	s = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(s), " ")
+	words := strings.Fields(s)
 	if len(words) == 0 {
-		return s
+		return ""
 	}
-	parts := make([]string, len(words))
+	skip := make([]bool, len(words))
+	lower := make([]string, len(words))
 	for i, w := range words {
-		parts[i] = regexp.QuoteMeta(w)
+		lower[i] = strings.ToLower(w)
 	}
-	alt := strings.Join(parts, "|")
-	re := regexp.MustCompile(`(?i)(^|[^\p{L}])(` + alt + `)($|[^\p{L}])`)
-	return re.ReplaceAllString(s, "$1 $3")
-}
-
-// stripPhraseRu убирает из s целую фразу; внутри фразы допускаются любые пробелы (\s+).
-func stripPhraseRu(s string, phrase string) string {
-	phrase = strings.TrimSpace(phrase)
-	if phrase == "" {
-		return s
-	}
-	words := strings.Fields(phrase)
-	if len(words) == 0 {
-		return s
-	}
-	var pat strings.Builder
-	for i, w := range words {
-		if i > 0 {
-			pat.WriteString(`\s+`)
+	// Вырезать фразы (последовательности слов)
+	for _, phrase := range phraseList {
+		if len(phrase) == 0 {
+			continue
 		}
-		pat.WriteString(regexp.QuoteMeta(w))
+		phraseLower := make([]string, len(phrase))
+		for i, p := range phrase {
+			phraseLower[i] = strings.ToLower(p)
+		}
+		for i := 0; i <= len(words)-len(phrase); i++ {
+			match := true
+			for j := 0; j < len(phrase); j++ {
+				if lower[i+j] != phraseLower[j] {
+					match = false
+					break
+				}
+			}
+			if match {
+				for j := 0; j < len(phrase); j++ {
+					skip[i+j] = true
+				}
+			}
+		}
 	}
-	re := regexp.MustCompile(`(?i)(^|[^\p{L}])(` + pat.String() + `)($|[^\p{L}])`)
-	return re.ReplaceAllString(s, "$1 $3")
+	// Вырезать отдельные слова-триггеры
+	for i := range words {
+		if skip[i] {
+			continue
+		}
+		if _, ok := wordSet[lower[i]]; ok {
+			skip[i] = true
+		}
+	}
+	var out []string
+	for i := range words {
+		if !skip[i] {
+			out = append(out, words[i])
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, " "))
 }
 
-// stripRoutingKeywords убирает из запроса триггеры маршрутизации, чтобы в Qdrant уходил только суть вопроса.
-// Нормализуем пробелы, фразы вырезаем с учётом любых пробелов внутри.
+// mkSet возвращает set (map[string]struct{}) из списка слов в нижнем регистре.
+func mkSet(words ...string) map[string]struct{} {
+	m := make(map[string]struct{}, len(words))
+	for _, w := range words {
+		m[strings.ToLower(w)] = struct{}{}
+	}
+	return m
+}
+
+// stripRoutingKeywords убирает из запроса триггеры маршрутизации: разбиваем на слова и выкидываем фразы и слова-триггеры.
 func stripRoutingKeywords(query, collection string) string {
 	if collection == "chunks" || query == "" {
 		return strings.TrimSpace(query)
 	}
-	// Нормализация: любые пробелы (в т.ч. неразрывный) в один обычный пробел
-	q := regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(query), " ")
+	q := strings.TrimSpace(query)
 	switch collection {
 	case "znak_zodiaka":
-		q = stripPhraseRu(q, "знак зодиака")
-		q = stripPhraseRu(q, "знаки зодиака")
-		q = stripPhraseRu(q, "знаком зодиака")
-		q = stripPhraseRu(q, "знака зодиака")
-		q = stripPhraseRu(q, "знаку зодиака")
-		q = stripWordRu(q, "знак", "знаки", "знака", "знаку", "знаков", "знаком", "зодиака", "зодиак", "зодиаком", "зодиаку")
+		q = stripTriggersByWords(q,
+			[][]string{
+				{"знак", "зодиака"}, {"знаки", "зодиака"}, {"знаком", "зодиака"}, {"знака", "зодиака"}, {"знаку", "зодиака"},
+			},
+			mkSet("знак", "знаки", "знака", "знаку", "знаков", "знаком", "зодиак", "зодиака", "зодиаком", "зодиаку"))
 	case "obitanie":
-		q = stripPhraseRu(q, "место жительства")
-		q = stripWordRu(q, "обитание", "обитания", "обитанию", "обитанием", "обитании", "обитает", "живёт", "жил", "живут", "жить")
+		q = stripTriggersByWords(q,
+			[][]string{{"место", "жительства"}},
+			mkSet("обитание", "обитания", "обитанию", "обитанием", "обитании", "обитает", "живёт", "жил", "живут", "жить"))
 	case "kachestva_energii":
-		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((качество|качества)\s+энерги\p{L}*)($|[^\p{L}])`)
-		q = rePhrase.ReplaceAllString(q, "$1 $4")
-		q = stripWordRu(q, "качество", "качества", "качесво")
+		q = stripTriggersByWords(q,
+			[][]string{{"качество", "энергии"}, {"качества", "энергии"}, {"качество", "энергия"}, {"качества", "энергия"}},
+			mkSet("качество", "качества", "качесво"))
 	case "iskazheniya_energii":
-		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((искажение|искажения)\s+энерги\p{L}*)($|[^\p{L}])`)
-		q = rePhrase.ReplaceAllString(q, "$1 $4")
-		q = stripWordRu(q, "искажение", "искажения")
+		q = stripTriggersByWords(q,
+			[][]string{{"искажение", "энергии"}, {"искажения", "энергии"}, {"искажение", "энергия"}, {"искажения", "энергия"}},
+			mkSet("искажение", "искажения"))
 	case "specificnost":
-		q = stripWordRu(q, "специфичность", "спецификация", "специфичности", "спецификации")
+		q = stripTriggersByWords(q, nil, mkSet("специфичность", "спецификация", "специфичности", "спецификации"))
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(q), " "))
 }
