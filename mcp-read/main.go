@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -174,6 +175,46 @@ func extractDateFromQuery(query string) (dateStr string, ok bool) {
 func queryDayLessThan10(dateStr string) bool {
 	day := parseDayFromDateStr(dateStr)
 	return day > 0 && day < 10
+}
+
+// dateStrToAlternateForm возвращает альтернативное написание даты для поиска в тексте (например "24 марта" <-> "24.03").
+func dateStrToAlternateForm(dateStr string) string {
+	dateStr = strings.TrimSpace(dateStr)
+	if reDateMonthRu.MatchString(dateStr) {
+		sub := reDateMonthRu.FindStringSubmatch(dateStr)
+		if len(sub) >= 3 {
+			day, _ := strconv.Atoi(sub[1])
+			monthNames := []string{"", "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"}
+			for i, name := range monthNames {
+				if i > 0 && name == sub[2] {
+					return fmt.Sprintf("%d.%02d", day, i)
+				}
+			}
+		}
+	}
+	if reDateDot.MatchString(dateStr) {
+		sub := reDateDot.FindStringSubmatch(dateStr)
+		if len(sub) >= 3 {
+			day, _ := strconv.Atoi(sub[1])
+			month, _ := strconv.Atoi(sub[2])
+			monthNames := []string{"", "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"}
+			if month >= 1 && month <= 12 {
+				return fmt.Sprintf("%d %s", day, monthNames[month])
+			}
+		}
+	}
+	return ""
+}
+
+// chunkContainsDate проверяет, есть ли в тексте чанка дата (точное вхождение или альтернативный формат).
+func chunkContainsDate(chunkText, dateStr string) bool {
+	if strings.Contains(chunkText, dateStr) {
+		return true
+	}
+	if alt := dateStrToAlternateForm(dateStr); alt != "" && strings.Contains(chunkText, alt) {
+		return true
+	}
+	return false
 }
 
 // parseDayFromDateStr извлекает день (1–31) из строки даты "5 марта" или "24.03.2025". 0 если не распознано.
@@ -469,7 +510,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			_, order, topScore = h.rerankWithScoreAndOrder(ctx, queryForSearch, texts)
 			h.rerankLimiter.Release()
 			log.Info(ctx, "build_context: round rerank", logging.KV{"round", round}, logging.KV{"top_score", topScore}, logging.KV{"docs", len(texts)})
-			if topScore < h.rerankMinScore {
+			if !hasDate && topScore < h.rerankMinScore {
 				continue
 			}
 			if order != nil && len(order) == len(items) {
@@ -484,10 +525,10 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if hasDate {
-			// Найти чанки, в тексте которых есть дата из запроса
+			// Найти чанки, в тексте которых есть дата из запроса (формат "24 марта" или "24.03")
 			var withDate []chunkInfo
 			for i := range items {
-				if strings.Contains(items[i].Text, dateStr) {
+				if chunkContainsDate(items[i].Text, dateStr) {
 					withDate = append(withDate, items[i])
 				}
 			}
@@ -581,6 +622,77 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		successCollection = collectionName
 		found = true
 		break
+	}
+
+	// Для даты: если векторный поиск не нашёл — делаем scroll по chunks по строке даты (и альтернативному формату)
+	if !found && hasDate {
+		searchDateStr := dateStr
+		items := h.scrollAllChunksContaining(ctx, "chunks", searchDateStr)
+		if len(items) == 0 {
+			if alt := dateStrToAlternateForm(dateStr); alt != "" {
+				items = h.scrollAllChunksContaining(ctx, "chunks", alt)
+			}
+		}
+		if len(items) > 0 {
+			var withDate []chunkInfo
+			for _, c := range items {
+				if chunkContainsDate(c.Text, dateStr) {
+					withDate = append(withDate, c)
+				}
+			}
+			if len(withDate) > 0 && queryDayLessThan10(dateStr) {
+				filtered := withDate[:0]
+				for _, c := range withDate {
+					if chunkHasDateWithDayLessThan10(c.Text) {
+						filtered = append(filtered, c)
+					}
+				}
+				withDate = filtered
+			}
+			if len(withDate) > 0 {
+				linkSet := make(map[string]struct{})
+				for _, c := range withDate {
+					linkSet[c.ChunkID] = struct{}{}
+					for _, id := range c.RelatedIDs {
+						linkSet[id] = struct{}{}
+					}
+					if c.PrevID != "" {
+						linkSet[c.PrevID] = struct{}{}
+					}
+					if c.NextID != "" {
+						linkSet[c.NextID] = struct{}{}
+					}
+				}
+				linked := h.fetchChunkPayloadsByID(ctx, "chunks", linkSet)
+				var b strings.Builder
+				for _, c := range linked {
+					if c.Name != "" {
+						b.WriteString("Имя: ")
+						b.WriteString(c.Name)
+						b.WriteString("\n")
+					}
+					b.WriteString(c.Text)
+					b.WriteString("\n\n")
+				}
+				contextText = b.String()
+				if len(contextText) > req.TokenBudget*4 {
+					contextText = contextText[:req.TokenBudget*4]
+				}
+				chunkIDSet := make(map[string]struct{})
+				for _, c := range linked {
+					if c.ChunkID != "" {
+						chunkIDSet[c.ChunkID] = struct{}{}
+					}
+				}
+				chunkIDs = make([]string, 0, len(chunkIDSet))
+				for id := range chunkIDSet {
+					chunkIDs = append(chunkIDs, id)
+				}
+				sort.Strings(chunkIDs)
+				successCollection = "chunks"
+				found = true
+			}
+		}
 	}
 
 	// Если векторный поиск не нашёл подходящих чанков для не-даты — делаем полный скан (scroll) и ищем по текстовому вхождению
