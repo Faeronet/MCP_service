@@ -342,7 +342,10 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		// Спецзапросы по ключевым словам в исходном сообщении (с упоминанием ангелов)
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Text))
 		if hasAngelWord(msg.Text) {
-			if strings.Contains(lowerMsg, "все") || strings.Contains(lowerMsg, "всех") {
+			// [name] all — только при явном запросе «все ангелы» / «всех ангелов», а не при «какой ангел может растворить все долги»
+			if strings.Contains(lowerMsg, "все ангел") || strings.Contains(lowerMsg, "всех ангел") ||
+				strings.Contains(lowerMsg, "ангел вс") || strings.Contains(lowerMsg, "ангелов вс") ||
+				strings.Contains(lowerMsg, "перечисли всех") || strings.Contains(lowerMsg, "список всех") {
 				searchQuery = "[name] all"
 			} else if strings.Contains(lowerMsg, "дат") {
 				searchQuery = "[date] list"
@@ -388,7 +391,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			var err error
 			var buildChunkIDs []string
 			var buildCollection string
-			contextText, buildChunkIDs, buildCollection, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			var buildCollectionsSearched []string
+			contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 			if err != nil {
 				if err.Error() == "chunk_not_found" {
 					contextText = "По подходящим данным в базе ничего не найдено."
@@ -401,8 +405,11 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			}
 			if b.debugMode == 1 {
 				msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+				if len(buildCollectionsSearched) > 0 {
+					msg += "\n\nИскало в: " + strings.Join(buildCollectionsSearched, ", ")
+				}
 				if buildCollection != "" {
-					msg += "\n\nКоллекция: " + buildCollection
+					msg += "\n\nНайдено в: " + buildCollection
 				}
 				if len(buildChunkIDs) > 0 {
 					msg += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
@@ -547,7 +554,7 @@ func (b *Bot) getAttachmentsText(ctx context.Context, sessionID uuid.UUID) strin
 	return strings.Join(parts, "\n\n")
 }
 
-func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (context string, chunkIDs []string, searchCollection string, err error) {
+func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsText string, tokenBudget int, mode string) (context string, chunkIDs []string, searchCollection string, collectionsSearched []string, err error) {
 	body := map[string]interface{}{
 		"query_text":       query,
 		"acl_token":        "placeholder",
@@ -570,18 +577,19 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 		return "", nil, "", fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
 	}
 	var out struct {
-		Context          string   `json:"context"`
-		ChunkIDs         []string `json:"chunk_ids"`
-		SearchCollection string   `json:"search_collection"`
-		Error            string   `json:"error"`
+		Context            string   `json:"context"`
+		ChunkIDs           []string `json:"chunk_ids"`
+		SearchCollection   string   `json:"search_collection"`
+		CollectionsSearched []string `json:"collections_searched"`
+		Error              string   `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", nil, "", err
+		return "", nil, "", nil, err
 	}
 	if out.Error != "" {
-		return "", out.ChunkIDs, out.SearchCollection, fmt.Errorf("%s", out.Error)
+		return "", out.ChunkIDs, out.SearchCollection, out.CollectionsSearched, fmt.Errorf("%s", out.Error)
 	}
-	return out.Context, out.ChunkIDs, out.SearchCollection, nil
+	return out.Context, out.ChunkIDs, out.SearchCollection, out.CollectionsSearched, nil
 }
 
 // getAllNames возвращает контекст из всех уникальных name в Qdrant (для запроса "[name] all").
@@ -1228,7 +1236,9 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		}
 		lowerMsg := strings.ToLower(strings.TrimSpace(userMsg))
 		if hasAngelWord(userMsg) {
-			if strings.Contains(lowerMsg, "все") || strings.Contains(lowerMsg, "всех") {
+			if strings.Contains(lowerMsg, "все ангел") || strings.Contains(lowerMsg, "всех ангел") ||
+				strings.Contains(lowerMsg, "ангел вс") || strings.Contains(lowerMsg, "ангелов вс") ||
+				strings.Contains(lowerMsg, "перечисли всех") || strings.Contains(lowerMsg, "список всех") {
 				searchQuery = "[name] all"
 			} else if strings.Contains(lowerMsg, "дат") {
 				searchQuery = "[date] list"
@@ -1273,7 +1283,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				var err error
 				var buildChunkIDs []string
 				var buildCollection string
-				contextText, buildChunkIDs, buildCollection, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+				var buildCollectionsSearched []string
+				contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, err = b.buildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 				if err != nil {
 					if err.Error() == "chunk_not_found" {
 						contextText = "По подходящим данным в базе ничего не найдено."
@@ -1286,8 +1297,11 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				}
 				if b.debugMode == 1 {
 					msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+					if len(buildCollectionsSearched) > 0 {
+						msg += "\n\nИскало в: " + strings.Join(buildCollectionsSearched, ", ")
+					}
 					if buildCollection != "" {
-						msg += "\n\nКоллекция: " + buildCollection
+						msg += "\n\nНайдено в: " + buildCollection
 					}
 					if len(buildChunkIDs) > 0 {
 						msg += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")

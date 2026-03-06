@@ -136,10 +136,11 @@ type BuildContextRequest struct {
 }
 
 type BuildContextResponse struct {
-	Context          string   `json:"context"`
-	ChunkIDs         []string `json:"chunk_ids,omitempty"`
-	SearchCollection string   `json:"search_collection,omitempty"` // в какой коллекции выполнялся поиск (для дебага)
-	Error            string   `json:"error,omitempty"`
+	Context            string   `json:"context"`
+	ChunkIDs           []string `json:"chunk_ids,omitempty"`
+	SearchCollection   string   `json:"search_collection,omitempty"`   // в какой коллекции нашли (для дебага)
+	CollectionsSearched []string `json:"collections_searched,omitempty"` // в каких коллекциях искали по порядку (для дебага)
+	Error              string   `json:"error,omitempty"`
 }
 
 // chunkInfo — чанк с именем и связями для фильтра по дате и форматирования контекста.
@@ -385,19 +386,20 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalized := normalizeQuery(req.QueryText)
-	cacheKey := "retrieval:" + normalized + ":v4"
+	cacheKey := "retrieval:" + normalized + ":v5"
 	if h.redis != nil {
 		val, err := h.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
 			var cached struct {
-				Context          string   `json:"context"`
-				ChunkIDs         []string `json:"chunk_ids"`
-				SearchCollection string   `json:"search_collection"`
+				Context            string   `json:"context"`
+				ChunkIDs           []string `json:"chunk_ids"`
+				SearchCollection   string   `json:"search_collection"`
+				CollectionsSearched []string `json:"collections_searched"`
 			}
 			if json.Unmarshal([]byte(val), &cached) == nil {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(BuildContextResponse{
-					Context: cached.Context, ChunkIDs: cached.ChunkIDs, SearchCollection: cached.SearchCollection,
+					Context: cached.Context, ChunkIDs: cached.ChunkIDs, SearchCollection: cached.SearchCollection, CollectionsSearched: cached.CollectionsSearched,
 				})
 				return
 			}
@@ -412,29 +414,33 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	defer h.embedLimiter.Release()
 
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
-	var collectionName string
-	var queryForSearch string
+	queryForSearch := strings.TrimSpace(req.QueryText)
+
+	// Порядок поиска при отсутствии даты: сначала chunks, затем качество энергии, искажения, other (триггеры качества/искажения отключены).
+	collectionsOrder := []string{"chunks", "kachestva_energii", "iskazheniya_energii", "other"}
+	var collectionsSearched []string
 	if hasDate {
-		// Даты есть только в основной коллекции chunks — всегда ищем там и не вырезаем из запроса дату
-		collectionName = "chunks"
-		queryForSearch = strings.TrimSpace(req.QueryText)
+		collectionsOrder = []string{"chunks"}
+		collectionsSearched = []string{"chunks"}
 		log.Info(ctx, "build_context: date in query, force chunks", logging.KV{"date", dateStr})
-	} else {
-		collectionName = collectionForQuery(req.QueryText)
-		queryForSearch = stripRoutingKeywords(req.QueryText, collectionName)
-		if queryForSearch == "" {
-			queryForSearch = strings.TrimSpace(req.QueryText)
-		}
 	}
-	log.Info(ctx, "build_context: collection by query", logging.KV{"collection", collectionName}, logging.KV{"query", req.QueryText}, logging.KV{"query_for_search", queryForSearch})
+
 	vec := h.embedQuery(ctx, queryForSearch)
 	trueVal := true
 
 	var contextText string
 	var chunkIDs []string
-	successCollection := collectionName // в какой коллекции ищем/нашли (для дебага и ответа)
+	var successCollection string
 	var found bool
-	for round := 1; round <= maxSearchRounds; round++ {
+
+	for _, collectionName := range collectionsOrder {
+		if !hasDate {
+			collectionsSearched = append(collectionsSearched, collectionName)
+		}
+		successCollection = collectionName
+		log.Info(ctx, "build_context: trying collection", logging.KV{"collection", collectionName})
+
+		for round := 1; round <= maxSearchRounds; round++ {
 		limit := uint64(20 * round)
 		if limit > 100 {
 			limit = 100
@@ -450,11 +456,9 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			if resp.StatusCode == 404 && collectionName != "chunks" {
-				log.Info(ctx, "build_context: collection not found, fallback to chunks", logging.KV{"collection", collectionName})
-				collectionName = "chunks"
-				successCollection = "chunks"
-				continue
+			if resp.StatusCode == 404 {
+				log.Info(ctx, "build_context: collection not found, skip", logging.KV{"collection", collectionName})
+				break // выйти из раундов, перейти к следующей коллекции
 			}
 			log.Warn(ctx, "qdrant non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"round", round})
 			continue
@@ -623,6 +627,10 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		found = true
 		break
 	}
+		if found {
+			break
+		}
+	}
 
 	// Для даты: если векторный поиск не нашёл — делаем scroll по chunks по строке даты (и альтернативному формату)
 	if !found && hasDate {
@@ -695,12 +703,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Если векторный поиск не нашёл подходящих чанков для не-даты — делаем полный скан (scroll) и ищем по текстовому вхождению
+	// Если векторный поиск не нашёл подходящих чанков для не-даты — делаем scroll по chunks
 	if !found && !hasDate {
 		queryTrim := strings.TrimSpace(queryForSearch)
 		if queryTrim != "" {
-			log.Info(ctx, "build_context: vector search failed, falling back to full scroll", logging.KV{"query", queryTrim})
-			items := h.scrollAllChunksContaining(ctx, collectionName, queryTrim)
+			log.Info(ctx, "build_context: vector search failed, falling back to scroll chunks", logging.KV{"query", queryTrim})
+			items := h.scrollAllChunksContaining(ctx, "chunks", queryTrim)
 			if len(items) > 0 {
 				var b strings.Builder
 				for _, c := range items {
@@ -727,7 +735,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 					chunkIDs = append(chunkIDs, id)
 				}
 				sort.Strings(chunkIDs)
-				successCollection = collectionName
+				successCollection = "chunks"
 				found = true
 			}
 		}
@@ -737,12 +745,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		if hasDate {
 			log.Info(ctx, "build_context: date not found after rounds", logging.KV{"rounds", maxSearchRounds}, logging.KV{"date", dateStr})
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found", SearchCollection: successCollection})
+			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found", SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
 			return
 		}
 		log.Info(ctx, "build_context: chunk not found after rounds", logging.KV{"rounds", maxSearchRounds})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found", SearchCollection: successCollection})
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found", SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
 		return
 	}
 
@@ -756,15 +764,16 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	if h.redis != nil {
 		cachePayload, _ := json.Marshal(map[string]interface{}{
-			"context":           contextText,
-			"chunk_ids":         chunkIDs,
-			"search_collection": successCollection,
+			"context":             contextText,
+			"chunk_ids":           chunkIDs,
+			"search_collection":   successCollection,
+			"collections_searched": collectionsSearched,
 		})
 		_ = h.redis.Set(ctx, cacheKey, string(cachePayload), retrievalCacheTTL).Err()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs, SearchCollection: successCollection})
+	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs, SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
 }
 
 // scrollAllChunksContaining сканирует все чанки коллекции и возвращает те, в чьих payload-полях есть каждое слово запроса (или его основа).
