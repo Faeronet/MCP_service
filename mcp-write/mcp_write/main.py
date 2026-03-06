@@ -331,11 +331,19 @@ def _parse_system_b_keys(raw: str) -> dict[str, str]:
 
 
 def _get_rest_context(raw: str, keys: dict[str, str]) -> str:
-    """Текст, не попавший ни в один ключ: из raw вырезаются сегменты «метка + значение до точки»."""
+    """Текст, не попавший ни в один ключ: из raw вырезаются сегменты «метка + значение до точки»
+    и в начале — имя ангела и следующая за ним цепочка « . . . . . »."""
     raw = (raw or "").strip()
     if not raw:
         return ""
     segments: list[tuple[int, int]] = []
+    # Убрать из остатка начало вида «Имя . . . . . . . »
+    name = (keys.get("name") or "").strip()
+    if name and raw.startswith(name):
+        pos = len(name)
+        while pos < len(raw) and raw[pos] in " .":
+            pos += 1
+        segments.append((0, pos))
     for key_name, label_or_labels in SYSTEM_B_LABELS[1:]:
         if label_or_labels is None:
             continue
