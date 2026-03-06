@@ -337,11 +337,14 @@ def _get_rest_context(raw: str, keys: dict[str, str]) -> str:
     if not raw:
         return ""
     segments: list[tuple[int, int]] = []
-    # Убрать из остатка начало вида «Имя . . . . . . . »
+    # Убрать из остатка начало вида «Имя . . . . . . . » — всё после имени до первой буквы или «:»
     name = (keys.get("name") or "").strip()
     if name and raw.startswith(name):
         pos = len(name)
-        while pos < len(raw) and raw[pos] in " .":
+        while pos < len(raw):
+            c = raw[pos]
+            if c.isalpha() or c.isdigit() or c == ":":
+                break
             pos += 1
         segments.append((0, pos))
     for key_name, label_or_labels in SYSTEM_B_LABELS[1:]:
