@@ -569,12 +569,12 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", nil, "", err
+		return "", nil, "", nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bb, _ := io.ReadAll(resp.Body)
-		return "", nil, "", fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
+		return "", nil, "", nil, fmt.Errorf("mcp-read %d: %s", resp.StatusCode, string(bb))
 	}
 	var out struct {
 		Context            string   `json:"context"`
