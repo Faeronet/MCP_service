@@ -332,21 +332,30 @@ def _parse_system_b_keys(raw: str) -> dict[str, str]:
 
 def _get_rest_context(raw: str, keys: dict[str, str]) -> str:
     """Текст, не попавший ни в один ключ: из raw вырезаются сегменты «метка + значение до точки»
-    и в начале — имя ангела и следующая за ним цепочка « . . . . . »."""
+    и в начале — любой ведущий мусор (точки, пробелы) и при необходимости «Имя . . . . . . »."""
     raw = (raw or "").strip()
     if not raw:
         return ""
     segments: list[tuple[int, int]] = []
-    # Убрать из остатка начало вида «Имя . . . . . . . » — всё после имени до первой буквы или «:»
+    # Всегда убрать ведущие не-буквы/не-цифры/не двоеточие (например «. . . . . . . » в начале)
+    lead = 0
+    while lead < len(raw):
+        c = raw[lead]
+        if c.isalpha() or c.isdigit() or c == ":":
+            break
+        lead += 1
+    if lead > 0:
+        segments.append((0, lead))
+    # Если документ начинается с имени, вырезать ещё «Имя . . . . . . » до первого осмысленного символа
     name = (keys.get("name") or "").strip()
-    if name and raw.startswith(name):
-        pos = len(name)
+    if name and lead < len(raw) and raw[lead:].startswith(name):
+        pos = lead + len(name)
         while pos < len(raw):
             c = raw[pos]
             if c.isalpha() or c.isdigit() or c == ":":
                 break
             pos += 1
-        segments.append((0, pos))
+        segments.append((lead, pos))
     for key_name, label_or_labels in SYSTEM_B_LABELS[1:]:
         if label_or_labels is None:
             continue
