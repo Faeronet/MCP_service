@@ -1002,6 +1002,8 @@ func buildTextFromPayload(p map[string]interface{}) string {
 		}
 		if _, ok := p[k].(string); ok {
 			keys = append(keys, k)
+		} else if _, ok := p[k].([]interface{}); ok {
+			keys = append(keys, k)
 		}
 	}
 	sort.Strings(keys)
@@ -1014,12 +1016,27 @@ func buildTextFromPayload(p map[string]interface{}) string {
 			b.WriteString(k)
 			b.WriteString(": ")
 			b.WriteString(v)
+		} else if arr, ok := p[k].([]interface{}); ok && len(arr) > 0 {
+			var names []string
+			for _, x := range arr {
+				if s, ok := x.(string); ok && s != "" {
+					names = append(names, s)
+				}
+			}
+			if len(names) > 0 {
+				if b.Len() > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString(k)
+				b.WriteString(": ")
+				b.WriteString(strings.Join(names, ", "))
+			}
 		}
 	}
 	return b.String()
 }
 
-// buildSearchableText возвращает конкатенацию всех строковых значений payload (кроме служебных ключей) — для проверки вхождения запроса в полях вроде situacii_problemy.
+// buildSearchableText возвращает конкатенацию всех строковых значений payload (и элементов массивов вроде names) — для поиска по вхождению.
 func buildSearchableText(p map[string]interface{}) string {
 	var parts []string
 	for k, v := range p {
@@ -1028,9 +1045,14 @@ func buildSearchableText(p map[string]interface{}) string {
 		}
 		if s, ok := v.(string); ok && s != "" {
 			parts = append(parts, s)
+		} else if arr, ok := v.([]interface{}); ok {
+			for _, x := range arr {
+				if s, ok := x.(string); ok && s != "" {
+					parts = append(parts, s)
+				}
+			}
 		}
 	}
-	sort.Strings(parts) // стабильный порядок по ключам? нет, мы теряем ключи. но порядок не важен для поиска
 	return strings.Join(parts, " ")
 }
 
@@ -1095,9 +1117,9 @@ func collectionForQuery(query string) string {
 		containsWordRu(q, "знак зодиака") || containsWordRu(q, "знаки зодиака") || containsWordRu(q, "знака зодиака") {
 		return "znak_zodiaka"
 	}
-	// Обитание: обитание, живёт, место жительства, жил
+	// Обитание: обитание, обитает, живёт, место жительства, жил
 	if containsWordRu(q, "обитание") || containsWordRu(q, "обитания") || containsWordRu(q, "обитанию") ||
-		containsWordRu(q, "обитанием") || containsWordRu(q, "обитании") ||
+		containsWordRu(q, "обитанием") || containsWordRu(q, "обитании") || containsWordRu(q, "обитает") ||
 		containsWordRu(q, "живёт") || containsWordRu(q, "жил") || strings.Contains(q, "место жительства") {
 		return "obitanie"
 	}
@@ -1133,26 +1155,37 @@ func stripWordRu(s string, words ...string) string {
 	return re.ReplaceAllString(s, "$1 $3")
 }
 
-// stripPhraseRu убирает из s целую фразу (по границам слов).
+// stripPhraseRu убирает из s целую фразу; внутри фразы допускаются любые пробелы (\s+).
 func stripPhraseRu(s string, phrase string) string {
+	phrase = strings.TrimSpace(phrase)
 	if phrase == "" {
 		return s
 	}
-	escaped := regexp.QuoteMeta(phrase)
-	re := regexp.MustCompile(`(?i)(^|[^\p{L}])(` + escaped + `)($|[^\p{L}])`)
+	words := strings.Fields(phrase)
+	if len(words) == 0 {
+		return s
+	}
+	var pat strings.Builder
+	for i, w := range words {
+		if i > 0 {
+			pat.WriteString(`\s+`)
+		}
+		pat.WriteString(regexp.QuoteMeta(w))
+	}
+	re := regexp.MustCompile(`(?i)(^|[^\p{L}])(` + pat.String() + `)($|[^\p{L}])`)
 	return re.ReplaceAllString(s, "$1 $3")
 }
 
 // stripRoutingKeywords убирает из запроса триггеры маршрутизации, чтобы в Qdrant уходил только суть вопроса.
-// Используются границы слов для кириллицы.
+// Нормализуем пробелы, фразы вырезаем с учётом любых пробелов внутри.
 func stripRoutingKeywords(query, collection string) string {
 	if collection == "chunks" || query == "" {
 		return strings.TrimSpace(query)
 	}
-	q := strings.TrimSpace(query)
+	// Нормализация: любые пробелы (в т.ч. неразрывный) в один обычный пробел
+	q := regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(query), " ")
 	switch collection {
 	case "znak_zodiaka":
-		// Сначала целые фразы, потом отдельные слова
 		q = stripPhraseRu(q, "знак зодиака")
 		q = stripPhraseRu(q, "знаки зодиака")
 		q = stripPhraseRu(q, "знаком зодиака")
@@ -1161,7 +1194,7 @@ func stripRoutingKeywords(query, collection string) string {
 		q = stripWordRu(q, "знак", "знаки", "знака", "знаку", "знаков", "знаком", "зодиака", "зодиак", "зодиаком", "зодиаку")
 	case "obitanie":
 		q = stripPhraseRu(q, "место жительства")
-		q = stripWordRu(q, "обитание", "обитания", "обитанию", "обитанием", "обитании", "живёт", "жил", "живут", "жить")
+		q = stripWordRu(q, "обитание", "обитания", "обитанию", "обитанием", "обитании", "обитает", "живёт", "жил", "живут", "жить")
 	case "kachestva_energii":
 		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((качество|качества)\s+энерги\p{L}*)($|[^\p{L}])`)
 		q = rePhrase.ReplaceAllString(q, "$1 $4")
