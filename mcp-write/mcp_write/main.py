@@ -52,7 +52,7 @@ COLLECTION_ZNAK_ZODIAKA = "znak_zodiaka"
 COLLECTION_SPECIFICNOST = "specificnost"
 COLLECTION_KACHESTVA_ENERGII = "kachestva_energii"
 COLLECTION_ISKAZHENIYA = "iskazheniya_energii"
-COLLECTION_OTHER = "other"  # всё остальное (adept, pomogaet и т.д.)
+COLLECTION_OTHER = "other"  # весь остальной контекст документа (полный raw), не попавший в чанки-ключи
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
 RERANK_BASE = (os.getenv("RERANK_BINDING_HOST") or os.getenv("RERANK_API_URL") or "http://rerank:8787/api/v1").strip().rstrip("/")
@@ -66,12 +66,12 @@ USE_LLM_RERANK_QUERY = os.getenv("USE_LLM_RERANK_QUERY", "").lower() in ("1", "t
 _ingestion_sys = (os.getenv("INGESTION_SYSTEM") or "A").strip().upper()
 INGESTION_SYSTEM: str = "B" if _ingestion_sys == "B" else "A"
 
-# Система B: метки для извлечения ключей (всё после метки до первой точки «.»; не «..» не «;»).
-# Если метки нет в документе — ключ не создаём (жёсткая проверка).
-SYSTEM_B_LABELS: list[tuple[str, str | None]] = [
+# Система B: метки для извлечения ключей (всё после метки до первой точки «.»).
+# Второй элемент — одна метка (str) или список меток (проверяем по порядку, первая найденная).
+SYSTEM_B_LABELS: list[tuple[str, str | list[str] | None]] = [
     ("name", None),  # ключ 1: первое слово документа
     ("obitanie", "Обитание:"),
-    ("specificnost", "Специфичность:"),
+    ("specificnost", ["Специфичность:", "Спецификация:"]),  # срабатывает на любую из меток
     ("znak_zodiaka", "Знак зодиака:"),
     ("kachestva_energii", "Качества энергии ангела:"),
     ("iskazheniya_energii", "Искажения (недостаток энергии ангела):"),
@@ -307,7 +307,8 @@ def _extract_after_label_until_first_period(full_text: str, label: str) -> str |
 
 
 def _parse_system_b_keys(raw: str) -> dict[str, str]:
-    """Система B: парсит документ по меткам. Только присутствующие ключи; строго до первой точки."""
+    """Система B: парсит документ по меткам. Только присутствующие ключи; строго до первой точки.
+    Для ключа может быть одна метка (str) или несколько (list) — используется первая найденная."""
     raw = (raw or "").strip()
     if not raw:
         return {}
@@ -315,15 +316,17 @@ def _parse_system_b_keys(raw: str) -> dict[str, str]:
     parts = raw.split()
     if parts:
         out["name"] = parts[0].strip()
-    for key_name, label in SYSTEM_B_LABELS[1:]:
-        if not label:
+    for key_name, label_or_labels in SYSTEM_B_LABELS[1:]:
+        if label_or_labels is None:
             continue
-        if label not in raw:
-            continue
-        val = _extract_after_label_until_first_period(raw, label)
-        if val is None or not val.strip():
-            continue
-        out[key_name] = val.strip()
+        labels = [label_or_labels] if isinstance(label_or_labels, str) else label_or_labels
+        for label in labels:
+            if not label or label not in raw:
+                continue
+            val = _extract_after_label_until_first_period(raw, label)
+            if val is not None and val.strip():
+                out[key_name] = val.strip()
+                break
     return out
 
 
@@ -615,33 +618,29 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         _qdrant_upsert(COLLECTION_ISKAZHENIYA, point_id, vec_isk, payload_isk)
         chunks_count += 1
 
-    # other
-    keys_used = main_payload_keys | {"obitanie", "znak_zodiaka", "specificnost", "kachestva_energii", "iskazheniya_energii"}
-    other_keys = {k: v for k, v in keys.items() if k not in keys_used and v}
-    if other_keys:
-        ensure_collection(COLLECTION_OTHER)
-        other_normalized = " ".join(f"{k}={v}" for k, v in sorted(other_keys.items()))
-        point_id = chunk_id_to_point_id(main_chunk_id)
-        payload_other: dict[str, Any] = {
-            "chunk_id": main_chunk_id,
-            "doc_id": req.doc_id,
-            "name": name,
-            **other_keys,
-        }
-        vec_other = embed_text(other_normalized)
-        if len(vec_other) != VECTOR_SIZE:
-            vec_other = (vec_other + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
-        _qdrant_upsert(COLLECTION_OTHER, point_id, vec_other, payload_other)
-        chunks_count += 1
+    # other: весь остальной контекст документа (полный raw), один чанк на документ
+    ensure_collection(COLLECTION_OTHER)
+    point_id = chunk_id_to_point_id(main_chunk_id)
+    payload_other: dict[str, Any] = {
+        "chunk_id": main_chunk_id,
+        "doc_id": req.doc_id,
+        "name": name,
+        "context": raw,  # полный текст документа, не разобранный по ключам
+    }
+    vec_other = embed_text(raw)
+    if len(vec_other) != VECTOR_SIZE:
+        vec_other = (vec_other + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+    _qdrant_upsert(COLLECTION_OTHER, point_id, vec_other, payload_other)
+    chunks_count += 1
 
     # Postgres: контекст документа и имя ангела (список имён с chunk_id)
     _save_document_context_postgres(main_chunk_id, req.doc_id, raw)
     _save_angel_name_postgres(main_chunk_id, req.doc_id, name)
 
     log.info(
-        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s spec=%s kach=%s isk=%s other=%s",
+        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s spec=%s kach=%s isk=%s other=1",
         req.doc_id, main_chunk_id, bool(obitanie_val), bool(znak_val), bool(specificnost_val),
-        bool(kachestva_val), bool(iskazheniya_val), bool(other_keys),
+        bool(kachestva_val), bool(iskazheniya_val),
     )
     return {"status": "ok", "chunks_upserted": chunks_count, "doc_id": req.doc_id, "version_id": req.version_id}
 
