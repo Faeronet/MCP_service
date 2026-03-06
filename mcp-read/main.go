@@ -26,6 +26,14 @@ var log = logging.New("mcp-read")
 const retrievalCacheTTL = 60 * time.Second
 const maxSearchRounds = 5
 
+// Имена коллекций Qdrant (должны совпадать с mcp-write: kachestva_energii, iskazheniya_energii — с подчёркиванием).
+const (
+	collectionChunks            = "chunks"
+	collectionKachestvaEnergii  = "kachestva_energii"
+	collectionIskazheniyaEnergii = "iskazheniya_energii"
+	collectionOther             = "other"
+)
+
 func main() {
 	ctx := context.Background()
 	qdrantURL := strings.TrimSuffix(config.LoadString("QDRANT_URL", "http://qdrant:6333"), "/")
@@ -416,12 +424,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
 
-	// Порядок поиска при отсутствии даты: сначала chunks, затем качество энергии, искажения, other (триггеры качества/искажения отключены).
-	collectionsOrder := []string{"chunks", "kachestva_energii", "iskazheniya_energii", "other"}
+	// Порядок поиска при отсутствии даты: chunks → качество энергии → искажения → other (имена как в Qdrant, с подчёркиванием).
+	collectionsOrder := []string{collectionChunks, collectionKachestvaEnergii, collectionIskazheniyaEnergii, collectionOther}
 	var collectionsSearched []string
 	if hasDate {
-		collectionsOrder = []string{"chunks"}
-		collectionsSearched = []string{"chunks"}
+		collectionsOrder = []string{collectionChunks}
+		collectionsSearched = []string{collectionChunks}
 		log.Info(ctx, "build_context: date in query, force chunks", logging.KV{"date", dateStr})
 	}
 
@@ -635,10 +643,10 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	// Для даты: если векторный поиск не нашёл — делаем scroll по chunks по строке даты (и альтернативному формату)
 	if !found && hasDate {
 		searchDateStr := dateStr
-		items := h.scrollAllChunksContaining(ctx, "chunks", searchDateStr)
+		items := h.scrollAllChunksContaining(ctx, collectionChunks, searchDateStr)
 		if len(items) == 0 {
 			if alt := dateStrToAlternateForm(dateStr); alt != "" {
-				items = h.scrollAllChunksContaining(ctx, "chunks", alt)
+				items = h.scrollAllChunksContaining(ctx, collectionChunks, alt)
 			}
 		}
 		if len(items) > 0 {
@@ -671,7 +679,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 						linkSet[c.NextID] = struct{}{}
 					}
 				}
-				linked := h.fetchChunkPayloadsByID(ctx, "chunks", linkSet)
+				linked := h.fetchChunkPayloadsByID(ctx, collectionChunks, linkSet)
 				var b strings.Builder
 				for _, c := range linked {
 					if c.Name != "" {
@@ -697,7 +705,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 					chunkIDs = append(chunkIDs, id)
 				}
 				sort.Strings(chunkIDs)
-				successCollection = "chunks"
+				successCollection = collectionChunks
 				found = true
 			}
 		}
@@ -708,7 +716,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		queryTrim := strings.TrimSpace(queryForSearch)
 		if queryTrim != "" {
 			log.Info(ctx, "build_context: vector search failed, falling back to scroll chunks", logging.KV{"query", queryTrim})
-			items := h.scrollAllChunksContaining(ctx, "chunks", queryTrim)
+			items := h.scrollAllChunksContaining(ctx, collectionChunks, queryTrim)
 			if len(items) > 0 {
 				var b strings.Builder
 				for _, c := range items {
@@ -735,7 +743,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 					chunkIDs = append(chunkIDs, id)
 				}
 				sort.Strings(chunkIDs)
-				successCollection = "chunks"
+				successCollection = collectionChunks
 				found = true
 			}
 		}
