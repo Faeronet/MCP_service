@@ -344,7 +344,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalized := normalizeQuery(req.QueryText)
-	cacheKey := "retrieval:" + normalized + ":v3"
+	cacheKey := "retrieval:" + normalized + ":v4"
 	if h.redis != nil {
 		val, err := h.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
@@ -370,18 +370,24 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.embedLimiter.Release()
 
-	collectionName := collectionForQuery(req.QueryText)
-	queryForSearch := stripRoutingKeywords(req.QueryText, collectionName)
-	if queryForSearch == "" {
-		queryForSearch = req.QueryText
+	dateStr, hasDate := extractDateFromQuery(req.QueryText)
+	var collectionName string
+	var queryForSearch string
+	if hasDate {
+		// Даты есть только в основной коллекции chunks — всегда ищем там и не вырезаем из запроса дату
+		collectionName = "chunks"
+		queryForSearch = strings.TrimSpace(req.QueryText)
+		log.Info(ctx, "build_context: date in query, force chunks", logging.KV{"date", dateStr})
+	} else {
+		collectionName = collectionForQuery(req.QueryText)
+		queryForSearch = stripRoutingKeywords(req.QueryText, collectionName)
+		if queryForSearch == "" {
+			queryForSearch = strings.TrimSpace(req.QueryText)
+		}
 	}
 	log.Info(ctx, "build_context: collection by query", logging.KV{"collection", collectionName}, logging.KV{"query", req.QueryText}, logging.KV{"query_for_search", queryForSearch})
 	vec := h.embedQuery(ctx, queryForSearch)
 	trueVal := true
-	dateStr, hasDate := extractDateFromQuery(req.QueryText)
-	if hasDate {
-		log.Info(ctx, "build_context: date in query", logging.KV{"date", dateStr})
-	}
 
 	var contextText string
 	var chunkIDs []string
