@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, FilterSelector, MatchValue
+from qdrant_client.http.models import PointIdsList
 from qdrant_client.http.models import PointStruct, VectorParams, Distance
 from qdrant_client.http.exceptions import UnexpectedResponse
 from minio import Minio
@@ -49,6 +50,9 @@ COLLECTION = "chunks"
 COLLECTION_OBITANIE = "obitanie"
 COLLECTION_ZNAK_ZODIAKA = "znak_zodiaka"
 COLLECTION_SPECIFICNOST = "specificnost"
+COLLECTION_KACHESTVA_ENERGII = "kachestva_energii"
+COLLECTION_ISKAZHENIYA = "iskazheniya_energii"
+COLLECTION_OTHER = "other"  # всё остальное (adept, pomogaet и т.д.)
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
 RERANK_BASE = (os.getenv("RERANK_BINDING_HOST") or os.getenv("RERANK_API_URL") or "http://rerank:8787/api/v1").strip().rstrip("/")
@@ -70,7 +74,7 @@ SYSTEM_B_LABELS: list[tuple[str, str | None]] = [
     ("specificnost", "Специфичность:"),
     ("znak_zodiaka", "Знак зодиака:"),
     ("kachestva_energii", "Качества энергии ангела:"),
-    ("iskazheniya_energii", "Искажения или недостаток энергии ангела:"),
+    ("iskazheniya_energii", "Искажения (недостаток либо переизбыток энергии ангела):"),
     ("situacii_problemy", "Ситуации и общие проблемы(влияние АНГЕЛА):"),
     ("proyavlenie", "Проявление:"),
     ("gospodstvo", "Господство:"),
@@ -382,8 +386,8 @@ def _qdrant_upsert(collection: str, point_id: int, vector: list[float], payload:
         raise HTTPException(status_code=502, detail=f"qdrant upsert {collection}: {r.text[:200]}")
 
 
-def _save_document_context_postgres(chunk_id: str, context: str) -> None:
-    """Записать в core.document_context: chunk_id и полный текст документа."""
+def _save_document_context_postgres(chunk_id: str, doc_id: str, context: str) -> None:
+    """Записать в core.document_context: chunk_id, doc_id и полный текст документа."""
     try:
         import psycopg2
         conn = psycopg2.connect(POSTGRES_DSN)
@@ -391,17 +395,57 @@ def _save_document_context_postgres(chunk_id: str, context: str) -> None:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO core.document_context (chunk_id, context)
-                    VALUES (%s, %s)
-                    ON CONFLICT (chunk_id) DO UPDATE SET context = EXCLUDED.context
+                    INSERT INTO core.document_context (chunk_id, doc_id, context)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (chunk_id) DO UPDATE SET doc_id = EXCLUDED.doc_id, context = EXCLUDED.context
                     """,
-                    (chunk_id, context),
+                    (chunk_id, doc_id, context),
                 )
             conn.commit()
         finally:
             conn.close()
     except Exception as e:
         log.warning("document_context insert failed: %s", e)
+
+
+def _save_angel_name_postgres(chunk_id: str, doc_id: str, name: str) -> None:
+    """Записать в core.angel_names: chunk_id, doc_id, name (список имён ангелов)."""
+    if not name or not name.strip():
+        return
+    try:
+        import psycopg2
+        conn = psycopg2.connect(POSTGRES_DSN)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO core.angel_names (chunk_id, doc_id, name)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (chunk_id) DO UPDATE SET doc_id = EXCLUDED.doc_id, name = EXCLUDED.name
+                    """,
+                    (chunk_id, doc_id, name.strip()),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("angel_names insert failed: %s", e)
+
+
+def _delete_document_from_postgres(doc_id: str) -> None:
+    """При удалении документа: удалить контекст и имя ангела из Postgres."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(POSTGRES_DSN)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM core.document_context WHERE doc_id = %s", (doc_id,))
+                cur.execute("DELETE FROM core.angel_names WHERE doc_id = %s", (doc_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("delete document from postgres failed: %s", e)
 
 
 def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, Any]:
@@ -442,7 +486,7 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
     _qdrant_upsert(COLLECTION, chunk_id_to_point_id(main_chunk_id), main_vector, main_payload)
     chunks_count = 1
 
-    # Коллекция obitanie: один чанк на значение обитания, добавляем имя в существующий или создаём новый
+    # Коллекция obitanie: один чанк на значение обитания; в связях — chunk_ids ангелов (main_chunk_id)
     obitanie_val = keys.get("obitanie", "").strip()
     if obitanie_val:
         ensure_collection(COLLECTION_OBITANIE)
@@ -452,14 +496,17 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         if existing:
             names = list(existing.get("names") or [])
             doc_ids = list(existing.get("doc_ids") or [])
+            chunk_ids_list = list(existing.get("chunk_ids") or [])
             if name and name not in names:
                 names.append(name)
-            doc_ids.append(req.doc_id)
+                doc_ids.append(req.doc_id)
+                chunk_ids_list.append(main_chunk_id)
             payload_obitanie = {
                 "chunk_id": obitanie_chunk_id,
                 "obitanie": obitanie_val,
                 "names": names,
                 "doc_ids": doc_ids,
+                "chunk_ids": chunk_ids_list,
             }
         else:
             payload_obitanie = {
@@ -467,6 +514,7 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
                 "obitanie": obitanie_val,
                 "names": [name] if name else [],
                 "doc_ids": [req.doc_id],
+                "chunk_ids": [main_chunk_id] if name else [],
             }
         text_for_vec = obitanie_val + " " + " ".join(payload_obitanie["names"])
         vec_obitanie = embed_text(text_for_vec)
@@ -475,7 +523,7 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         _qdrant_upsert(COLLECTION_OBITANIE, point_id, vec_obitanie, payload_obitanie)
         chunks_count += 1
 
-    # Коллекция znak_zodiaka: один чанк на значение знака
+    # Коллекция znak_zodiaka: один чанк на значение знака; в связях — chunk_ids ангелов (main_chunk_id)
     znak_val = keys.get("znak_zodiaka", "").strip()
     if znak_val:
         ensure_collection(COLLECTION_ZNAK_ZODIAKA)
@@ -485,14 +533,17 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         if existing:
             names = list(existing.get("names") or [])
             doc_ids = list(existing.get("doc_ids") or [])
+            chunk_ids_list = list(existing.get("chunk_ids") or [])
             if name and name not in names:
                 names.append(name)
-            doc_ids.append(req.doc_id)
+                doc_ids.append(req.doc_id)
+                chunk_ids_list.append(main_chunk_id)
             payload_znak = {
                 "chunk_id": znak_chunk_id,
                 "znak_zodiaka": znak_val,
                 "names": names,
                 "doc_ids": doc_ids,
+                "chunk_ids": chunk_ids_list,
             }
         else:
             payload_znak = {
@@ -500,6 +551,7 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
                 "znak_zodiaka": znak_val,
                 "names": [name] if name else [],
                 "doc_ids": [req.doc_id],
+                "chunk_ids": [main_chunk_id] if name else [],
             }
         text_for_vec = znak_val + " " + " ".join(payload_znak["names"])
         vec_znak = embed_text(text_for_vec)
@@ -508,14 +560,14 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         _qdrant_upsert(COLLECTION_ZNAK_ZODIAKA, point_id, vec_znak, payload_znak)
         chunks_count += 1
 
-    # Коллекция specificnost: у каждого ангела свой чанк
+    # Коллекции с одним чанком на ангела: везде один и тот же main_chunk_id (канонический id ангела)
+    # specificnost
     specificnost_val = keys.get("specificnost", "").strip()
     if specificnost_val:
         ensure_collection(COLLECTION_SPECIFICNOST)
-        spec_chunk_id = deterministic_chunk_id(req.doc_id, req.version_id, "specificnost", name + specificnost_val)
-        point_id = chunk_id_to_point_id(spec_chunk_id)
+        point_id = chunk_id_to_point_id(main_chunk_id)
         payload_spec = {
-            "chunk_id": spec_chunk_id,
+            "chunk_id": main_chunk_id,
             "doc_id": req.doc_id,
             "name": name,
             "specificnost": specificnost_val,
@@ -527,12 +579,69 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         _qdrant_upsert(COLLECTION_SPECIFICNOST, point_id, vec_spec, payload_spec)
         chunks_count += 1
 
-    # Postgres: полный текст документа по main_chunk_id
-    _save_document_context_postgres(main_chunk_id, raw)
+    # kachestva_energii
+    kachestva_val = keys.get("kachestva_energii", "").strip()
+    if kachestva_val:
+        ensure_collection(COLLECTION_KACHESTVA_ENERGII)
+        point_id = chunk_id_to_point_id(main_chunk_id)
+        payload_kach = {
+            "chunk_id": main_chunk_id,
+            "doc_id": req.doc_id,
+            "name": name,
+            "kachestva_energii": kachestva_val,
+        }
+        text_for_vec = name + " " + kachestva_val
+        vec_kach = embed_text(text_for_vec)
+        if len(vec_kach) != VECTOR_SIZE:
+            vec_kach = (vec_kach + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        _qdrant_upsert(COLLECTION_KACHESTVA_ENERGII, point_id, vec_kach, payload_kach)
+        chunks_count += 1
+
+    # iskazheniya_energii
+    iskazheniya_val = keys.get("iskazheniya_energii", "").strip()
+    if iskazheniya_val:
+        ensure_collection(COLLECTION_ISKAZHENIYA)
+        point_id = chunk_id_to_point_id(main_chunk_id)
+        payload_isk = {
+            "chunk_id": main_chunk_id,
+            "doc_id": req.doc_id,
+            "name": name,
+            "iskazheniya_energii": iskazheniya_val,
+        }
+        text_for_vec = name + " " + iskazheniya_val
+        vec_isk = embed_text(text_for_vec)
+        if len(vec_isk) != VECTOR_SIZE:
+            vec_isk = (vec_isk + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        _qdrant_upsert(COLLECTION_ISKAZHENIYA, point_id, vec_isk, payload_isk)
+        chunks_count += 1
+
+    # other
+    keys_used = main_payload_keys | {"obitanie", "znak_zodiaka", "specificnost", "kachestva_energii", "iskazheniya_energii"}
+    other_keys = {k: v for k, v in keys.items() if k not in keys_used and v}
+    if other_keys:
+        ensure_collection(COLLECTION_OTHER)
+        other_normalized = " ".join(f"{k}={v}" for k, v in sorted(other_keys.items()))
+        point_id = chunk_id_to_point_id(main_chunk_id)
+        payload_other: dict[str, Any] = {
+            "chunk_id": main_chunk_id,
+            "doc_id": req.doc_id,
+            "name": name,
+            **other_keys,
+        }
+        vec_other = embed_text(other_normalized)
+        if len(vec_other) != VECTOR_SIZE:
+            vec_other = (vec_other + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
+        _qdrant_upsert(COLLECTION_OTHER, point_id, vec_other, payload_other)
+        chunks_count += 1
+
+    # Postgres: контекст документа и имя ангела (список имён с chunk_id)
+    _save_document_context_postgres(main_chunk_id, req.doc_id, raw)
+    _save_angel_name_postgres(main_chunk_id, req.doc_id, name)
 
     log.info(
-        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s specificnost=%s",
+        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s spec=%s kach=%s isk=%s other=%s",
         req.doc_id, main_chunk_id, bool(obitanie_val), bool(znak_val), bool(specificnost_val),
+        bool(kachestva_val), bool(iskazheniya_val), bool(other_keys),
     )
     return {"status": "ok", "chunks_upserted": chunks_count, "doc_id": req.doc_id, "version_id": req.version_id}
 
@@ -741,24 +850,72 @@ def list_doc_ids_in_qdrant() -> dict[str, Any]:
     return {"doc_ids": list(seen)}
 
 
+def _remove_doc_id_from_grouped_collection(collection: str, doc_id: str) -> None:
+    """В коллекциях obitanie/znak_zodiaka убрать doc_id из списков names, doc_ids, chunk_ids и перезаписать точку."""
+    if qdrant is None:
+        return
+    try:
+        offset = None
+        while True:
+            points, offset = qdrant.scroll(
+                collection_name=collection,
+                limit=100,
+                offset=offset,
+                with_payload=True,
+                with_vectors=True,
+            )
+            for pt in points:
+                payload = pt.payload or {}
+                doc_ids_list = list(payload.get("doc_ids") or [])
+                if doc_id not in doc_ids_list:
+                    continue
+                idx = doc_ids_list.index(doc_id)
+                names = list(payload.get("names") or [])
+                chunk_ids_list = list(payload.get("chunk_ids") or [])
+                if idx < len(names):
+                    names.pop(idx)
+                doc_ids_list.pop(idx)
+                if idx < len(chunk_ids_list):
+                    chunk_ids_list.pop(idx)
+                new_payload = {**payload, "names": names, "doc_ids": doc_ids_list, "chunk_ids": chunk_ids_list}
+                if not names:
+                    qdrant.delete(collection_name=collection, points_selector=PointIdsList(points=[pt.id]))
+                else:
+                    qdrant.upsert(
+                        collection_name=collection,
+                        points=[PointStruct(id=pt.id, vector=pt.vector or [], payload=new_payload)],
+                    )
+            if offset is None:
+                break
+    except Exception as e:
+        log.warning("remove doc_id from %s failed: %s", collection, e)
+
+
 @app.delete("/doc/{doc_id}")
 def delete_document(doc_id: str) -> dict[str, Any]:
-    """Delete all chunks for the given doc_id from Qdrant (for admin doc removal)."""
+    """Удалить все чанки документа из Qdrant и Postgres (контекст + имя ангела)."""
     if qdrant is None:
         raise HTTPException(status_code=503, detail="service not ready")
     try:
-        qdrant.delete(
-            collection_name=COLLECTION,
-            points_selector=FilterSelector(
-                filter=Filter(
-                    must=[
-                        FieldCondition(key="doc_id", match=MatchValue(value=doc_id)),
-                    ],
+        for coll in (COLLECTION, COLLECTION_SPECIFICNOST, COLLECTION_KACHESTVA_ENERGII, COLLECTION_ISKAZHENIYA, COLLECTION_OTHER):
+            try:
+                qdrant.delete(
+                    collection_name=coll,
+                    points_selector=FilterSelector(
+                        filter=Filter(
+                            must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))],
+                        )
+                    ),
                 )
-            ),
-        )
+            except UnexpectedResponse as e:
+                if e.status_code != 404:
+                    log.warning("delete %s for doc_id=%s: %s", coll, doc_id, e)
+        _remove_doc_id_from_grouped_collection(COLLECTION_OBITANIE, doc_id)
+        _remove_doc_id_from_grouped_collection(COLLECTION_ZNAK_ZODIAKA, doc_id)
     except UnexpectedResponse as e:
         if e.status_code == 404:
-            return {"status": "ok", "doc_id": doc_id}
-        raise
+            pass
+        else:
+            raise
+    _delete_document_from_postgres(doc_id)
     return {"status": "ok", "doc_id": doc_id}
