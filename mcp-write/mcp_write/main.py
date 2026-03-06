@@ -52,7 +52,7 @@ COLLECTION_ZNAK_ZODIAKA = "znak_zodiaka"
 COLLECTION_SPECIFICNOST = "specificnost"
 COLLECTION_KACHESTVA_ENERGII = "kachestva_energii"
 COLLECTION_ISKAZHENIYA = "iskazheniya_energii"
-COLLECTION_OTHER = "other"  # весь остальной контекст документа (полный raw), не попавший в чанки-ключи
+COLLECTION_OTHER = "other"  # только контекст, не попавший в остальные коллекции (остаток после вырезания меток)
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
 RERANK_BASE = (os.getenv("RERANK_BINDING_HOST") or os.getenv("RERANK_API_URL") or "http://rerank:8787/api/v1").strip().rstrip("/")
@@ -328,6 +328,61 @@ def _parse_system_b_keys(raw: str) -> dict[str, str]:
                 out[key_name] = val.strip()
                 break
     return out
+
+
+def _get_rest_context(raw: str, keys: dict[str, str]) -> str:
+    """Текст, не попавший ни в один ключ: из raw вырезаются сегменты «метка + значение до точки»."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    segments: list[tuple[int, int]] = []
+    for key_name, label_or_labels in SYSTEM_B_LABELS[1:]:
+        if label_or_labels is None:
+            continue
+        value = keys.get(key_name, "").strip()
+        if not value:
+            continue
+        labels = [label_or_labels] if isinstance(label_or_labels, str) else label_or_labels
+        for label in labels:
+            if not label or label not in raw:
+                continue
+            idx = raw.find(label)
+            if idx == -1:
+                continue
+            after = raw[idx + len(label) :].lstrip()
+            end_in_after: int | None = None
+            for i, c in enumerate(after):
+                if c == ".":
+                    if i + 1 < len(after) and after[i + 1] == ".":
+                        continue
+                    end_in_after = i
+                    break
+            if end_in_after is None:
+                extracted = after.strip()
+                segment_end = idx + len(label) + len(after)
+            else:
+                extracted = after[:end_in_after].strip()
+                segment_end = idx + len(label) + len(after[: end_in_after + 1])
+            if extracted != value:
+                continue
+            segments.append((idx, segment_end))
+            break
+    segments.sort(key=lambda x: x[0])
+    merged: list[tuple[int, int]] = []
+    for s, e in segments:
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    parts = []
+    prev = 0
+    for s, e in merged:
+        if s > prev:
+            parts.append(raw[prev:s])
+        prev = e
+    if prev < len(raw):
+        parts.append(raw[prev:])
+    return " ".join(p.strip() for p in parts if p.strip()).strip()
 
 
 def _extract_text_from_file(data: bytes, key: str) -> str:
@@ -618,16 +673,17 @@ def _ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str,
         _qdrant_upsert(COLLECTION_ISKAZHENIYA, point_id, vec_isk, payload_isk)
         chunks_count += 1
 
-    # other: весь остальной контекст документа (полный raw), один чанк на документ
+    # other: только контекст, не попавший в ключи-чанки (остаток после вырезания всех меток)
+    rest_context = _get_rest_context(raw, keys)
     ensure_collection(COLLECTION_OTHER)
     point_id = chunk_id_to_point_id(main_chunk_id)
     payload_other: dict[str, Any] = {
         "chunk_id": main_chunk_id,
         "doc_id": req.doc_id,
         "name": name,
-        "context": raw,  # полный текст документа, не разобранный по ключам
+        "context": rest_context,
     }
-    vec_other = embed_text(raw)
+    vec_other = embed_text(rest_context) if rest_context.strip() else embed_text(" ")
     if len(vec_other) != VECTOR_SIZE:
         vec_other = (vec_other + [0.0] * VECTOR_SIZE)[:VECTOR_SIZE]
     _qdrant_upsert(COLLECTION_OTHER, point_id, vec_other, payload_other)
