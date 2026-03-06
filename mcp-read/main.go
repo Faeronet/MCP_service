@@ -1084,16 +1084,21 @@ func containsWordRu(s, word string) bool {
 }
 
 // collectionForQuery по ключевым словам в вопросе выбирает коллекцию для поиска.
-// Триггеры: знак зодиака; качество, качества, качество энергии, качества энергии (и опечатка качесво); искажение, искажения, искажение энергии, искажения энергии; специфичность/спецификация.
+// Триггеры: знак зодиака; обитание; качество/качества/качество энергии; искажение/искажения; специфичность/спецификация.
 func collectionForQuery(query string) string {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return "chunks"
 	}
-	// Знак зодиака
+	// Знак зодиака: фраза или оба слова
 	if (strings.Contains(q, "знак") && strings.Contains(q, "зодиак")) ||
-		containsWordRu(q, "знак зодиака") || containsWordRu(q, "знаки зодиака") {
+		containsWordRu(q, "знак зодиака") || containsWordRu(q, "знаки зодиака") || containsWordRu(q, "знака зодиака") {
 		return "znak_zodiaka"
+	}
+	// Обитание: обитание, обитания, обитанию, обитанием, обитании
+	if containsWordRu(q, "обитание") || containsWordRu(q, "обитания") || containsWordRu(q, "обитанию") ||
+		containsWordRu(q, "обитанием") || containsWordRu(q, "обитании") {
+		return "obitanie"
 	}
 	// Качество: слово или фраза с энергией (качество, качества, качество энергии, качества энергии, качесво)
 	if strings.Contains(q, "качество энергии") || strings.Contains(q, "качества энергии") ||
@@ -1136,15 +1141,18 @@ func stripRoutingKeywords(query, collection string) string {
 	q := strings.TrimSpace(query)
 	switch collection {
 	case "znak_zodiaka":
-		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])(знак\s+зодиак\w*)($|[^\p{L}])`)
+		// \p{L}* — кириллица в конце (зодиака, зодиаком); \w в Go не совпадает с кириллицей
+		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])(знак\s+зодиак\p{L}*)($|[^\p{L}])`)
 		q = rePhrase.ReplaceAllString(q, "$1 $3")
-		q = stripWordRu(q, "знак", "знаки", "знака", "знаку", "знаков", "зодиака", "зодиак")
+		q = stripWordRu(q, "знак", "знаки", "знака", "знаку", "знаков", "зодиака", "зодиак", "зодиаком", "зодиаку")
+	case "obitanie":
+		q = stripWordRu(q, "обитание", "обитания", "обитанию", "обитанием", "обитании")
 	case "kachestva_energii":
-		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((качество|качества)\s+энерги\w*)($|[^\p{L}])`)
+		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((качество|качества)\s+энерги\p{L}*)($|[^\p{L}])`)
 		q = rePhrase.ReplaceAllString(q, "$1 $4")
 		q = stripWordRu(q, "качество", "качества", "качесво")
 	case "iskazheniya_energii":
-		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((искажение|искажения)\s+энерги\w*)($|[^\p{L}])`)
+		rePhrase := regexp.MustCompile(`(?i)(^|[^\p{L}])((искажение|искажения)\s+энерги\p{L}*)($|[^\p{L}])`)
 		q = rePhrase.ReplaceAllString(q, "$1 $4")
 		q = stripWordRu(q, "искажение", "искажения")
 	case "specificnost":
