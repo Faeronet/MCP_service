@@ -344,13 +344,22 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	normalized := normalizeQuery(req.QueryText)
-	cacheKey := "retrieval:" + normalized + ":v2"
+	cacheKey := "retrieval:" + normalized + ":v3"
 	if h.redis != nil {
 		val, err := h.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: val}) // ChunkIDs пустой при ответе из кэша
-			return
+			var cached struct {
+				Context          string   `json:"context"`
+				ChunkIDs         []string `json:"chunk_ids"`
+				SearchCollection string   `json:"search_collection"`
+			}
+			if json.Unmarshal([]byte(val), &cached) == nil {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(BuildContextResponse{
+					Context: cached.Context, ChunkIDs: cached.ChunkIDs, SearchCollection: cached.SearchCollection,
+				})
+				return
+			}
 		}
 	}
 
@@ -362,8 +371,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	defer h.embedLimiter.Release()
 
 	collectionName := collectionForQuery(req.QueryText)
-	log.Info(ctx, "build_context: collection by query", logging.KV{"collection", collectionName}, logging.KV{"query", req.QueryText})
-	vec := h.embedQuery(ctx, req.QueryText)
+	queryForSearch := stripRoutingKeywords(req.QueryText, collectionName)
+	if queryForSearch == "" {
+		queryForSearch = req.QueryText
+	}
+	log.Info(ctx, "build_context: collection by query", logging.KV{"collection", collectionName}, logging.KV{"query", req.QueryText}, logging.KV{"query_for_search", queryForSearch})
+	vec := h.embedQuery(ctx, queryForSearch)
 	trueVal := true
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	if hasDate {
@@ -372,7 +385,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	var contextText string
 	var chunkIDs []string
-	var successCollection string // коллекция, в которой нашли результат (для ответа в дебаге)
+	successCollection := collectionName // в какой коллекции ищем/нашли (для дебага и ответа)
 	var found bool
 	for round := 1; round <= maxSearchRounds; round++ {
 		limit := uint64(20 * round)
@@ -393,6 +406,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			if resp.StatusCode == 404 && collectionName != "chunks" {
 				log.Info(ctx, "build_context: collection not found, fallback to chunks", logging.KV{"collection", collectionName})
 				collectionName = "chunks"
+				successCollection = "chunks"
 				continue
 			}
 			log.Warn(ctx, "qdrant non-200", logging.KV{"status", resp.StatusCode}, logging.KV{"round", round})
@@ -446,7 +460,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			if err := h.rerankLimiter.Acquire(ctx); err != nil {
 				continue
 			}
-			_, order, topScore = h.rerankWithScoreAndOrder(ctx, req.QueryText, texts)
+			_, order, topScore = h.rerankWithScoreAndOrder(ctx, queryForSearch, texts)
 			h.rerankLimiter.Release()
 			log.Info(ctx, "build_context: round rerank", logging.KV{"round", round}, logging.KV{"top_score", topScore}, logging.KV{"docs", len(texts)})
 			if topScore < h.rerankMinScore {
@@ -504,7 +518,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 			items = linked
 		} else {
 			// Не дата: оставляем только чанки, в тексте которых содержится то, что пришло на поиск (слово или его основа, чтобы ловить измена/измены, любовь/любви)
-			queryTrim := strings.TrimSpace(req.QueryText)
+			queryTrim := strings.TrimSpace(queryForSearch)
 			if queryTrim != "" {
 				queryLower := strings.ToLower(queryTrim)
 				words := strings.Fields(queryLower)
@@ -565,7 +579,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	// Если векторный поиск не нашёл подходящих чанков для не-даты — делаем полный скан (scroll) и ищем по текстовому вхождению
 	if !found && !hasDate {
-		queryTrim := strings.TrimSpace(req.QueryText)
+		queryTrim := strings.TrimSpace(queryForSearch)
 		if queryTrim != "" {
 			log.Info(ctx, "build_context: vector search failed, falling back to full scroll", logging.KV{"query", queryTrim})
 			items := h.scrollAllChunksContaining(ctx, collectionName, queryTrim)
@@ -605,12 +619,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		if hasDate {
 			log.Info(ctx, "build_context: date not found after rounds", logging.KV{"rounds", maxSearchRounds}, logging.KV{"date", dateStr})
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found"})
+			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found", SearchCollection: successCollection})
 			return
 		}
 		log.Info(ctx, "build_context: chunk not found after rounds", logging.KV{"rounds", maxSearchRounds})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found"})
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found", SearchCollection: successCollection})
 		return
 	}
 
@@ -623,7 +637,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.redis != nil {
-		_ = h.redis.Set(ctx, cacheKey, contextText, retrievalCacheTTL).Err()
+		cachePayload, _ := json.Marshal(map[string]interface{}{
+			"context":           contextText,
+			"chunk_ids":         chunkIDs,
+			"search_collection": successCollection,
+		})
+		_ = h.redis.Set(ctx, cacheKey, string(cachePayload), retrievalCacheTTL).Err()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -934,36 +953,71 @@ func normalizeQuery(s string) string {
 }
 
 // collectionForQuery по ключевым словам в вопросе выбирает коллекцию для поиска.
-// Учитываются основы слов (множественное число, падежи): качество/качества, искажение/искажения, специфичность/спецификация, знак зодиака.
-// Порядок проверки: знак зодиака → качество энергии → искажение энергии → специфичность → chunks.
+// Учитываются целые слова/фразы (чтобы не роутить на "качественно" и т.п.): знак зодиака, качество/качества, искажение/искажения, специфичность/спецификация.
+// Порядок: знак зодиака → качество энергии → искажение энергии → специфичность → chunks.
 func collectionForQuery(query string) string {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return "chunks"
 	}
-	// Знак зодиака: "знак зодиак", "знаки зодиак", "знаке зодиак" и т.д.
-	if strings.Contains(q, "знак") && strings.Contains(q, "зодиак") {
+	// Знак зодиака: фраза из двух слов
+	if reContainsWord(q, `знак\w*`) && reContainsWord(q, `зодиак\w*`) {
 		return "znak_zodiaka"
 	}
-	// Качество / качества энергии: "качеств" (качество, качества, качеству), "качество энергии", "качества энергии"
-	if strings.Contains(q, "качеств") {
+	// Качество энергии: фраза или слово "качество"/"качества"
+	if strings.Contains(q, "качество энергии") || strings.Contains(q, "качества энергии") ||
+		reContainsWord(q, `качество`) || reContainsWord(q, `качества`) {
 		return "kachestva_energii"
 	}
-	if strings.Contains(q, "качество") && strings.Contains(q, "энерги") {
-		return "kachestva_energii"
-	}
-	// Искажение / искажения энергии: "искажен" (искажение, искажения, искажений), "искажение энергии"
-	if strings.Contains(q, "искажен") {
+	// Искажение энергии
+	if strings.Contains(q, "искажение энергии") || strings.Contains(q, "искажения энергии") ||
+		reContainsWord(q, `искажение`) || reContainsWord(q, `искажения`) {
 		return "iskazheniya_energii"
 	}
-	if strings.Contains(q, "искажение") && strings.Contains(q, "энерги") {
-		return "iskazheniya_energii"
-	}
-	// Специфичность / спецификация: "специфичност", "спецификац"
-	if strings.Contains(q, "специфичност") || strings.Contains(q, "спецификац") {
+	// Специфичность / спецификация
+	if reContainsWord(q, `специфичность`) || reContainsWord(q, `спецификация`) ||
+		reContainsWord(q, `специфичности`) || reContainsWord(q, `спецификации`) {
 		return "specificnost"
 	}
 	return "chunks"
+}
+
+// reContainsWord возвращает true, если в s есть целое слово, совпадающее с паттерном (паттерн — \b...\b не нужен, добавим внутри).
+func reContainsWord(s, pattern string) bool {
+	re, err := regexp.Compile(`(?i)\b` + pattern + `\b`)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(s)
+}
+
+// stripRoutingKeywords убирает из запроса только те ключевые слова, по которым выбрана коллекция, чтобы в Qdrant искать по сути вопроса.
+func stripRoutingKeywords(query, collection string) string {
+	if collection == "chunks" || query == "" {
+		return strings.TrimSpace(query)
+	}
+	q := strings.TrimSpace(query)
+	switch collection {
+	case "znak_zodiaka":
+		rePhrase := regexp.MustCompile(`(?i)\bзнак\w*\s+зодиак\w*\b`)
+		q = rePhrase.ReplaceAllString(q, " ")
+		reWord := regexp.MustCompile(`(?i)\b(знак\w*|зодиак\w*)\b`)
+		q = reWord.ReplaceAllString(q, " ")
+	case "kachestva_energii":
+		rePhrase := regexp.MustCompile(`(?i)\b(качество|качества)\s+энерги\w*\b`)
+		q = rePhrase.ReplaceAllString(q, " ")
+		reWord := regexp.MustCompile(`(?i)\b(качество|качества)\b`)
+		q = reWord.ReplaceAllString(q, " ")
+	case "iskazheniya_energii":
+		rePhrase := regexp.MustCompile(`(?i)\b(искажение|искажения)\s+энерги\w*\b`)
+		q = rePhrase.ReplaceAllString(q, " ")
+		reWord := regexp.MustCompile(`(?i)\b(искажение|искажения)\b`)
+		q = reWord.ReplaceAllString(q, " ")
+	case "specificnost":
+		reWord := regexp.MustCompile(`(?i)\b(специфичность|спецификация|специфичности|спецификации)\b`)
+		q = reWord.ReplaceAllString(q, " ")
+	}
+	return strings.TrimSpace(strings.Join(strings.Fields(q), " "))
 }
 
 // rerankWithScoreAndOrder возвращает (reordered texts, order indices, topScore). order[i] = исходный индекс i-го по релевантности чанка.

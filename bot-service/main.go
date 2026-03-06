@@ -579,7 +579,7 @@ func (b *Bot) buildContext(ctx context.Context, requestID, query, attachmentsTex
 		return "", nil, "", err
 	}
 	if out.Error != "" {
-		return "", nil, "", fmt.Errorf("%s", out.Error)
+		return "", out.ChunkIDs, out.SearchCollection, fmt.Errorf("%s", out.Error)
 	}
 	return out.Context, out.ChunkIDs, out.SearchCollection, nil
 }
