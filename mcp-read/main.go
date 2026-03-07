@@ -424,13 +424,30 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
 
-	// Порядок поиска при отсутствии даты: chunks → качество энергии → искажения → other (имена как в Qdrant, с подчёркиванием).
+	// Порядок поиска при отсутствии даты. Если сработал триггер качества/искажения — сначала ищем в нужной коллекции.
 	collectionsOrder := []string{collectionChunks, collectionKachestvaEnergii, collectionIskazheniyaEnergii, collectionOther}
 	var collectionsSearched []string
 	if hasDate {
 		collectionsOrder = []string{collectionChunks}
 		collectionsSearched = []string{collectionChunks}
 		log.Info(ctx, "build_context: date in query, force chunks", logging.KV{"date", dateStr})
+	} else {
+		triggerColl := collectionForQuery(req.QueryText)
+		if triggerColl == collectionKachestvaEnergii {
+			collectionsOrder = []string{collectionKachestvaEnergii, collectionChunks, collectionIskazheniyaEnergii, collectionOther}
+			queryForSearch = stripRoutingKeywords(req.QueryText, collectionKachestvaEnergii)
+			if queryForSearch == "" {
+				queryForSearch = strings.TrimSpace(req.QueryText)
+			}
+			log.Info(ctx, "build_context: quality trigger, search kachestva_energii first", logging.KV{"query", req.QueryText})
+		} else if triggerColl == collectionIskazheniyaEnergii {
+			collectionsOrder = []string{collectionIskazheniyaEnergii, collectionChunks, collectionKachestvaEnergii, collectionOther}
+			queryForSearch = stripRoutingKeywords(req.QueryText, collectionIskazheniyaEnergii)
+			if queryForSearch == "" {
+				queryForSearch = strings.TrimSpace(req.QueryText)
+			}
+			log.Info(ctx, "build_context: iskazheniya trigger, search iskazheniya_energii first", logging.KV{"query", req.QueryText})
+		}
 	}
 
 	vec := h.embedQuery(ctx, queryForSearch)
