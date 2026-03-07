@@ -152,7 +152,7 @@ services:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-0.6B}", "--port", "8000"]
+    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B}", "--port", "8000"]
     deploy:
       resources:
         limits:
