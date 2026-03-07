@@ -378,6 +378,186 @@ func chunkContainsQueryWord(chunkLower, w string) bool {
 	return w != "" && strings.Contains(chunkLower, w)
 }
 
+// searchOneCollectionNoDate ищет в одной коллекции (вектор + scroll) для сценария без даты. Возвращает контекст и chunk_ids при успехе.
+func (h *MCPReadHandler) searchOneCollectionNoDate(ctx context.Context, collectionName string, vec []float32, queryForSearch string, tokenBudget int) (contextText string, chunkIDs []string, found bool) {
+	if tokenBudget <= 0 {
+		tokenBudget = 4000
+	}
+	trueVal := true
+	queryTrim := strings.TrimSpace(queryForSearch)
+
+	for round := 1; round <= maxSearchRounds; round++ {
+		limit := uint64(20 * round)
+		if limit > 100 {
+			limit = 100
+		}
+		body := qdrantSearchReq{Vector: vec, Limit: limit, WithPayload: &trueVal}
+		payload, _ := json.Marshal(body)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, h.qdrantURL+"/collections/"+collectionName+"/points/search", bytes.NewReader(payload))
+		if err != nil {
+			continue
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			if resp.StatusCode == 404 {
+				return "", nil, false
+			}
+			continue
+		}
+		var searchRes qdrantSearchResult
+		if err := json.NewDecoder(resp.Body).Decode(&searchRes); err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+
+		var items []chunkInfo
+		mainChunkIDs := make(map[string]struct{})
+		neighborIDs := make(map[string]struct{})
+		for _, p := range searchRes.Result {
+			c := payloadToChunkInfo(p.Payload)
+			if c.Text != "" || c.ChunkID != "" {
+				items = append(items, c)
+			}
+			if c.ChunkID != "" {
+				mainChunkIDs[c.ChunkID] = struct{}{}
+			}
+			if c.PrevID != "" {
+				neighborIDs[c.PrevID] = struct{}{}
+			}
+			if c.NextID != "" {
+				neighborIDs[c.NextID] = struct{}{}
+			}
+		}
+		for id := range mainChunkIDs {
+			delete(neighborIDs, id)
+		}
+		if len(neighborIDs) > 0 {
+			neighbors := h.fetchChunkPayloadsByID(ctx, collectionName, neighborIDs)
+			items = append(items, neighbors...)
+		}
+		if len(items) == 0 {
+			continue
+		}
+
+		texts := make([]string, len(items))
+		for i := range items {
+			texts[i] = items[i].Text
+		}
+		var topScore float64
+		var order []int
+		if h.rerankAPIURL != "" && h.rerankModel != "" {
+			if err := h.rerankLimiter.Acquire(ctx); err != nil {
+				continue
+			}
+			_, order, topScore = h.rerankWithScoreAndOrder(ctx, queryForSearch, texts)
+			h.rerankLimiter.Release()
+			if topScore < h.rerankMinScore {
+				continue
+			}
+			if order != nil && len(order) == len(items) {
+				ordered := make([]chunkInfo, len(items))
+				for i, idx := range order {
+					ordered[i] = items[idx]
+				}
+				items = ordered
+			}
+		}
+
+		if queryTrim != "" {
+			queryLower := strings.ToLower(queryTrim)
+			words := strings.Fields(queryLower)
+			var containing []chunkInfo
+			for _, c := range items {
+				chunkLower := strings.ToLower(c.Text + " " + c.SearchableText)
+				allFound := true
+				for _, w := range words {
+					if w == "" {
+						continue
+					}
+					if !chunkContainsQueryWord(chunkLower, w) {
+						allFound = false
+						break
+					}
+				}
+				if allFound {
+					containing = append(containing, c)
+				}
+			}
+			if len(containing) == 0 {
+				continue
+			}
+			items = containing
+		}
+
+		var b strings.Builder
+		for _, c := range items {
+			if c.Name != "" {
+				b.WriteString("Имя: ")
+				b.WriteString(c.Name)
+				b.WriteString("\n")
+			}
+			b.WriteString(c.Text)
+			b.WriteString("\n\n")
+		}
+		ctxText := b.String()
+		if len(ctxText) > tokenBudget*4 {
+			ctxText = ctxText[:tokenBudget*4]
+		}
+		chunkIDSet := make(map[string]struct{})
+		for _, c := range items {
+			if c.ChunkID != "" {
+				chunkIDSet[c.ChunkID] = struct{}{}
+			}
+		}
+		ids := make([]string, 0, len(chunkIDSet))
+		for id := range chunkIDSet {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		return ctxText, ids, true
+	}
+
+	// Векторный поиск ничего не дал — пробуем scroll по тексту
+	if queryTrim != "" {
+		scrollItems := h.scrollAllChunksContaining(ctx, collectionName, queryTrim)
+		if len(scrollItems) > 0 {
+			var b strings.Builder
+			for _, c := range scrollItems {
+				if c.Name != "" {
+					b.WriteString("Имя: ")
+					b.WriteString(c.Name)
+					b.WriteString("\n")
+				}
+				b.WriteString(c.Text)
+				b.WriteString("\n\n")
+			}
+			ctxText := b.String()
+			if len(ctxText) > tokenBudget*4 {
+				ctxText = ctxText[:tokenBudget*4]
+			}
+			chunkIDSet := make(map[string]struct{})
+			for _, c := range scrollItems {
+				if c.ChunkID != "" {
+					chunkIDSet[c.ChunkID] = struct{}{}
+				}
+			}
+			ids := make([]string, 0, len(chunkIDSet))
+			for id := range chunkIDSet {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			return ctxText, ids, true
+		}
+	}
+	return "", nil, false
+}
+
 func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -458,12 +638,46 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	var successCollection string
 	var found bool
 
-	for _, collectionName := range collectionsOrder {
-		if !hasDate {
-			collectionsSearched = append(collectionsSearched, collectionName)
+	if !hasDate {
+		// Параллельный поиск по всем коллекциям, приоритет по порядку collectionsOrder
+		for _, col := range collectionsOrder {
+			collectionsSearched = append(collectionsSearched, col)
 		}
-		successCollection = collectionName
-		log.Info(ctx, "build_context: trying collection", logging.KV{"collection", collectionName})
+		type collResult struct {
+			contextText string
+			chunkIDs    []string
+		}
+		results := make(map[string]*collResult)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for _, col := range collectionsOrder {
+			wg.Add(1)
+			go func(c string) {
+				defer wg.Done()
+				log.Info(ctx, "build_context: trying collection (parallel)", logging.KV{"collection", c})
+				ctxText, ids, ok := h.searchOneCollectionNoDate(ctx, c, vec, queryForSearch, req.TokenBudget)
+				if ok {
+					mu.Lock()
+					results[c] = &collResult{contextText: ctxText, chunkIDs: ids}
+					mu.Unlock()
+				}
+			}(col)
+		}
+		wg.Wait()
+		for _, col := range collectionsOrder {
+			if r := results[col]; r != nil {
+				contextText = r.contextText
+				chunkIDs = r.chunkIDs
+				successCollection = col
+				found = true
+				log.Info(ctx, "build_context: using result by priority", logging.KV{"collection", col})
+				break
+			}
+		}
+	} else {
+		// С датой — только chunks, последовательно
+		for _, collectionName := range collectionsOrder {
+			log.Info(ctx, "build_context: trying collection", logging.KV{"collection", collectionName})
 
 		for round := 1; round <= maxSearchRounds; round++ {
 		limit := uint64(20 * round)
@@ -690,6 +904,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 		if found {
 			break
+		}
 		}
 	}
 
