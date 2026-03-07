@@ -331,18 +331,18 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 	if contextText == "" {
 		var searchQuery string
-		// Сначала проверяем триггеры для других коллекций — чтобы не терять их при извлечении сущностей
-		if hasCollectionTriggerWords(msg.Text) {
-			searchQuery = msg.Text
+		// Временно: поисковый запрос через LLM (промпт A). Раньше — extractSearchEntitiesFromQuestion.
+		if q, err := b.extractSearchQuery(ctx, requestID, msg.Text); err == nil && strings.TrimSpace(q) != "" {
+			searchQuery = q
 		} else {
-			// Поисковый запрос: извлекаем сущности (даты, части тела, национальности, знаки зодиака, фразы)
-			searchQuery = extractSearchEntitiesFromQuestion(msg.Text)
+			searchQuery = extractDateFromQuestion(msg.Text)
 			if searchQuery == "" {
-				searchQuery = extractDateFromQuestion(msg.Text)
-				if searchQuery == "" {
-					searchQuery = msg.Text
-				}
+				searchQuery = msg.Text
 			}
+		}
+		// После извлечения через LLM: если в исходном сообщении есть триггеры, а модель их выкинула — подставляем исходник для роутинга в mcp-read
+		if hasCollectionTriggerWords(msg.Text) && !hasCollectionTriggerWords(searchQuery) {
+			searchQuery = msg.Text
 		}
 		// Спецзапросы по ключевым словам в исходном сообщении (с упоминанием ангелов)
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Text))
@@ -409,7 +409,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 				}
 			}
 			if b.debugMode == 1 {
-				msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+				msg := "🔍 В Qdrant отправлено (ответ модели на промпт A):\n" + searchQuery
 				if len(buildCollectionsSearched) > 0 {
 					msg += "\n\nИскало в: " + strings.Join(buildCollectionsSearched, ", ")
 				}
@@ -1032,6 +1032,7 @@ func (b *Bot) extractSearchQuery(ctx context.Context, requestID, userQuestion st
 	if err != nil {
 		return "", err
 	}
+	reply = stripThink(reply)
 	return strings.TrimSpace(reply), nil
 }
 
@@ -1256,16 +1257,16 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	}
 	if contextText == "" {
 		var searchQuery string
-		if hasCollectionTriggerWords(userMsg) {
-			searchQuery = userMsg
+		if q, err := b.extractSearchQuery(ctx, requestID, userMsg); err == nil && strings.TrimSpace(q) != "" {
+			searchQuery = q
 		} else {
-			searchQuery = extractSearchEntitiesFromQuestion(userMsg)
+			searchQuery = extractDateFromQuestion(userMsg)
 			if searchQuery == "" {
-				searchQuery = extractDateFromQuestion(userMsg)
-				if searchQuery == "" {
-					searchQuery = userMsg
-				}
+				searchQuery = userMsg
 			}
+		}
+		if hasCollectionTriggerWords(userMsg) && !hasCollectionTriggerWords(searchQuery) {
+			searchQuery = userMsg
 		}
 		lowerMsg := strings.ToLower(strings.TrimSpace(userMsg))
 		if hasAngelWord(userMsg) {
@@ -1329,7 +1330,7 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 					}
 				}
 				if b.debugMode == 1 {
-					msg := "🔍 На поиск в Qdrant отправлено:\n" + searchQuery
+					msg := "🔍 В Qdrant отправлено (ответ модели на промпт A):\n" + searchQuery
 					if len(buildCollectionsSearched) > 0 {
 						msg += "\n\nИскало в: " + strings.Join(buildCollectionsSearched, ", ")
 					}
