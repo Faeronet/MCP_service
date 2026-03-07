@@ -340,10 +340,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 				searchQuery = msg.Text
 			}
 		}
-		// После извлечения через LLM: если в исходном сообщении есть триггеры, а модель их выкинула — подставляем исходник для роутинга в mcp-read
-		if hasCollectionTriggerWords(msg.Text) && !hasCollectionTriggerWords(searchQuery) {
-			searchQuery = msg.Text
-		}
+		// В Qdrant всегда отправляем ответ LLM на промпт A: по нему mcp-read ловит триггеры, переключает коллекцию, вырезает триггеры и ищет. Не подменяем на msg.Text.
 		// Спецзапросы по ключевым словам в исходном сообщении (с упоминанием ангелов)
 		lowerMsg := strings.ToLower(strings.TrimSpace(msg.Text))
 		if hasAngelWord(msg.Text) {
@@ -1283,9 +1280,7 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 				searchQuery = userMsg
 			}
 		}
-		if hasCollectionTriggerWords(userMsg) && !hasCollectionTriggerWords(searchQuery) {
-			searchQuery = userMsg
-		}
+		// В Qdrant отправляем ответ LLM на промпт A, не подменяем на userMsg (триггеры/стрип в mcp-read по этому тексту).
 		lowerMsg := strings.ToLower(strings.TrimSpace(userMsg))
 		if hasAngelWord(userMsg) {
 			if strings.Contains(lowerMsg, "все ангел") || strings.Contains(lowerMsg, "всех ангел") ||
