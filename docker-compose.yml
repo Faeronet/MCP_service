@@ -147,12 +147,12 @@ services:
     depends_on:
       - loki
 
-  # vLLM (чат). При одной видеокарте вместе с vllm-embed: ограничиваем VRAM 0.55, чтобы осталось место под эмбеддинги.
+  # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
   vllm:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B}", "--port", "8000"]
+    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}", "--port", "8000", "--gpu-memory-utilization", "0.9"]
     deploy:
       resources:
         limits:
@@ -299,8 +299,8 @@ services:
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://extract-tool:8004}
       # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Имя модели в запросах — должно совпадать с загруженной в vLLM. По умолчанию Qwen3-0.6B; при другой модели задайте LLM_MODEL в .env.
-      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-0.6B}
+      # Имя модели в запросах — должно совпадать с загруженной в vLLM (по умолчанию Qwen3-14B-AWQ).
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
@@ -366,7 +366,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-documents}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-0.6B}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       USE_LLM_CHUNKING: ${USE_LLM_CHUNKING:-}
       USE_LLM_RERANK_QUERY: ${USE_LLM_RERANK_QUERY:-}
       INGESTION_SYSTEM: ${INGESTION_SYSTEM:-A}
