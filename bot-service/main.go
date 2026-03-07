@@ -1045,6 +1045,7 @@ func (b *Bot) callLLM(ctx context.Context, requestID, systemContent, userQuery s
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
 		"model": b.llmModel, "messages": messages, "max_tokens": 512,
+		"chat_template_kwargs": map[string]interface{}{"enable_thinking": false},
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.vllmBase+"/chat/completions", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
