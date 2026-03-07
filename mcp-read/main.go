@@ -475,12 +475,13 @@ func (h *MCPReadHandler) searchOneCollectionNoDate(ctx context.Context, collecti
 		if queryTrim != "" {
 			queryLower := strings.ToLower(queryTrim)
 			words := strings.Fields(queryLower)
+			wordsRequired := filterSignificantWords(words) // не требуем стоп-слова (все, какой и т.д.) в чанке
 			var containing []chunkInfo
 			for _, c := range items {
 				// Текст + поисковые поля + имя: в качествах/искажениях имя часто только в name
 				chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
 				allFound := true
-				for _, w := range words {
+				for _, w := range wordsRequired {
 					if w == "" {
 						continue
 					}
@@ -1066,13 +1067,14 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs, SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
 }
 
-// scrollAllChunksContaining сканирует все чанки коллекции и возвращает те, в чьих payload-полях есть каждое слово запроса (или его основа).
+// scrollAllChunksContaining сканирует все чанки коллекции и возвращает те, в чьих payload-полях есть каждое значимое слово запроса (стоп-слова не требуются).
 func (h *MCPReadHandler) scrollAllChunksContaining(ctx context.Context, collectionName, queryText string) []chunkInfo {
 	queryLower := strings.ToLower(strings.TrimSpace(queryText))
 	words := strings.Fields(queryLower)
 	if len(words) == 0 {
 		return nil
 	}
+	wordsRequired := filterSignificantWords(words)
 
 	var result []chunkInfo
 	var offset interface{} // nil для первой страницы, затем point id
@@ -1113,7 +1115,7 @@ func (h *MCPReadHandler) scrollAllChunksContaining(ctx context.Context, collecti
 			c := payloadToChunkInfo(pt.Payload)
 			chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
 			allFound := true
-			for _, w := range words {
+			for _, w := range wordsRequired {
 				if !chunkContainsQueryWord(chunkLower, w) {
 					allFound = false
 					break
@@ -1389,6 +1391,35 @@ func payloadToChunkInfo(p map[string]interface{}) chunkInfo {
 
 func normalizeQuery(s string) string {
 	return strings.TrimSpace(strings.ToLower(s))
+}
+
+// Стоп-слова для фильтра по чанкам: не требуем их обязательного вхождения (чтобы «растворяет все кармические долги» находило чанк без «все»).
+var wordFilterStopwords = mkSet(
+	"все", "весь", "вся", "всё", "всех", "всем", "всеми", "всего", "всей", "всею",
+	"этот", "этого", "этому", "этим", "этом", "эта", "этой", "эту", "это", "эти", "этих", "этим", "этими",
+	"тот", "того", "тому", "тем", "том", "та", "той", "ту", "те", "тех",
+	"какой", "какого", "какому", "каким", "каком", "какая", "какой", "какую", "какие", "каких", "какими",
+	"который", "которого", "которому", "которым", "котором", "которая", "которой", "которую", "которые", "которых", "которыми",
+	"у", "в", "на", "по", "о", "об", "из", "с", "со", "к", "ко", "для", "при", "без", "до", "от", "за", "над", "под",
+	"и", "а", "но", "как", "что", "чтобы", "чем", "не", "ни", "же", "ли", "или", "либо",
+	"когда", "где", "куда", "откуда", "почему", "зачем", "как", "сколько",
+)
+
+// filterSignificantWords убирает стоп-слова из списка; для фильтра по чанкам требуем только значимые. Если всё отфильтровалось — возвращаем исходный список.
+func filterSignificantWords(words []string) []string {
+	var out []string
+	for _, w := range words {
+		if w == "" {
+			continue
+		}
+		if _, ok := wordFilterStopwords[w]; !ok {
+			out = append(out, w)
+		}
+	}
+	if len(out) == 0 {
+		return words
+	}
+	return out
 }
 
 // wordBoundaryRu — граница слова для кириллицы (в Go \b не подходит для не-ASCII).
