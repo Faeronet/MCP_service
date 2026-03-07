@@ -17,6 +17,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
@@ -90,6 +91,13 @@ func main() {
 	vllmBase = strings.TrimSuffix(vllmBase, "/")
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
 	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")
+	llmMaxTokens := config.LoadInt("LLM_MAX_TOKENS", 2048)
+	if llmMaxTokens < 256 {
+		llmMaxTokens = 4096
+	}
+	if llmMaxTokens > 32768 {
+		llmMaxTokens = 32768
+	}
 
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
@@ -105,6 +113,7 @@ func main() {
 		vllmBase:       vllmBase,
 		llmModel:       llmModel,
 		llmAPIKey:      llmAPIKey,
+		llmMaxTokens:   llmMaxTokens,
 		llmLimiter:     llmLimiter,
 		perChatLimiter: perChatLimiter,
 		debounce:       time.Duration(deboounceMs) * time.Millisecond,
@@ -192,6 +201,7 @@ type Bot struct {
 	vllmBase       string
 	llmModel       string
 	llmAPIKey      string
+	llmMaxTokens   int
 	llmLimiter     *ratelimit.InFlight
 	perChatLimiter *ratelimit.PerKey
 	debounce       time.Duration
@@ -448,16 +458,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 	msgID, _ := b.appendMessage(ctx, sessionID, "assistant", reply)
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
-	var telegramMsgID int
-	if typingMsgID > 0 {
-		if b.editMessageText(ctx, chatID, typingMsgID, reply) {
-			telegramMsgID = typingMsgID
-		} else {
-			telegramMsgID = b.sendReplyWithID(ctx, chatID, reply)
-		}
-	} else {
-		telegramMsgID = b.sendReplyWithID(ctx, chatID, reply)
-	}
+	telegramMsgID := b.sendLongReply(ctx, chatID, typingMsgID, reply)
 	if msgID != uuid.Nil && telegramMsgID > 0 {
 		_ = b.updateMessageTelegramID(ctx, msgID, telegramMsgID)
 		_ = b.saveAnswerContext(ctx, sessionID, msgID, contextText)
@@ -1063,7 +1064,7 @@ func (b *Bot) callLLM(ctx context.Context, requestID, systemContent, userQuery s
 		{"role": "user", "content": userQuery},
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
-		"model": b.llmModel, "messages": messages, "max_tokens": 512,
+		"model": b.llmModel, "messages": messages, "max_tokens": b.llmMaxTokens,
 		"chat_template_kwargs": map[string]interface{}{"enable_thinking": false},
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, b.vllmBase+"/chat/completions", bytes.NewReader(payload))
@@ -1124,6 +1125,70 @@ func (b *Bot) sendReplyWithID(ctx context.Context, chatID int64, text string) in
 // sendReplyTyping отправляет «...» и возвращает MessageID (0 при ошибке). Потом его редактируют в итоговый ответ.
 func (b *Bot) sendReplyTyping(ctx context.Context, chatID int64) int {
 	return b.sendReplyWithID(ctx, chatID, "...")
+}
+
+// maxTelegramMessageLen — лимит Telegram 4096 символов на сообщение; берём с запасом под Markdown.
+const maxTelegramMessageLen = 4000
+
+// sendLongReply отправляет текст одним сообщением или частями, если он длиннее лимита Telegram. typingMsgID > 0 — редактируем это сообщение первым куском. Возвращает MessageID первого сообщения (для сохранения в БД).
+func (b *Bot) sendLongReply(ctx context.Context, chatID int64, typingMsgID int, text string) int {
+	if b.bot == nil {
+		return 0
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	chunks := splitMessageChunks(text, maxTelegramMessageLen)
+	if len(chunks) == 0 {
+		return 0
+	}
+	var firstMsgID int
+	for i, ch := range chunks {
+		if i == 0 && typingMsgID > 0 {
+			if b.editMessageText(ctx, chatID, typingMsgID, ch) {
+				firstMsgID = typingMsgID
+			} else {
+				firstMsgID = b.sendReplyWithID(ctx, chatID, ch)
+			}
+		} else {
+			id := b.sendReplyWithID(ctx, chatID, ch)
+			if firstMsgID == 0 {
+				firstMsgID = id
+			}
+		}
+	}
+	return firstMsgID
+}
+
+// splitMessageChunks разбивает текст на части не длиннее maxLen (байт), по возможности по переводам строк, не режа по середине UTF-8 символа.
+func splitMessageChunks(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+	var chunks []string
+	for len(text) > 0 {
+		if len(text) <= maxLen {
+			chunks = append(chunks, text)
+			break
+		}
+		cut := text[:maxLen]
+		// Не резать по середине rune
+		for len(cut) > 0 && !utf8.RuneStart(cut[len(cut)-1]) {
+			cut = cut[:len(cut)-1]
+		}
+		lastNewline := strings.LastIndex(cut, "\n")
+		if lastNewline > maxLen/2 {
+			cut = text[:lastNewline+1]
+		}
+		chunks = append(chunks, strings.TrimSpace(cut))
+		text = text[len(cut):]
+		for len(text) > 0 && !utf8.RuneStart(text[0]) {
+			text = text[1:]
+		}
+		text = strings.TrimLeft(text, " \n")
+	}
+	return chunks
 }
 
 // editMessageText редактирует ранее отправленное сообщение. При ошибке возвращает false.
@@ -1392,9 +1457,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	}
 	msgID, _ := b.appendMessage(ctx, sessionID, "assistant", reply)
 	b.trimSessionMessagesIfNeeded(ctx, sessionID)
-	// Показываем пользователю, что извлекли (фрагмент) и ответ модели. Лимит Telegram 4096.
+	// Показываем пользователю фрагмент извлечённого текста и полный ответ модели (длинные — частями).
 	const previewLen = 350
-	const maxReplyLen = 4000
 	replyToUser := reply
 	if len(extracted) > 0 {
 		preview := extracted
@@ -1402,20 +1466,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			preview = preview[:previewLen] + "..."
 		}
 		replyToUser = "Извлечённый текст (начало):\n" + preview + "\n\nОтвет:\n" + reply
-		if len(replyToUser) > maxReplyLen {
-			replyToUser = replyToUser[:maxReplyLen-20] + "\n..."
-		}
 	}
-	var telegramMsgID int
-	if typingMsgID > 0 {
-		if b.editMessageText(ctx, chatID, typingMsgID, replyToUser) {
-			telegramMsgID = typingMsgID
-		} else {
-			telegramMsgID = b.sendReplyWithID(ctx, chatID, replyToUser)
-		}
-	} else {
-		telegramMsgID = b.sendReplyWithID(ctx, chatID, replyToUser)
-	}
+	telegramMsgID := b.sendLongReply(ctx, chatID, typingMsgID, replyToUser)
 	if msgID != uuid.Nil && telegramMsgID > 0 {
 		_ = b.updateMessageTelegramID(ctx, msgID, telegramMsgID)
 		_ = b.saveAnswerContext(ctx, sessionID, msgID, contextText)
