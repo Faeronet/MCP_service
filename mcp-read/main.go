@@ -619,7 +619,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	} else {
 		triggerColl := collectionForQuery(req.QueryText)
 		if triggerColl != "" && triggerColl != collectionChunks {
-			// Триггер сработал: ставим коллекцию триггера в начало только на этот запрос (если её нет в дефолте — добавляется в начало)
+			// Триггер: коллекция триггера в начало; вырезаем триггеры из запроса для фильтра по словам (не подставлять полный при пустом вырезанном)
 			collectionsOrder = make([]string, 0, 1+len(defaultCollectionsOrder))
 			collectionsOrder = append(collectionsOrder, triggerColl)
 			for _, c := range defaultCollectionsOrder {
@@ -628,16 +628,23 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			queryForSearch = stripRoutingKeywords(req.QueryText, triggerColl)
-			if queryForSearch == "" {
-				queryForSearch = strings.TrimSpace(req.QueryText)
-			}
-			log.Info(ctx, "build_context: trigger, search first", logging.KV{"collection", triggerColl}, logging.KV{"query", req.QueryText})
+			log.Info(ctx, "build_context: trigger, search first", logging.KV{"collection", triggerColl}, logging.KV{"query", req.QueryText}, logging.KV{"query_for_filter", queryForSearch})
 		} else {
 			collectionsOrder = defaultCollectionsOrder
 		}
 	}
 
-	vec := h.embedQuery(ctx, queryForSearch)
+	// При триггере эмбеддинг по полному запросу (лучше находит по смыслу), фильтр по словам — по вырезанному (queryForSearch)
+	var vec []float32
+	if !hasDate {
+		if triggerColl := collectionForQuery(req.QueryText); triggerColl != "" && triggerColl != collectionChunks {
+			vec = h.embedQuery(ctx, strings.TrimSpace(req.QueryText))
+		} else {
+			vec = h.embedQuery(ctx, queryForSearch)
+		}
+	} else {
+		vec = h.embedQuery(ctx, queryForSearch)
+	}
 	trueVal := true
 
 	var contextText string
