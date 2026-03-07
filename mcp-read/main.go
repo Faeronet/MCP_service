@@ -1517,11 +1517,11 @@ func stripRoutingKeywords(query, collection string) string {
 	case "kachestva_energii":
 		q = stripTriggersByWords(q,
 			[][]string{{"качество", "энергии"}, {"качества", "энергии"}, {"качество", "энергия"}, {"качества", "энергия"}},
-			mkSet("качество", "качества", "качесво"))
+			mkSet("качество", "качества", "качесво", "энергия", "энергии"))
 	case "iskazheniya_energii":
 		q = stripTriggersByWords(q,
 			[][]string{{"искажение", "энергии"}, {"искажения", "энергии"}, {"искажение", "энергия"}, {"искажения", "энергия"}},
-			mkSet("искажение", "искажения"))
+			mkSet("искажение", "искажения", "энергия", "энергии"))
 	case "specificnost":
 		q = stripTriggersByWords(q, nil, mkSet("специфичность", "спецификация", "специфичности", "спецификации"))
 	}
