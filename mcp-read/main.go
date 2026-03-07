@@ -612,8 +612,8 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
 
-	// Порядок по умолчанию — как раньше: только chunks, качества, искажения, other.
-	defaultCollectionsOrder := []string{collectionChunks, collectionKachestvaEnergii, collectionIskazheniyaEnergii, collectionOther}
+	// Порядок по умолчанию: chunks, качества, искажения, other, спецификация, знак зодиака. При срабатывании триггера его коллекция ставится в начало.
+	defaultCollectionsOrder := []string{collectionChunks, collectionKachestvaEnergii, collectionIskazheniyaEnergii, collectionOther, collectionSpecificnost, collectionZnakZodiaka}
 	var collectionsOrder []string
 	var collectionsSearched []string
 	if hasDate {

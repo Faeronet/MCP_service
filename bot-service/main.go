@@ -382,6 +382,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
 			contextText = "date not found"
+		} else if isMetaQuestionAboutBot(searchQuery) {
+			// Вопрос о боте (кто ты, who are you): не ищем в Qdrant, сразу в LLM с промптом B с пустым контекстом
+			contextText = ""
 		} else {
 			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
 			switch normalizedQuery {
@@ -967,6 +970,30 @@ func hasCollectionTriggerWords(s string) bool {
 	return false
 }
 
+// isMetaQuestionAboutBot возвращает true, если ответ промпта A похож на вопрос о боте (кто ты, who are you и т.п.). Тогда не ищем в Qdrant — сразу отдаём вопрос в LLM с промптом B с пустым контекстом.
+func isMetaQuestionAboutBot(s string) bool {
+	q := strings.ToLower(strings.TrimSpace(s))
+	if q == "" {
+		return false
+	}
+	// Краткие фразы — вопрос о боте/ассистенте
+	if len(q) > 120 {
+		return false
+	}
+	// Английский
+	if strings.Contains(q, "who are you") || strings.Contains(q, "what are you") || strings.Contains(q, "what is your name") ||
+		strings.Contains(q, "who you") || strings.Contains(q, "what you") || strings.Contains(q, "tell me about yourself") {
+		return true
+	}
+	// Русский
+	if strings.Contains(q, "кто ты") || strings.Contains(q, "кто вы") || strings.Contains(q, "что ты") || strings.Contains(q, "что вы") ||
+		strings.Contains(q, "как тебя зовут") || strings.Contains(q, "как вас зовут") || strings.Contains(q, "расскажи о себе") ||
+		strings.Contains(q, "расскажите о себе") || strings.Contains(q, "ты кто") || strings.Contains(q, "вы кто") {
+		return true
+	}
+	return false
+}
+
 // extractDateFromQuestion извлекает из текста дату (для поиска в Qdrant при NULL от модели). Учитывает опечатки в названиях месяцев.
 func extractDateFromQuestion(question string) string {
 	q := strings.TrimSpace(question)
@@ -1380,6 +1407,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		day, month, hasDate := parseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > maxDaysInMonth(month)) {
 			contextText = "date not found"
+		} else if isMetaQuestionAboutBot(searchQuery) {
+			contextText = ""
 		} else {
 			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
 			switch normalizedQuery {
