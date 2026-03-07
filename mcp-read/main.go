@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
@@ -147,11 +148,12 @@ type BuildContextRequest struct {
 }
 
 type BuildContextResponse struct {
-	Context            string   `json:"context"`
-	ChunkIDs           []string `json:"chunk_ids,omitempty"`
-	SearchCollection   string   `json:"search_collection,omitempty"`   // в какой коллекции нашли (для дебага)
-	CollectionsSearched []string `json:"collections_searched,omitempty"` // в каких коллекциях искали по порядку (для дебага)
-	Error              string   `json:"error,omitempty"`
+	Context             string   `json:"context"`
+	ChunkIDs            []string `json:"chunk_ids,omitempty"`
+	SearchCollection    string   `json:"search_collection,omitempty"`    // в какой коллекции нашли (для дебага)
+	CollectionsSearched []string `json:"collections_searched,omitempty"`  // в каких коллекциях искали по порядку (для дебага)
+	QueryForFilter      string   `json:"query_for_filter,omitempty"`    // запрос после вырезания триггеров (что реально ушло на фильтр по словам)
+	Error               string   `json:"error,omitempty"`
 }
 
 // chunkInfo — чанк с именем и связями для фильтра по дате и форматирования контекста.
@@ -584,15 +586,16 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		val, err := h.redis.Get(ctx, cacheKey).Result()
 		if err == nil {
 			var cached struct {
-				Context            string   `json:"context"`
-				ChunkIDs           []string `json:"chunk_ids"`
-				SearchCollection   string   `json:"search_collection"`
+				Context             string   `json:"context"`
+				ChunkIDs            []string `json:"chunk_ids"`
+				SearchCollection    string   `json:"search_collection"`
 				CollectionsSearched []string `json:"collections_searched"`
+				QueryForFilter      string   `json:"query_for_filter"`
 			}
 			if json.Unmarshal([]byte(val), &cached) == nil {
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(BuildContextResponse{
-					Context: cached.Context, ChunkIDs: cached.ChunkIDs, SearchCollection: cached.SearchCollection, CollectionsSearched: cached.CollectionsSearched,
+					Context: cached.Context, ChunkIDs: cached.ChunkIDs, SearchCollection: cached.SearchCollection, CollectionsSearched: cached.CollectionsSearched, QueryForFilter: cached.QueryForFilter,
 				})
 				return
 			}
@@ -1036,12 +1039,12 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		if hasDate {
 			log.Info(ctx, "build_context: date not found after rounds", logging.KV{"rounds", maxSearchRounds}, logging.KV{"date", dateStr})
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found", SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
+			_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "date_not_found", SearchCollection: successCollection, CollectionsSearched: collectionsSearched, QueryForFilter: queryForSearch})
 			return
 		}
-		log.Info(ctx, "build_context: chunk not found after rounds", logging.KV{"rounds", maxSearchRounds})
+		log.Info(ctx, "build_context: chunk not found after rounds", logging.KV{"rounds", maxSearchRounds}, logging.KV{"query_for_filter", queryForSearch})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found", SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: "", Error: "chunk_not_found", SearchCollection: successCollection, CollectionsSearched: collectionsSearched, QueryForFilter: queryForSearch})
 		return
 	}
 
@@ -1055,16 +1058,17 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	if h.redis != nil {
 		cachePayload, _ := json.Marshal(map[string]interface{}{
-			"context":             contextText,
-			"chunk_ids":           chunkIDs,
-			"search_collection":   successCollection,
+			"context":              contextText,
+			"chunk_ids":            chunkIDs,
+			"search_collection":    successCollection,
 			"collections_searched": collectionsSearched,
+			"query_for_filter":     queryForSearch,
 		})
 		_ = h.redis.Set(ctx, cacheKey, string(cachePayload), retrievalCacheTTL).Err()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs, SearchCollection: successCollection, CollectionsSearched: collectionsSearched})
+	_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: contextText, ChunkIDs: chunkIDs, SearchCollection: successCollection, CollectionsSearched: collectionsSearched, QueryForFilter: queryForSearch})
 }
 
 // scrollAllChunksContaining сканирует все чанки коллекции и возвращает те, в чьих payload-полях есть каждое значимое слово запроса (стоп-слова не требуются).
@@ -1472,7 +1476,14 @@ func collectionForQuery(query string) string {
 	return "chunks"
 }
 
-// stripTriggersByWords вырезает триггеры, разбивая запрос на слова: сначала фразы (последовательности слов), затем отдельные слова. Регистронезависимо.
+// trimWordForMatch приводит слово к нижнему регистру и обрезает пунктуацию по краям (чтобы "энергии," совпало с "энергии").
+func trimWordForMatch(w string) string {
+	w = strings.TrimSpace(strings.ToLower(w))
+	w = strings.TrimFunc(w, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+	return w
+}
+
+// stripTriggersByWords вырезает триггеры, разбивая запрос на слова: сначала фразы (последовательности слов), затем отдельные слова. Регистронезависимо; пунктуация по краям слов игнорируется.
 func stripTriggersByWords(s string, phraseList [][]string, wordSet map[string]struct{}) string {
 	s = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(s), " ")
 	words := strings.Fields(s)
@@ -1480,23 +1491,23 @@ func stripTriggersByWords(s string, phraseList [][]string, wordSet map[string]st
 		return ""
 	}
 	skip := make([]bool, len(words))
-	lower := make([]string, len(words))
+	normalized := make([]string, len(words))
 	for i, w := range words {
-		lower[i] = strings.ToLower(w)
+		normalized[i] = trimWordForMatch(w)
 	}
 	// Вырезать фразы (последовательности слов)
 	for _, phrase := range phraseList {
 		if len(phrase) == 0 {
 			continue
 		}
-		phraseLower := make([]string, len(phrase))
+		phraseNorm := make([]string, len(phrase))
 		for i, p := range phrase {
-			phraseLower[i] = strings.ToLower(p)
+			phraseNorm[i] = trimWordForMatch(p)
 		}
 		for i := 0; i <= len(words)-len(phrase); i++ {
 			match := true
 			for j := 0; j < len(phrase); j++ {
-				if lower[i+j] != phraseLower[j] {
+				if normalized[i+j] != phraseNorm[j] {
 					match = false
 					break
 				}
@@ -1513,7 +1524,7 @@ func stripTriggersByWords(s string, phraseList [][]string, wordSet map[string]st
 		if skip[i] {
 			continue
 		}
-		if _, ok := wordSet[lower[i]]; ok {
+		if _, ok := wordSet[normalized[i]]; ok {
 			skip[i] = true
 		}
 	}
