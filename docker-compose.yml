@@ -174,13 +174,13 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
-  # vLLM для эмбеддингов. Проброс только второй видеокарты (GPU 1): NVIDIA_VISIBLE_DEVICES=1 — контейнер видит только её.
-  # vllm (чат) остаётся на GPU 0, vllm-embed — на GPU 1.
+  # vLLM для эмбеддингов. При одной видеокарте — та же GPU 0: задаём --gpu-memory-utilization 0.35, чтобы поместиться рядом с vllm (чат).
+  # При двух GPU: device_ids: ['1'] и NVIDIA_VISIBLE_DEVICES=1 — эмбеддинги на GPU 1.
   vllm-embed:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "BAAI/bge-m3", "--port", "8000"]
+    command: ["serve", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.30"]
     deploy:
       resources:
         limits:
