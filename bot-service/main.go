@@ -923,25 +923,42 @@ func parseDayMonthFromQuery(query string) (day, month int, ok bool) {
 	return 0, 0, false
 }
 
-// hasCollectionTriggerWords возвращает true, если в тексте есть слова-триггеры для поиска в других коллекциях
-// (качество энергии, искажение энергии и т.д.). Проверка выполняется до извлечения сущностей, чтобы не терять триггеры.
+// hasCollectionTriggerWords возвращает true, если в тексте есть слова-триггеры для поиска в других коллекциях.
+// Совпадает с mcp-read collectionForQuery: зодиак, обитание, качество, искажение.
 func hasCollectionTriggerWords(s string) bool {
 	q := strings.ToLower(strings.TrimSpace(s))
 	if q == "" {
 		return false
 	}
-	// Триггеры для kachestva_energii (должны совпадать с mcp-read collectionForQuery)
+	// Знак зодиака
+	if strings.Contains(q, "знак") && strings.Contains(q, "зодиак") {
+		return true
+	}
+	if strings.Contains(q, "зодиак") {
+		return true
+	}
+	// Обитание
+	if strings.Contains(q, "обитание") || strings.Contains(q, "обитает") ||
+		strings.Contains(q, "живёт") || strings.Contains(q, "жил") || strings.Contains(q, "место жительства") {
+		return true
+	}
+	// kachestva_energii
 	if strings.Contains(q, "качество энергии") || strings.Contains(q, "качества энергии") || strings.Contains(q, "качесво") {
 		return true
 	}
 	if strings.Contains(q, "качество") || strings.Contains(q, "качества") {
 		return true
 	}
-	// Триггеры для iskazheniya_energii
+	// iskazheniya_energii
 	if strings.Contains(q, "искажение энергии") || strings.Contains(q, "искажения энергии") {
 		return true
 	}
 	if strings.Contains(q, "искажение") || strings.Contains(q, "искажения") {
+		return true
+	}
+	// specificnost (специфичность / спецификация)
+	if strings.Contains(q, "специфичность") || strings.Contains(q, "спецификация") ||
+		strings.Contains(q, "специфичности") || strings.Contains(q, "спецификации") {
 		return true
 	}
 	return false

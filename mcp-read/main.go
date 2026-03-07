@@ -1,4 +1,4 @@
-package main
+\package main
 
 import (
 	"bytes"
@@ -26,12 +26,15 @@ var log = logging.New("mcp-read")
 const retrievalCacheTTL = 60 * time.Second
 const maxSearchRounds = 5
 
-// Имена коллекций Qdrant (должны совпадать с mcp-write: kachestva_energii, iskazheniya_energii — с подчёркиванием).
+// Имена коллекций Qdrant (должны совпадать с mcp-write).
 const (
-	collectionChunks            = "chunks"
-	collectionKachestvaEnergii  = "kachestva_energii"
+	collectionChunks             = "chunks"
+	collectionZnakZodiaka        = "znak_zodiaka"
+	collectionObitanie           = "obitanie"
+	collectionKachestvaEnergii   = "kachestva_energii"
 	collectionIskazheniyaEnergii = "iskazheniya_energii"
-	collectionOther             = "other"
+	collectionSpecificnost       = "specificnost"
+	collectionOther              = "other"
 )
 
 func main() {
@@ -474,7 +477,8 @@ func (h *MCPReadHandler) searchOneCollectionNoDate(ctx context.Context, collecti
 			words := strings.Fields(queryLower)
 			var containing []chunkInfo
 			for _, c := range items {
-				chunkLower := strings.ToLower(c.Text + " " + c.SearchableText)
+				// Текст + поисковые поля + имя: в качествах/искажениях имя часто только в name
+				chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
 				allFound := true
 				for _, w := range words {
 					if w == "" {
@@ -604,8 +608,9 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
 
-	// Порядок поиска при отсутствии даты. Если сработал триггер качества/искажения — сначала ищем в нужной коллекции.
-	collectionsOrder := []string{collectionChunks, collectionKachestvaEnergii, collectionIskazheniyaEnergii, collectionOther}
+	// Порядок по умолчанию — как раньше: только chunks, качества, искажения, other.
+	defaultCollectionsOrder := []string{collectionChunks, collectionKachestvaEnergii, collectionIskazheniyaEnergii, collectionOther}
+	var collectionsOrder []string
 	var collectionsSearched []string
 	if hasDate {
 		collectionsOrder = []string{collectionChunks}
@@ -613,20 +618,22 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		log.Info(ctx, "build_context: date in query, force chunks", logging.KV{"date", dateStr})
 	} else {
 		triggerColl := collectionForQuery(req.QueryText)
-		if triggerColl == collectionKachestvaEnergii {
-			collectionsOrder = []string{collectionKachestvaEnergii, collectionChunks, collectionIskazheniyaEnergii, collectionOther}
-			queryForSearch = stripRoutingKeywords(req.QueryText, collectionKachestvaEnergii)
+		if triggerColl != "" && triggerColl != collectionChunks {
+			// Триггер сработал: ставим коллекцию триггера в начало только на этот запрос (если её нет в дефолте — добавляется в начало)
+			collectionsOrder = make([]string, 0, 1+len(defaultCollectionsOrder))
+			collectionsOrder = append(collectionsOrder, triggerColl)
+			for _, c := range defaultCollectionsOrder {
+				if c != triggerColl {
+					collectionsOrder = append(collectionsOrder, c)
+				}
+			}
+			queryForSearch = stripRoutingKeywords(req.QueryText, triggerColl)
 			if queryForSearch == "" {
 				queryForSearch = strings.TrimSpace(req.QueryText)
 			}
-			log.Info(ctx, "build_context: quality trigger, search kachestva_energii first", logging.KV{"query", req.QueryText})
-		} else if triggerColl == collectionIskazheniyaEnergii {
-			collectionsOrder = []string{collectionIskazheniyaEnergii, collectionChunks, collectionKachestvaEnergii, collectionOther}
-			queryForSearch = stripRoutingKeywords(req.QueryText, collectionIskazheniyaEnergii)
-			if queryForSearch == "" {
-				queryForSearch = strings.TrimSpace(req.QueryText)
-			}
-			log.Info(ctx, "build_context: iskazheniya trigger, search iskazheniya_energii first", logging.KV{"query", req.QueryText})
+			log.Info(ctx, "build_context: trigger, search first", logging.KV{"collection", triggerColl}, logging.KV{"query", req.QueryText})
+		} else {
+			collectionsOrder = defaultCollectionsOrder
 		}
 	}
 
@@ -814,7 +821,7 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 				words := strings.Fields(queryLower)
 				var containing []chunkInfo
 				for _, c := range items {
-					chunkLower := strings.ToLower(c.Text + " " + c.SearchableText)
+					chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
 					allFound := true
 					for _, w := range words {
 						if w == "" {
@@ -1097,7 +1104,7 @@ func (h *MCPReadHandler) scrollAllChunksContaining(ctx context.Context, collecti
 
 		for _, pt := range scrollRes.Result.Points {
 			c := payloadToChunkInfo(pt.Payload)
-			chunkLower := strings.ToLower(c.Text + " " + c.SearchableText)
+			chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
 			allFound := true
 			for _, w := range words {
 				if !chunkContainsQueryWord(chunkLower, w) {
