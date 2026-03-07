@@ -652,6 +652,42 @@ func (h *MCPReadHandler) BuildContext(w http.ResponseWriter, r *http.Request) {
 		found = true
 		break
 	}
+		// Векторный поиск в этой коллекции ничего не дал — пробуем scroll по тексту (для other и качеств так часто находит лучше)
+		if !found && strings.TrimSpace(queryForSearch) != "" {
+			queryTrim := strings.TrimSpace(queryForSearch)
+			log.Info(ctx, "build_context: vector failed in collection, trying scroll", logging.KV{"collection", collectionName}, logging.KV{"query", queryTrim})
+			items := h.scrollAllChunksContaining(ctx, collectionName, queryTrim)
+			if len(items) > 0 {
+				var b strings.Builder
+				for _, c := range items {
+					if c.Name != "" {
+						b.WriteString("Имя: ")
+						b.WriteString(c.Name)
+						b.WriteString("\n")
+					}
+					b.WriteString(c.Text)
+					b.WriteString("\n\n")
+				}
+				contextText = b.String()
+				if len(contextText) > req.TokenBudget*4 {
+					contextText = contextText[:req.TokenBudget*4]
+				}
+				chunkIDSet := make(map[string]struct{})
+				for _, c := range items {
+					if c.ChunkID != "" {
+						chunkIDSet[c.ChunkID] = struct{}{}
+					}
+				}
+				chunkIDs = make([]string, 0, len(chunkIDSet))
+				for id := range chunkIDSet {
+					chunkIDs = append(chunkIDs, id)
+				}
+				sort.Strings(chunkIDs)
+				successCollection = collectionName
+				found = true
+				break
+			}
+		}
 		if found {
 			break
 		}
