@@ -331,12 +331,17 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 	if contextText == "" {
 		var searchQuery string
-		// Поисковый запрос без LLM: извлекаем сущности (даты, части тела, национальности, знаки зодиака, фразы)
-		searchQuery = extractSearchEntitiesFromQuestion(msg.Text)
-		if searchQuery == "" {
-			searchQuery = extractDateFromQuestion(msg.Text)
+		// Сначала проверяем триггеры для других коллекций — чтобы не терять их при извлечении сущностей
+		if hasCollectionTriggerWords(msg.Text) {
+			searchQuery = msg.Text
+		} else {
+			// Поисковый запрос: извлекаем сущности (даты, части тела, национальности, знаки зодиака, фразы)
+			searchQuery = extractSearchEntitiesFromQuestion(msg.Text)
 			if searchQuery == "" {
-				searchQuery = msg.Text
+				searchQuery = extractDateFromQuestion(msg.Text)
+				if searchQuery == "" {
+					searchQuery = msg.Text
+				}
 			}
 		}
 		// Спецзапросы по ключевым словам в исходном сообщении (с упоминанием ангелов)
@@ -918,6 +923,30 @@ func parseDayMonthFromQuery(query string) (day, month int, ok bool) {
 	return 0, 0, false
 }
 
+// hasCollectionTriggerWords возвращает true, если в тексте есть слова-триггеры для поиска в других коллекциях
+// (качество энергии, искажение энергии и т.д.). Проверка выполняется до извлечения сущностей, чтобы не терять триггеры.
+func hasCollectionTriggerWords(s string) bool {
+	q := strings.ToLower(strings.TrimSpace(s))
+	if q == "" {
+		return false
+	}
+	// Триггеры для kachestva_energii (должны совпадать с mcp-read collectionForQuery)
+	if strings.Contains(q, "качество энергии") || strings.Contains(q, "качества энергии") || strings.Contains(q, "качесво") {
+		return true
+	}
+	if strings.Contains(q, "качество") || strings.Contains(q, "качества") {
+		return true
+	}
+	// Триггеры для iskazheniya_energii
+	if strings.Contains(q, "искажение энергии") || strings.Contains(q, "искажения энергии") {
+		return true
+	}
+	if strings.Contains(q, "искажение") || strings.Contains(q, "искажения") {
+		return true
+	}
+	return false
+}
+
 // extractDateFromQuestion извлекает из текста дату (для поиска в Qdrant при NULL от модели). Учитывает опечатки в названиях месяцев.
 func extractDateFromQuestion(question string) string {
 	q := strings.TrimSpace(question)
@@ -1227,11 +1256,15 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	}
 	if contextText == "" {
 		var searchQuery string
-		searchQuery = extractSearchEntitiesFromQuestion(userMsg)
-		if searchQuery == "" {
-			searchQuery = extractDateFromQuestion(userMsg)
+		if hasCollectionTriggerWords(userMsg) {
+			searchQuery = userMsg
+		} else {
+			searchQuery = extractSearchEntitiesFromQuestion(userMsg)
 			if searchQuery == "" {
-				searchQuery = userMsg
+				searchQuery = extractDateFromQuestion(userMsg)
+				if searchQuery == "" {
+					searchQuery = userMsg
+				}
 			}
 		}
 		lowerMsg := strings.ToLower(strings.TrimSpace(userMsg))
