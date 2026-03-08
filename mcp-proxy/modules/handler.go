@@ -4,19 +4,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
+// Убирает ведущую нумерацию "1. ", "2) ", "123. " и т.п. для сравнения имён.
+var reLeadingNum = regexp.MustCompile(`^\s*\d+[.)]\s*`)
+
 var logHandler = logging.New("mcp-proxy")
 
-// dedupeAndAppendNames: из alreadyList (имена по строкам) и llmReply (ответ LLM) возвращает "\n" + только новые уникальные имена из llmReply (без повторов и без тех, что уже в alreadyList).
-func dedupeAndAppendNames(alreadyList, llmReply string) string {
+// nameFromLine убирает ведущую нумерацию и пробелы, возвращает имя для сравнения.
+func nameFromLine(line string) string {
+	s := strings.TrimSpace(line)
+	s = reLeadingNum.ReplaceAllString(s, "")
+	return strings.TrimSpace(s)
+}
+
+// dedupeAndAppendNames: alreadyList — нумерованный список "1. A\n2. B", llmReply — ответ LLM. Возвращает "\n" + нумерованные только новые уникальные имена (с номерами начиная с startNum+1).
+func dedupeAndAppendNames(alreadyList, llmReply string, startNum int) string {
 	seen := make(map[string]struct{})
 	for _, line := range strings.Split(alreadyList, "\n") {
-		n := strings.TrimSpace(line)
+		n := nameFromLine(line)
 		if n != "" {
 			seen[strings.ToLower(n)] = struct{}{}
 		}
@@ -27,17 +39,34 @@ func dedupeAndAppendNames(alreadyList, llmReply string) string {
 		if n == "" {
 			continue
 		}
-		key := strings.ToLower(n)
+		name := nameFromLine(n)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		added = append(added, n)
+		added = append(added, name)
 	}
-	if len(added) == 0 {
-		return ""
+	if len(added) > 0 {
+		var b strings.Builder
+		for i, name := range added {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(strconv.Itoa(startNum + i + 1))
+			b.WriteString(". ")
+			b.WriteString(name)
+		}
+		return "\n" + b.String()
 	}
-	return "\n" + strings.Join(added, "\n")
+	// Если все строки были дубликатами, но ответ LLM непустой — добавляем его целиком
+	if strings.TrimSpace(llmReply) != "" {
+		return "\n" + strings.TrimSpace(llmReply)
+	}
+	return ""
 }
 
 // HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
@@ -180,14 +209,17 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 						if i > 0 {
 							bld.WriteString("\n")
 						}
+						bld.WriteString(strconv.Itoa(i + 1))
+						bld.WriteString(". ")
 						bld.WriteString(n)
 					}
 					listStr := bld.String()
-					sys := s.PromptB + "\n\nТы дополняешь список имён ангелов-хранителей. Отвечай только именами, в том же стиле, без пояснений."
-					userPrompt := "Я пока знаю только эти имена ангелов-хранителей:\n" + listStr + "\n\nДополни этот список в том же стиле: только имена, без пояснений. Не повторяй уже перечисленные имена."
+					sys := s.PromptB + "\n\nТы дополняешь список имён ангелов-хранителей. Отвечай только именами, по одному на строку, можно с нумерацией. Не повторяй уже перечисленные имена."
+					userPrompt := "Я пока знаю только эти имена ангелов-хранителей:\n" + listStr + "\n\nДополни этот список в том же стиле: только имена, по одному на строку. Не повторяй уже перечисленные."
 					llmReply, errLLM := s.CallLLM(ctx, requestID, sys, userPrompt)
 					if errLLM == nil {
-						reply = listStr + dedupeAndAppendNames(listStr, StripThink(llmReply))
+						trimmed := strings.TrimSpace(StripThink(llmReply))
+						reply = listStr + dedupeAndAppendNames(listStr, trimmed, len(names))
 						nameAllHandled = true
 					}
 				}
