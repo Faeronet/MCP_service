@@ -89,6 +89,33 @@ func (s *Server) GetFullContextByRef(ctx context.Context, ref string) (string, b
 	return out.Context, true
 }
 
+// GetFullContextByChunkIDs возвращает полный контекст из core.document_context для переданных chunk_id (при ≤2 чанках в Qdrant подставляем полные тексты документов).
+func (s *Server) GetFullContextByChunkIDs(ctx context.Context, chunkIDs []string) (string, bool) {
+	if len(chunkIDs) == 0 {
+		return "", false
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT context FROM core.document_context WHERE chunk_id = ANY($1) ORDER BY chunk_id`, chunkIDs)
+	if err != nil {
+		return "", false
+	}
+	defer rows.Close()
+	var parts []string
+	for rows.Next() {
+		var ctx string
+		if err := rows.Scan(&ctx); err != nil {
+			continue
+		}
+		t := strings.TrimSpace(ctx)
+		if t != "" {
+			parts = append(parts, t)
+		}
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, "\n\n"), true
+}
+
 // GetAngelNamesFromPostgres returns context: количество имён (цифрой), затем все имена ангелов из core.angel_names + document_context (для «name all»).
 func (s *Server) GetAngelNamesFromPostgres(ctx context.Context) (string, error) {
 	rows, err := s.Pool.Query(ctx, `

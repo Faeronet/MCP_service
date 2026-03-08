@@ -148,6 +148,15 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 						logHandler.Warn(ctx, "build_context failed", logging.KV{"error", err})
 						contextText = ""
 					}
+				} else if len(buildChunkIDs) <= 2 && len(buildChunkIDs) > 0 {
+					// При 1–2 чанках подставляем полный контекст из Postgres (core.document_context)
+					if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
+						contextText = fullCtx
+						buildContextKind = "full"
+						if len(buildChunkIDs) > 0 {
+							buildContextRef = buildChunkIDs[0]
+						}
+					}
 				}
 				if s.DebugMode == 1 {
 					debugMessage = "🔍 В Qdrant отправлено (ответ модели на промпт A):\n" + searchQuery
