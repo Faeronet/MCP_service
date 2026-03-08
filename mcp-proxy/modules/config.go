@@ -14,10 +14,11 @@ type Server struct {
 	Pool           *pgxpool.Pool
 	McpReadURL     string
 	VllmBase       string
-	LlmModel       string
-	LlmAPIKey      string
-	LlmMaxTokens   int
-	LlmLimiter     *ratelimit.InFlight
+	LlmModel         string
+	LlmAPIKey        string
+	LlmMaxTokens     int
+	LlmContextLength int   // лимит контекста модели (например 40960); вход обрезается до context_length - max_tokens
+	LlmLimiter       *ratelimit.InFlight
 	PerChatLimiter *ratelimit.PerKey
 	PromptA        string
 	PromptB        string
@@ -40,21 +41,26 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	if llmMaxTokens > 32768 {
 		llmMaxTokens = 32768
 	}
+	llmContextLength := config.LoadInt("LLM_CONTEXT_LENGTH", 40960)
+	if llmContextLength < 2048 {
+		llmContextLength = 40960
+	}
 	maxInflightLLM := config.LoadInt("MAX_INFLIGHT_LLM", 32)
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
 	debugMode := config.LoadInt("BOT_DEBUG", 0)
 	return &Server{
-		Pool:           pool,
-		McpReadURL:     mcpReadURL,
-		VllmBase:       vllmBase,
-		LlmModel:       llmModel,
-		LlmAPIKey:      llmAPIKey,
-		LlmMaxTokens:   llmMaxTokens,
-		LlmLimiter:     llmLimiter,
-		PerChatLimiter: perChatLimiter,
-		PromptA:        promptA,
-		PromptB:        promptB,
-		DebugMode:      debugMode,
+		Pool:             pool,
+		McpReadURL:       mcpReadURL,
+		VllmBase:         vllmBase,
+		LlmModel:         llmModel,
+		LlmAPIKey:        llmAPIKey,
+		LlmMaxTokens:     llmMaxTokens,
+		LlmContextLength: llmContextLength,
+		LlmLimiter:       llmLimiter,
+		PerChatLimiter:   perChatLimiter,
+		PromptA:          promptA,
+		PromptB:          promptB,
+		DebugMode:        debugMode,
 	}
 }

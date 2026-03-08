@@ -20,7 +20,22 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 }
 
 // CallLLM calls vLLM chat completion; systemContent = system prompt, userQuery = user message.
+// Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length (vLLM 400).
 func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
+	maxInputTokens := s.LlmContextLength - s.LlmMaxTokens
+	if maxInputTokens <= 0 {
+		maxInputTokens = 38912
+	}
+	// Приблизительно ~4 символа на токен (кириллица/латиница)
+	maxInputChars := maxInputTokens * 4
+	margin := 256
+	systemMax := maxInputChars - len(userQuery) - margin
+	if systemMax < 500 {
+		systemMax = 500
+	}
+	if len(systemContent) > systemMax {
+		systemContent = systemContent[:systemMax] + "\n\n[... контекст обрезан из-за лимита модели ...]"
+	}
 	messages := []map[string]interface{}{
 		{"role": "system", "content": systemContent},
 		{"role": "user", "content": userQuery},

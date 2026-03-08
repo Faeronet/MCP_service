@@ -294,6 +294,8 @@ func (c *QdrantClient) ScrollAllPages(ctx context.Context, collectionName string
 	return all, nil
 }
 
+// chunkContainsQueryWord проверяет, что искомое слово w встречается в тексте как отдельное слово,
+// а не внутри другого (например, «ангел» не совпадает с «архангел», «ангельский»).
 func chunkContainsQueryWord(chunkLower, w string) bool {
-	return w != "" && strings.Contains(chunkLower, w)
+	return w != "" && containsWordRu(chunkLower, w)
 }
