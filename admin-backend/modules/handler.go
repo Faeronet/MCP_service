@@ -1,4 +1,4 @@
-package main
+package modules
 
 import (
 	"context"
@@ -16,32 +16,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
-	"github.com/telegram-ai-assistant/root/pkg/queue"
-	"github.com/telegram-ai-assistant/root/pkg/storage"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-type HandlerDeps struct {
-	Pool            *pgxpool.Pool
-	MinIO           *storage.Client
-	Queue           *queue.Client
-	JWTSecret       []byte
-	JWTExpiration   time.Duration // срок действия токена (например 168h = 7 дней)
-	AdminUser       string
-	AdminPass       string
-	MCPWriteURL     string
-	LokiURL         string
-}
-
-type Handler struct {
-	HandlerDeps
-}
-
-func NewHandler(d HandlerDeps) *Handler {
-	return &Handler{HandlerDeps: d}
-}
 
 type LoginRequest struct {
 	Username string `json:"username"`
@@ -522,7 +499,9 @@ func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		displayName := strings.TrimSpace(username)
-		if displayName == "" {
+		if telegramID == adminTelegramID {
+			displayName = "admin"
+		} else if displayName == "" {
 			displayName = "—"
 		}
 		list = append(list, map[string]interface{}{
@@ -802,21 +781,105 @@ func grafanaRewriteStaticPaths(b []byte, r *http.Request) []byte {
 	return []byte(s)
 }
 
-func mustJSON(v interface{}) []byte {
-	b, _ := json.Marshal(v)
-	return b
+// Admin session: telegram_id=-1, chat_id=0 for admin panel chat (same DB as Telegram sessions).
+const adminTelegramID int64 = -1
+const adminChatID int64 = 0
+
+// EnsureAdminSession returns session_id for admin chat (creates if not exists).
+func (h *Handler) EnsureAdminSession(ctx context.Context) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := h.Pool.QueryRow(ctx, `
+		INSERT INTO chat.sessions (telegram_id, chat_id, last_active)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (telegram_id, chat_id) DO UPDATE SET last_active = NOW()
+		RETURNING id
+	`, adminTelegramID, adminChatID).Scan(&id)
+	return id, err
 }
 
-func mustJSONBytes(v interface{}) []byte {
-	b, _ := json.Marshal(v)
-	return b
+// ChatRequest body for POST /api/chat (admin chat with LLM via mcp-proxy).
+type ChatRequest struct {
+	MessageText               string `json:"message_text"`
+	ReplyToTelegramMessageID  int64  `json:"reply_to_telegram_message_id,omitempty"`
 }
 
-func rawJSON(b []byte) interface{} {
-	if len(b) == 0 {
-		return nil
+// ChatResponse from POST /api/chat.
+type ChatResponse struct {
+	ReplyText        string `json:"reply_text"`
+	DebugMessage     string `json:"debug_message,omitempty"`
+	TelegramMessageID int64  `json:"telegram_message_id,omitempty"`
+}
+
+// Chat proxies admin message to mcp-proxy /chat and returns reply.
+func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-	var v interface{}
-	_ = json.Unmarshal(b, &v)
-	return v
+	ctx := r.Context()
+	if h.MCPProxyURL == "" {
+		http.Error(w, `{"error":"mcp-proxy not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	msgText := strings.TrimSpace(req.MessageText)
+	if msgText == "" {
+		http.Error(w, `{"error":"message_text required"}`, http.StatusBadRequest)
+		return
+	}
+	sessionID, err := h.EnsureAdminSession(ctx)
+	if err != nil {
+		http.Error(w, `{"error":"session"}`, http.StatusInternalServerError)
+		return
+	}
+	requestID := uuid.New().String()
+	replyToID := req.ReplyToTelegramMessageID
+	if replyToID < 0 {
+		replyToID = 0
+	}
+	body := map[string]interface{}{
+		"session_id":                  sessionID.String(),
+		"chat_id":                     adminChatID,
+		"user_id":                     adminTelegramID,
+		"username":                    "admin",
+		"message_text":                msgText,
+		"reply_to_telegram_message_id": replyToID,
+		"request_id":                  requestID,
+	}
+	payload, _ := json.Marshal(body)
+	proxyReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(h.MCPProxyURL, "/")+"/chat", strings.NewReader(string(payload)))
+	if err != nil {
+		http.Error(w, `{"error":"proxy request"}`, http.StatusInternalServerError)
+		return
+	}
+	proxyReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(proxyReq)
+	if err != nil {
+		http.Error(w, `{"error":"proxy"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	bb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(bb)
+		return
+	}
+	var out struct {
+		ReplyText         string `json:"reply_text"`
+		DebugMessage      string `json:"debug_message"`
+		TelegramMessageID int64  `json:"telegram_message_id"`
+	}
+	_ = json.Unmarshal(bb, &out)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(ChatResponse{
+		ReplyText:         out.ReplyText,
+		DebugMessage:      out.DebugMessage,
+		TelegramMessageID: out.TelegramMessageID,
+	})
 }

@@ -15,3 +15,33 @@ coverage/
 *.test
 .vite/
 .cache/
+
+# Сбилженные бинарники сервисов (Go и др.)
+admin-backend/admin-backend
+bot-service/bot-service
+mcp-proxy/mcp-proxy
+mcp-read/mcp-read
+mcp-write/mcp-write
+log-indexer/log-indexer
+ingestion-worker/ingestion-worker
+attachment-worker/attachment-worker
+reranker/reranker
+extract-tool/extract-tool
+
+# Python: кэш байткода и артефакты
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+*.egg-info/
+*.egg
+.eggs/
+.mypy_cache/
+.ruff_cache/
+
+# Pip-кэш (локальные директории в репо)
+.pip/
+pip_cache/
+pip-api/

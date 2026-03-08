@@ -19,6 +19,16 @@ services:
       retries: 5
     restart: unless-stopped
 
+  adminer:
+    image: adminer:latest
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8084:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+
   migrate:
     image: postgres:16-alpine
     environment:
@@ -148,6 +158,7 @@ services:
       - loki
 
   # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
+  # Порядок запуска AI: vllm → vllm-embed → rerank, extract-tool (rerank и extract-tool ждут готовности vllm-embed).
   vllm:
     profiles:
       - vllm
@@ -172,9 +183,16 @@ services:
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 60
+      start_period: 300s
     restart: unless-stopped
 
-  # vLLM для эмбеддингов. При одной видеокарте — та же GPU 0: задаём --gpu-memory-utilization 0.35, чтобы поместиться рядом с vllm (чат).
+  # vLLM для эмбеддингов. Запускается после vllm. Пока не станет healthy, rerank и extract-tool не стартуют.
+  # При одной видеокарте — та же GPU 0: задаём --gpu-memory-utilization 0.35, чтобы поместиться рядом с vllm (чат).
   # При двух GPU: device_ids: ['1'] и NVIDIA_VISIBLE_DEVICES=1 — эмбеддинги на GPU 1.
   vllm-embed:
     profiles:
@@ -200,9 +218,17 @@ services:
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8002:8000"
+    depends_on:
+      vllm: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 60
+      start_period: 300s
     restart: unless-stopped
 
-  # Реранкер (BAAI/bge-reranker-v2-m3) — та же GPU 1, что и vllm-embed. API: POST /api/v1/rerank.
+  # Реранкер (BAAI/bge-reranker-v2-m3) — та же GPU 1, что и vllm-embed. Запускается после полной готовности vllm-embed.
   rerank:
     profiles:
       - vllm
@@ -227,6 +253,8 @@ services:
               capabilities: [gpu]
     ports:
       - "8787:8787"
+    depends_on:
+      vllm-embed: { condition: service_healthy }
     restart: unless-stopped
 
   # --- Application services ---
@@ -295,14 +323,10 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
-      MCP_READ_URL: http://mcp-read:8082
+      MCP_PROXY_URL: http://mcp-proxy:8083
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://extract-tool:8004}
-      # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
-      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Имя модели в запросах — должно совпадать с загруженной в vLLM (по умолчанию Qwen3-14B-AWQ).
-      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
+      EXTRACT_TOOL_URL: ${EXTRACT_TOOL_URL:-http://extract-tool:8004}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
-      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -311,10 +335,36 @@ services:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      mcp-read: { condition: service_started }
+      mcp-proxy: { condition: service_started }
       extract-tool: { condition: service_started }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  mcp-proxy:
+    build:
+      context: .
+      dockerfile: mcp-proxy/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      MCP_READ_URL: http://mcp-read:8082
+      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-}
+      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
+      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
+      BOT_DEBUG: ${BOT_DEBUG:-0}
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      mcp-read: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -407,7 +457,7 @@ services:
       mcp-write: { condition: service_started }
     restart: unless-stopped
 
-  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы zip/tar.gz/tar.xz). POST /extract, /ocr, /asr.
+  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы). Запускается после полной готовности vllm-embed.
   extract-tool:
     build:
       context: ./extract-tool
@@ -430,6 +480,8 @@ services:
               capabilities: [gpu]
     ports:
       - "8004:8004"
+    depends_on:
+      vllm-embed: { condition: service_healthy }
     restart: unless-stopped
 
   attachment-worker:

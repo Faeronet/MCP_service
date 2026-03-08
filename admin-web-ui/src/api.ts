@@ -140,6 +140,38 @@ export async function getChatMessages(sessionId: string): Promise<{ messages: Ch
   return r.json()
 }
 
+/** Admin chat with LLM (POST /api/chat, proxied to mcp-proxy). */
+export async function sendChatMessage(
+  message_text: string,
+  reply_to_telegram_message_id?: number
+): Promise<{ reply_text: string; debug_message?: string; telegram_message_id?: number }> {
+  const token = getToken()
+  if (!token) throw new Error('NOT_LOGGED_IN')
+  const body: { message_text: string; reply_to_telegram_message_id?: number } = {
+    message_text: message_text.trim(),
+  }
+  if (reply_to_telegram_message_id != null && reply_to_telegram_message_id > 0) {
+    body.reply_to_telegram_message_id = reply_to_telegram_message_id
+  }
+  const r = await fetch(`${API_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  })
+  checkAuth(r)
+  if (!r.ok) {
+    const text = await r.text()
+    try {
+      const data = JSON.parse(text) as { error?: string }
+      if (data?.error) throw new Error(data.error)
+    } catch (e) {
+      if (e instanceof Error) throw e
+    }
+    throw new Error(text || 'Chat request failed')
+  }
+  return r.json()
+}
+
 export function grafanaUrl(): string {
   const base = `${API_URL}/api/grafana/`
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''

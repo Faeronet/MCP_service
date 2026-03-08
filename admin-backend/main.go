@@ -1,3 +1,5 @@
+//go:build !docker
+
 package main
 
 import (
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/telegram-ai-assistant/root/admin-backend/modules"
 	"github.com/telegram-ai-assistant/root/pkg/config"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 	"github.com/telegram-ai-assistant/root/pkg/queue"
@@ -76,7 +79,7 @@ func main() {
 	if jwtExpHours < 1 {
 		jwtExpHours = 168
 	}
-	handler := NewHandler(HandlerDeps{
+	handler := modules.NewHandler(modules.HandlerDeps{
 		Pool:          pool,
 		MinIO:         minioClient,
 		Queue:         rmq,
@@ -85,6 +88,7 @@ func main() {
 		AdminUser:     config.LoadString("ADMIN_USER", "admin"),
 		AdminPass:     config.LoadString("ADMIN_PASSWORD", "admin"),
 		MCPWriteURL:   config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001"),
+		MCPProxyURL:   config.LoadString("MCP_PROXY_URL", "http://mcp-proxy:8083"),
 		LokiURL:       config.LoadString("LOKI_URL", "http://loki:3100"),
 	})
 
@@ -99,6 +103,9 @@ func main() {
 	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
 	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
+	mux.Handle("/api/chats", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListChats)))
+	mux.Handle("/api/chats/", authMiddleware(handler.JWTSecret, chatsRouter(handler)))
+	mux.Handle("/api/chat", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Chat)))
 	mux.Handle("/api/monitor/metrics", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.MonitorMetrics)))
 	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
@@ -127,7 +134,18 @@ func main() {
 
 // docsRouter обрабатывает /api/docs и /api/docs/<id>: список или операция по id. Нужен отдельный роутер,
 // чтобы DELETE /api/docs/<id> гарантированно попадал в обработчик (в т.ч. под Go 1.22 ServeMux).
-func docsRouter(h *Handler) http.Handler {
+func chatsRouter(h *modules.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasSuffix(path, "/messages") && strings.HasPrefix(path, "/api/chats/") {
+			h.GetChatMessages(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
+func docsRouter(h *modules.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if path == "/api/docs" || path == "/api/docs/" {

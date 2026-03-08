@@ -148,7 +148,7 @@ export function ChatLog() {
                         tabIndex={0}
                         onKeyDown={(e) => e.key === 'Enter' && setModalSession(c)}
                       >
-                        <td style={{ width: '33%' }}>{c.username || '—'}</td>
+                        <td style={{ width: '33%' }}>{c.telegram_id === -1 ? 'admin' : (c.username || '—')}</td>
                         <td style={{ width: '33%' }} className="mono">{String(c.chat_id)}</td>
                         <td style={{ width: '34%' }}>{c.message_count}</td>
                       </tr>
@@ -166,7 +166,7 @@ export function ChatLog() {
           <div className="chat-modal" onClick={(e) => e.stopPropagation()}>
             <div className="chat-modal-header">
               <h2 className="chat-modal-title">
-                {modalSession.username || '—'} · Chat {modalSession.chat_id}
+                {modalSession.telegram_id === -1 ? 'admin' : (modalSession.username || '—')} · Chat {modalSession.chat_id}
               </h2>
               <button
                 type="button"
@@ -213,7 +213,9 @@ export function ChatLog() {
                           )}
                           <div className="chat-msg-meta">
                             <span className="chat-msg-who">
-                              {msg.role === 'user' ? 'Пользователь' : 'Ассистент'}
+                              {msg.role === 'user'
+                                ? (modalSession.telegram_id === -1 ? 'Админ' : 'Пользователь')
+                                : 'Ассистент'}
                             </span>
                             <span className="chat-msg-time">{formatTime(msg.created_at)}</span>
                             {msg.role === 'assistant' && msg.response_time_sec != null && (

@@ -9,5 +9,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
   && pip install --no-cache-dir torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121
 COPY main.py .
+COPY modules/ ./modules/
 EXPOSE 8004
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8004"]

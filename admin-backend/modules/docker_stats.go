@@ -1,4 +1,4 @@
-package main
+package modules
 
 import (
 	"context"
@@ -15,6 +15,8 @@ import (
 
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
+
+var logDocker = logging.New("admin-backend/docker")
 
 const containerHistorySize = 60
 
@@ -161,12 +163,12 @@ func CollectContainerMetrics() []ContainerMetrics {
 		if listErr != nil {
 			errStr = listErr.Error()
 		}
-		log.Warn(ctx, "container metrics: docker list failed", logging.KV{"error", errStr}, logging.KV{"socket", getDockerSocketPath()})
+		logDocker.Warn(ctx, "container metrics: docker list failed", logging.KV{"error", errStr}, logging.KV{"socket", getDockerSocketPath()})
 		return nil
 	}
 	var containers []dockerContainer
 	if json.Unmarshal(body, &containers) != nil {
-		log.Warn(ctx, "container metrics: docker list json decode failed", logging.KV{"api_version", apiVer})
+		logDocker.Warn(ctx, "container metrics: docker list json decode failed", logging.KV{"api_version", apiVer})
 		return nil
 	}
 
