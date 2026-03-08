@@ -153,6 +153,18 @@ func IsOnlyDay(s string) bool {
 	return err == nil && n >= 1 && n <= 31
 }
 
+// IsNameAllQuery возвращает true, если ответ промпта A означает «выдать все имена» (name all, [name] all, names all и т.п.).
+func IsNameAllQuery(s string) bool {
+	t := strings.ToLower(strings.TrimSpace(s))
+	t = strings.ReplaceAll(t, "[", "")
+	t = strings.ReplaceAll(t, "]", "")
+	t = strings.TrimSpace(t)
+	for strings.Contains(t, "  ") {
+		t = strings.ReplaceAll(t, "  ", " ")
+	}
+	return t == "name all" || t == "names all"
+}
+
 func IsMetaQuestionAboutBot(s string) bool {
 	q := strings.ToLower(strings.TrimSpace(s))
 	if q == "" || len(q) > 120 {

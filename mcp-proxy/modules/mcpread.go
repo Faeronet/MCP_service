@@ -89,7 +89,7 @@ func (s *Server) GetFullContextByRef(ctx context.Context, ref string) (string, b
 	return out.Context, true
 }
 
-// GetAngelNamesFromPostgres returns context: all angel names + document_context (for "[name] all").
+// GetAngelNamesFromPostgres returns context: количество имён (цифрой), затем все имена ангелов из core.angel_names + document_context (для «name all»).
 func (s *Server) GetAngelNamesFromPostgres(ctx context.Context) (string, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT an.name, COALESCE(dc.context, '')
@@ -102,6 +102,7 @@ func (s *Server) GetAngelNamesFromPostgres(ctx context.Context) (string, error) 
 	}
 	defer rows.Close()
 	var bld strings.Builder
+	var count int
 	for rows.Next() {
 		var name, context string
 		if err := rows.Scan(&name, &context); err != nil {
@@ -111,6 +112,7 @@ func (s *Server) GetAngelNamesFromPostgres(ctx context.Context) (string, error) 
 		if name == "" {
 			continue
 		}
+		count++
 		bld.WriteString("Имя: ")
 		bld.WriteString(name)
 		bld.WriteString("\n")
@@ -119,7 +121,11 @@ func (s *Server) GetAngelNamesFromPostgres(ctx context.Context) (string, error) 
 			bld.WriteString("\n\n")
 		}
 	}
-	return bld.String(), nil
+	body := bld.String()
+	if count == 0 {
+		return "Всего имён: 0\n", nil
+	}
+	return "Всего имён: " + fmt.Sprintf("%d", count) + "\n\n" + body, nil
 }
 
 // toNullString for DB nullable string

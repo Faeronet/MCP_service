@@ -116,8 +116,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 			contextText = ""
 		} else {
 			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
-			switch normalizedQuery {
-			case "[name] all":
+			if IsNameAllQuery(normalizedQuery) || normalizedQuery == "[name] all" {
+				// Ответ промпта A = «name all»: контекст из Postgres (core.angel_names), с количеством имён; в промпт B уходит вопрос пользователя.
 				if s.DebugMode == 1 {
 					debugMessage = "🔍 Список имён из Postgres (core.angel_names)"
 				}
@@ -127,9 +127,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 					logHandler.Warn(ctx, "getAngelNamesFromPostgres failed", logging.KV{"error", errNames})
 					contextText = ""
 				}
-			case "[date] list":
+			} else if normalizedQuery == "[date] list" {
 				contextText = ""
-			default:
+			} else {
 				attachmentsText := s.GetAttachmentsText(ctx, req.SessionID)
 				var err error
 				var buildChunkIDs []string
