@@ -457,7 +457,7 @@ services:
       mcp-write: { condition: service_started }
     restart: unless-stopped
 
-  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы). Запускается после полной готовности vllm-embed.
+  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы). При --profile vllm порядок: vllm → vllm-embed → rerank (extract-tool независим).
   extract-tool:
     build:
       context: ./extract-tool
@@ -480,8 +480,6 @@ services:
               capabilities: [gpu]
     ports:
       - "8004:8004"
-    depends_on:
-      vllm-embed: { condition: service_healthy }
     restart: unless-stopped
 
   attachment-worker:
