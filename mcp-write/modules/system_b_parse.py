@@ -1,20 +1,33 @@
-"""Система B: парсинг документа по меткам (ключи до первой точки)."""
+"""Система B: парсинг документа по меткам. Значение = текст от метки до следующей метки (или до конца)."""
 from . import config
 
 
-def extract_after_label_until_first_period(full_text: str, label: str) -> str | None:
-    if not label or not full_text or label not in full_text:
-        return None
-    idx = full_text.find(label)
-    if idx == -1:
-        return None
-    after = full_text[idx + len(label) :].lstrip()
-    for i, c in enumerate(after):
-        if c == ".":
-            if i + 1 < len(after) and after[i + 1] == ".":
+def _all_label_positions(raw: str) -> list[tuple[int, str, str]]:
+    """Возвращает список (позиция_в_тексте, метка, key_name), отсортированный по позиции."""
+    entries: list[tuple[int, str, str]] = []
+    for key_name, label_or_labels in config.SYSTEM_B_LABELS[1:]:
+        if label_or_labels is None:
+            continue
+        labels = [label_or_labels] if isinstance(label_or_labels, str) else label_or_labels
+        for label in labels:
+            if not label:
                 continue
-            return after[:i].strip()
-    return after.strip()
+            idx = 0
+            while True:
+                pos = raw.find(label, idx)
+                if pos == -1:
+                    break
+                entries.append((pos, label, key_name))
+                idx = pos + 1
+    entries.sort(key=lambda x: x[0])
+    return entries
+
+
+def _segment_after_label(raw: str, label_end: int, next_label_start: int | None) -> str:
+    """Текст от label_end до next_label_start. Убираем концевые точки/пробелы."""
+    end = next_label_start if next_label_start is not None else len(raw)
+    after = raw[label_end:end].strip()
+    return after.rstrip(".").strip() or after.strip()
 
 
 def parse_system_b_keys(raw: str) -> dict[str, str]:
@@ -25,17 +38,15 @@ def parse_system_b_keys(raw: str) -> dict[str, str]:
     parts = raw.split()
     if parts:
         out["name"] = parts[0].strip()
-    for key_name, label_or_labels in config.SYSTEM_B_LABELS[1:]:
-        if label_or_labels is None:
-            continue
-        labels = [label_or_labels] if isinstance(label_or_labels, str) else label_or_labels
-        for label in labels:
-            if not label or label not in raw:
-                continue
-            val = extract_after_label_until_first_period(raw, label)
-            if val is not None and val.strip():
-                out[key_name] = val.strip()
-                break
+
+    # Все вхождения меток в порядке появления в документе
+    positions = _all_label_positions(raw)
+    for i, (pos, label, key_name) in enumerate(positions):
+        label_end = pos + len(label)
+        next_start = positions[i + 1][0] if i + 1 < len(positions) else None
+        val = _segment_after_label(raw, label_end, next_start)
+        if val and (key_name not in out or len(val) > len(out.get(key_name, ""))):
+            out[key_name] = val
     return out
 
 
@@ -52,57 +63,28 @@ def strip_leading_dots_and_name(s: str, name: str) -> str:
 
 
 def get_rest_context(raw: str, keys: dict[str, str]) -> str:
+    """Остальной контекст: всё, что не входит в распознанные блоки (заголовок name + метки)."""
     raw = (raw or "").strip()
     if not raw:
         return ""
+    positions = _all_label_positions(raw)
+    # Сегменты = заголовок (имя) + все блоки по меткам
     segments: list[tuple[int, int]] = []
     lead = 0
-    while lead < len(raw):
-        c = raw[lead]
-        if c.isalpha() or c.isdigit() or c == ":":
-            break
+    while lead < len(raw) and raw[lead] in " \t\n\r":
         lead += 1
     if lead > 0:
         segments.append((0, lead))
     name = (keys.get("name") or "").strip()
     if name and lead < len(raw) and raw[lead:].startswith(name):
         pos = lead + len(name)
-        while pos < len(raw):
-            c = raw[pos]
-            if c.isalpha() or c.isdigit() or c == ":":
-                break
+        while pos < len(raw) and raw[pos] in " \t\n\r.:-":
             pos += 1
         segments.append((lead, pos))
-    for key_name, label_or_labels in config.SYSTEM_B_LABELS[1:]:
-        if label_or_labels is None:
-            continue
-        value = keys.get(key_name, "").strip()
-        if not value:
-            continue
-        labels = [label_or_labels] if isinstance(label_or_labels, str) else label_or_labels
-        for label in labels:
-            if not label or label not in raw:
-                continue
-            idx = raw.find(label)
-            if idx == -1:
-                continue
-            after = raw[idx + len(label) :].lstrip()
-            end_in_after: int | None = None
-            for i, c in enumerate(after):
-                if c == ".":
-                    if i + 1 < len(after) and after[i + 1] == ".":
-                        continue
-                    end_in_after = i
-                    break
-            if end_in_after is None:
-                segment_end = idx + len(label) + len(after)
-            else:
-                segment_end = idx + len(label) + len(after[: end_in_after + 1])
-            extracted = after[:end_in_after].strip() if end_in_after is not None else after.strip()
-            if extracted != value:
-                continue
-            segments.append((idx, segment_end))
-            break
+    for i, (pos, label, _) in enumerate(positions):
+        label_end = pos + len(label)
+        next_start = positions[i + 1][0] if i + 1 < len(positions) else len(raw)
+        segments.append((pos, next_start))
     segments.sort(key=lambda x: x[0])
     merged: list[tuple[int, int]] = []
     for s, e in segments:
@@ -119,5 +101,5 @@ def get_rest_context(raw: str, keys: dict[str, str]) -> str:
     if prev < len(raw):
         parts.append(raw[prev:])
     rest = " ".join(p.strip() for p in parts if p.strip()).strip()
-    rest = strip_leading_dots_and_name(rest, keys.get("name") or "")
+    rest = strip_leading_dots_and_name(rest, name)
     return rest
