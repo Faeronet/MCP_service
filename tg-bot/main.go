@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/telegram-ai-assistant/root/bot-service/modules"
+	"github.com/telegram-ai-assistant/root/tg-bot/modules"
 	"github.com/telegram-ai-assistant/root/pkg/config"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 	"github.com/telegram-ai-assistant/root/pkg/ratelimit"
@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var log = logging.New("bot-service")
+var log = logging.New("tg-bot")
 
 func main() {
 	ctx := context.Background()

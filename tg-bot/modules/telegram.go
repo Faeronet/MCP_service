@@ -9,7 +9,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-var logTG = logging.New("bot-service.telegram")
+var logTG = logging.New("tg-bot.telegram")
 
 const maxTelegramMessageLen = 4000
 

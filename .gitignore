@@ -18,7 +18,7 @@ coverage/
 
 # Сбилженные бинарники сервисов (Go и др.)
 admin-backend/admin-backend
-bot-service/bot-service
+tg-bot/tg-bot
 mcp-proxy/mcp-proxy
 mcp-read/mcp-read
 mcp-write/mcp-write

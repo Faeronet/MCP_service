@@ -5,7 +5,7 @@
 ## Стек
 
 - **Инфраструктура:** MinIO, Postgres, RabbitMQ, Redis, Qdrant, Loki, Promtail, Grafana, vLLM (OpenAI-compatible).
-- **Сервисы:** admin-backend (Go), admin-web-ui (React/TS), bot-service (Go), mcp-read (Go), mcp-write (Python), ingestion-worker (Python), attachment-worker (Python), log-indexer (Go).
+- **Сервисы:** admin-backend (Go), admin-web-ui (React/TS), tg-bot (Go), mcp-read (Go), mcp-write (Python), ingestion-worker (Python), attachment-worker (Python), log-indexer (Go).
 
 ## Быстрый старт
 
@@ -27,7 +27,7 @@ docker compose up -d
 # 2) На хосте (обход Error 803): см. раздел «Вариант: vLLM на хосте» ниже; в .env задайте VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1
 docker compose up -d
 ```
-**Важно:** без работающего vLLM (в контейнере с `--profile vllm` или на хосте с указанным `VLLM_OPENAI_BASE`) bot-service и mcp-read/mcp-write не смогут вызывать LLM. При 803 в Docker запустите vLLM на хосте и укажите URL в `.env`.
+**Важно:** без работающего vLLM (в контейнере с `--profile vllm` или на хосте с указанным `VLLM_OPENAI_BASE`) tg-bot и mcp-read/mcp-write не смогут вызывать LLM. При 803 в Docker запустите vLLM на хосте и укажите URL в `.env`.
 
 Одна команда поднятия всей инфраструктуры и приложений:
 
@@ -85,7 +85,7 @@ docker compose --profile vllm down
 ```
 Без `--profile vllm` при `up` сервис vllm не стартует, при `down` — не останавливается. Если контейнер vLLM остаётся после `down` — возможно, он был запущен вручную или из другой папки; выполните `docker ps`, найдите контейнер (например `...-vllm-1`) и остановите: `docker stop <container>` или из каталога проекта `docker compose --profile vllm down`. В `.env` не переопределяйте `VLLM_OPENAI_BASE` (должно остаться `http://vllm:8000/v1`). Если vLLM не принимает модель `default`, задайте в `.env` имя загруженной модели, например: `LLM_MODEL=Qwen/Qwen3-0.6B` или как в `VLLM_MODEL_NAME`.
 
-**vLLM на хосте (не в Docker):** в `.env` задайте `VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1` (на Linux без host.docker.internal — IP хоста), затем `docker compose up -d bot-service mcp-read`.
+**vLLM на хосте (не в Docker):** в `.env` задайте `VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1` (на Linux без host.docker.internal — IP хоста), затем `docker compose up -d tg-bot mcp-read`.
 
 ## Устранение неполадок
 
@@ -180,7 +180,7 @@ sudo systemctl restart docker
    ```
    На Linux без `host.docker.internal` используйте IP интерфейса хоста (например `192.168.x.x`) или добавьте в `docker-compose.yml` для сервисов, которым нужен vLLM: `extra_hosts: - "host.docker.internal:host-gateway"`.
 
-4. Остальные сервисы (bot-service, mcp-write и т.д.) будут обращаться к vLLM по этому URL.
+4. Остальные сервисы (tg-bot, mcp-write и т.д.) будут обращаться к vLLM по этому URL.
 
 ## Эмбеддинг, реранк, OCR, ASR и Qdrant
 
@@ -219,7 +219,7 @@ MINIO_SERVER_URL=http://IP_СЕРВЕРА:9001
 ├── config/                 # loki.yaml, promtail.yml, grafana/provisioning
 ├── admin-backend/          # Go: upload, docs, jobs, logs, grafana proxy, JWT
 ├── admin-web-ui/          # React/TS (Vite): Docs, Jobs, Logs, Grafana (iframe)
-├── bot-service/           # Go: Telegram polling, worker pool, mcp-read, LLM, rate limit
+├── tg-bot/           # Go: Telegram polling, worker pool, mcp-read, LLM, rate limit
 ├── mcp-read/               # Go: build_context (embed → qdrant → rerank → context), cache
 ├── mcp-write/              # Python: ingest_document (chunk/embed/upsert), deterministic IDs
 ├── ingestion-worker/      # Python: consumer ingestion_jobs → mcp-write
@@ -248,7 +248,7 @@ MINIO_SERVER_URL=http://IP_СЕРВЕРА:9001
 ```bash
 # Health
 curl http://localhost:8080/healthz   # admin-backend
-curl http://localhost:8081/healthz   # bot-service
+curl http://localhost:8081/healthz   # tg-bot
 curl http://localhost:8082/healthz   # mcp-read
 curl http://localhost:8001/healthz  # mcp-write
 
@@ -387,7 +387,7 @@ psql "$POSTGRES_DSN" -c "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM chat.messages 
 |---------------|-------|
 | admin-backend | 8080  |
 | admin-web-ui  | 5173  |
-| bot-service   | 8081  |
+| tg-bot   | 8081  |
 | mcp-read      | 8082  |
 | mcp-write     | 8001  |
 | postgres      | 5432  |

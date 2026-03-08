@@ -19,7 +19,7 @@ const chatAlreadyStartedMessage = "Чат уже запущен."
 const chatResetMessage = "Чат сброшен. Отправьте /start для начала."
 const previewLen = 350
 
-var logHandler = logging.New("bot-service.handler")
+var logHandler = logging.New("tg-bot.handler")
 
 func isStartCommand(text string) bool {
 	t := strings.ToLower(strings.TrimSpace(text))

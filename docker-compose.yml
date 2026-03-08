@@ -310,10 +310,10 @@ services:
     depends_on:
       - admin-backend
 
-  bot-service:
+  tg-bot:
     build:
       context: .
-      dockerfile: bot-service/Dockerfile
+      dockerfile: tg-bot/Dockerfile
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       BOT_DEBUG: ${BOT_DEBUG:-0}
