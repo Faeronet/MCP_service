@@ -38,6 +38,7 @@ INGESTION_SYSTEM: str = "A" if _ingestion_sys == "A" else "B"
 SYSTEM_B_LABELS: list[tuple[str, str | list[str] | None]] = [
     ("name", None),
     ("obitanie", "Обитание:"),
+    # Спецификация и Специфичность — одно и то же, пишем всегда как specificnost
     ("specificnost", ["Специфичность:", "Спецификация:"]),
     ("znak_zodiaka", "Знак зодиака:"),
     ("kachestva_energii", "Качества энергии ангела:"),
