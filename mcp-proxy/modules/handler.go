@@ -12,6 +12,34 @@ import (
 
 var logHandler = logging.New("mcp-proxy")
 
+// dedupeAndAppendNames: из alreadyList (имена по строкам) и llmReply (ответ LLM) возвращает "\n" + только новые уникальные имена из llmReply (без повторов и без тех, что уже в alreadyList).
+func dedupeAndAppendNames(alreadyList, llmReply string) string {
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(alreadyList, "\n") {
+		n := strings.TrimSpace(line)
+		if n != "" {
+			seen[strings.ToLower(n)] = struct{}{}
+		}
+	}
+	var added []string
+	for _, line := range strings.Split(llmReply, "\n") {
+		n := strings.TrimSpace(line)
+		if n == "" {
+			continue
+		}
+		key := strings.ToLower(n)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		added = append(added, n)
+	}
+	if len(added) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(added, "\n")
+}
+
 // HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
 func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -156,10 +184,10 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 					}
 					listStr := bld.String()
 					sys := s.PromptB + "\n\nТы дополняешь список имён ангелов-хранителей. Отвечай только именами, в том же стиле, без пояснений."
-					userPrompt := "Я пока знаю только эти имена ангелов-хранителей:\n" + listStr + "\n\nДополни этот список в том же стиле: только имена, без пояснений."
+					userPrompt := "Я пока знаю только эти имена ангелов-хранителей:\n" + listStr + "\n\nДополни этот список в том же стиле: только имена, без пояснений. Не повторяй уже перечисленные имена."
 					llmReply, errLLM := s.CallLLM(ctx, requestID, sys, userPrompt)
 					if errLLM == nil {
-						reply = listStr + "\n" + strings.TrimSpace(StripThink(llmReply))
+						reply = listStr + dedupeAndAppendNames(listStr, StripThink(llmReply))
 						nameAllHandled = true
 					}
 				}
