@@ -31,8 +31,9 @@ LLM_MODEL = (os.getenv("LLM_MODEL") or "Qwen/Qwen3-0.6B").strip()
 USE_LLM_CHUNKING = os.getenv("USE_LLM_CHUNKING", "").lower() in ("1", "true", "yes")
 USE_LLM_RERANK_QUERY = os.getenv("USE_LLM_RERANK_QUERY", "").lower() in ("1", "true", "yes")
 
-_ingestion_sys = (os.getenv("INGESTION_SYSTEM") or "A").strip().upper()
-INGESTION_SYSTEM: str = "B" if _ingestion_sys == "B" else "A"
+# По умолчанию B: контекст распределяется по коллекциям (chunks, obitanie, znak_zodiaka, specificnost и др.). A = всё в одну коллекцию chunks.
+_ingestion_sys = (os.getenv("INGESTION_SYSTEM") or "B").strip().upper()
+INGESTION_SYSTEM: str = "A" if _ingestion_sys == "A" else "B"
 
 SYSTEM_B_LABELS: list[tuple[str, str | list[str] | None]] = [
     ("name", None),

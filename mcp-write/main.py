@@ -40,6 +40,23 @@ async def lifespan(app: FastAPI):
     except UnexpectedResponse as e:
         if e.status_code != 409:
             raise
+    if config.INGESTION_SYSTEM == "B":
+        for coll in (
+            config.COLLECTION_OBITANIE,
+            config.COLLECTION_ZNAK_ZODIAKA,
+            config.COLLECTION_SPECIFICNOST,
+            config.COLLECTION_KACHESTVA_ENERGII,
+            config.COLLECTION_ISKAZHENIYA,
+            config.COLLECTION_OTHER,
+        ):
+            try:
+                state.qdrant.create_collection(
+                    coll,
+                    vectors_config=VectorParams(size=config.VECTOR_SIZE, distance=Distance.COSINE),
+                )
+            except UnexpectedResponse as e:
+                if e.status_code != 409:
+                    raise
     yield
     state.qdrant.close()
 
