@@ -116,6 +116,27 @@ func (s *Server) GetFullContextByChunkIDs(ctx context.Context, chunkIDs []string
 	return strings.Join(parts, "\n\n"), true
 }
 
+// GetAngelNamesList возвращает отсортированный список имён из core.angel_names (для формата «name all»: список + дополнение от LLM).
+func (s *Server) GetAngelNamesList(ctx context.Context) ([]string, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT name FROM core.angel_names WHERE trim(name) != '' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			continue
+		}
+		n = strings.TrimSpace(n)
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, nil
+}
+
 // GetAngelNamesFromPostgres returns context: количество имён (цифрой), затем все имена ангелов из core.angel_names + document_context (для «name all»).
 func (s *Server) GetAngelNamesFromPostgres(ctx context.Context) (string, error) {
 	rows, err := s.Pool.Query(ctx, `

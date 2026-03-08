@@ -50,6 +50,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var contextText string
 	var savedContextRef string
 	var debugMessage string
+	var reply string
+	var replyErr error
+	var nameAllHandled bool
 
 	if req.ReplyToTelegramMessageID != 0 {
 		if userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID); ok && (userQ != "" || botA != "" || ctxStored != "") {
@@ -89,6 +92,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				strings.Contains(lowerMsg, "ангел вс") || strings.Contains(lowerMsg, "ангелов вс") ||
 				strings.Contains(lowerMsg, "перечисли всех") || strings.Contains(lowerMsg, "список всех") {
 				searchQuery = "[name] all"
+			} else if strings.Contains(lowerMsg, "сколько имен") || strings.Contains(lowerMsg, "количество имен") ||
+				strings.Contains(lowerMsg, "число имен") || strings.Contains(lowerMsg, "сколько ангел") || strings.Contains(lowerMsg, "количество ангел") {
+				searchQuery = "name number"
 			} else if strings.Contains(lowerMsg, "дат") {
 				searchQuery = "[date] list"
 			}
@@ -116,16 +122,46 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 			contextText = ""
 		} else {
 			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
-			if IsNameAllQuery(normalizedQuery) || normalizedQuery == "[name] all" {
-				// Ответ промпта A = «name all»: контекст из Postgres (core.angel_names), с количеством имён; в промпт B уходит вопрос пользователя.
+			nq := strings.ReplaceAll(strings.ReplaceAll(normalizedQuery, "[", ""), "]", "")
+			nq = strings.TrimSpace(nq)
+			if IsNameNumberQuery(nq) {
+				// name number: тот же контекст, что при name all — в LLM уходит полный контекст из Postgres + вопрос пользователя.
 				if s.DebugMode == 1 {
-					debugMessage = "🔍 Список имён из Postgres (core.angel_names)"
+					debugMessage = "🔍 Список имён из Postgres (name number)"
 				}
 				var errNames error
 				contextText, errNames = s.GetAngelNamesFromPostgres(ctx)
 				if errNames != nil {
 					logHandler.Warn(ctx, "getAngelNamesFromPostgres failed", logging.KV{"error", errNames})
 					contextText = ""
+				}
+			} else if IsNameAllQuery(nq) || normalizedQuery == "[name] all" {
+				// name all: берём имена списком, просим LLM дополнить в стиле «я пока знаю только эти имена», склеиваем список + ответ LLM.
+				if s.DebugMode == 1 {
+					debugMessage = "🔍 Список имён + дополнение LLM (name all)"
+				}
+				names, errList := s.GetAngelNamesList(ctx)
+				if errList != nil {
+					contextText = ""
+				} else if len(names) == 0 {
+					reply = "В базе пока нет имён ангелов-хранителей."
+					nameAllHandled = true
+				} else {
+					var bld strings.Builder
+					for i, n := range names {
+						if i > 0 {
+							bld.WriteString("\n")
+						}
+						bld.WriteString(n)
+					}
+					listStr := bld.String()
+					sys := s.PromptB + "\n\nТы дополняешь список имён ангелов-хранителей. Отвечай только именами, в том же стиле, без пояснений."
+					userPrompt := "Я пока знаю только эти имена ангелов-хранителей:\n" + listStr + "\n\nДополни этот список в том же стиле: только имена, без пояснений."
+					llmReply, errLLM := s.CallLLM(ctx, requestID, sys, userPrompt)
+					if errLLM == nil {
+						reply = listStr + "\n" + strings.TrimSpace(StripThink(llmReply))
+						nameAllHandled = true
+					}
 				}
 			} else if normalizedQuery == "[date] list" {
 				contextText = ""
@@ -180,15 +216,17 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	systemContent := s.PromptB + "\n" + contextText
-	reply, err := s.CallLLM(ctx, requestID, systemContent, req.MessageText)
-	if s.DebugMode == 0 {
-		reply = StripThink(reply)
+	if !nameAllHandled {
+		systemContent := s.PromptB + "\n" + contextText
+		reply, replyErr = s.CallLLM(ctx, requestID, systemContent, req.MessageText)
+		if s.DebugMode == 0 {
+			reply = StripThink(reply)
+		}
 	}
-	if err != nil {
-		logHandler.Error(ctx, "llm call", logging.KV{"error", err})
+	if replyErr != nil {
+		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr})
 		hint := "Модель недоступна. Проверьте, что vLLM запущен и в .env указан VLLM_OPENAI_BASE."
-		if errStr := err.Error(); len(errStr) < 120 {
+		if errStr := replyErr.Error(); len(errStr) < 120 {
 			hint = "Ошибка LLM: " + errStr
 		}
 		w.Header().Set("Content-Type", "application/json")

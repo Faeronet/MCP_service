@@ -155,6 +155,18 @@ func IsOnlyDay(s string) bool {
 
 // IsNameAllQuery возвращает true, если ответ промпта A означает «выдать все имена» (name all, [name] all, names all и т.п.).
 func IsNameAllQuery(s string) bool {
+	t := normalizeNameQuery(s)
+	return t == "name all" || t == "names all"
+}
+
+// IsNameNumberQuery возвращает true, если ответ промпта A означает «количество имён» (name number, names number и т.п.) — тогда в LLM отправляем тот же контекст, что и при name all.
+func IsNameNumberQuery(s string) bool {
+	t := normalizeNameQuery(s)
+	return t == "name number" || t == "names number" || t == "number of names" || t == "name count" || t == "names count" ||
+		strings.Contains(t, "количество имен") || strings.Contains(t, "сколько имен") || strings.Contains(t, "число имен")
+}
+
+func normalizeNameQuery(s string) string {
 	t := strings.ToLower(strings.TrimSpace(s))
 	t = strings.ReplaceAll(t, "[", "")
 	t = strings.ReplaceAll(t, "]", "")
@@ -162,7 +174,7 @@ func IsNameAllQuery(s string) bool {
 	for strings.Contains(t, "  ") {
 		t = strings.ReplaceAll(t, "  ", " ")
 	}
-	return t == "name all" || t == "names all"
+	return t
 }
 
 func IsMetaQuestionAboutBot(s string) bool {
