@@ -189,49 +189,55 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
 	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 
-	if botA != "" {
+	// Поток «по списку» только если сообщение похоже на вопрос по номеру (опиши третьего, про 3 и т.д.).
+	// Иначе запросы вроде «ангел 24 марта» обрабатываем обычным поиском.
+	if botA != "" && looksLikeListQuestion {
 		namesFromList := parseNumberedList(botA)
-		// Ответ по контексту списка (name all): промпт C → номер(а) → контекст из Postgres → промпт B
 		if len(namesFromList) >= 3 {
-				systemC := s.PromptC + "\n\nСписок:\n" + botA
-				replyC, errC := s.CallLLM(ctx, requestID, systemC, req.MessageText)
-				if errC == nil {
-					replyC = strings.TrimSpace(StripThink(replyC))
-					numbers := parseNumbersFromReply(replyC)
-					if numbers != nil && len(numbers) > 1 && containsZero(numbers) {
-						reply = "Один или несколько из указанных номеров не существуют в списке. Проверьте номера и попробуйте снова."
-						nameAllHandled = true
-					} else if numbers == nil {
-						// Число 0 или пусто — симулируем ответ ИИ
-						reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
-						nameAllHandled = true
-					} else {
-						var fullContextParts []string
-						for _, num := range numbers {
-							if num == 0 || num < 1 || num > len(namesFromList) {
-								continue
-							}
-							name := namesFromList[num-1]
-							if ctxPart, ok := s.GetFullContextByAngelName(ctx, name); ok && ctxPart != "" {
-								fullContextParts = append(fullContextParts, ctxPart)
-							}
+			systemC := s.PromptC + "\n\nСписок:\n" + botA
+			replyC, errC := s.CallLLM(ctx, requestID, systemC, req.MessageText)
+			if errC != nil {
+				reply = "Не удалось определить номер по списку. Попробуйте снова или задайте вопрос иначе."
+				nameAllHandled = true
+			} else {
+				replyC = strings.TrimSpace(StripThink(replyC))
+				numbers := parseNumbersFromReply(replyC)
+				if numbers != nil && len(numbers) > 1 && containsZero(numbers) {
+					reply = "Один или несколько из указанных номеров не существуют в списке. Проверьте номера и попробуйте снова."
+					nameAllHandled = true
+				} else if numbers == nil {
+					reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
+					nameAllHandled = true
+				} else {
+					var fullContextParts []string
+					for _, num := range numbers {
+						if num == 0 || num < 1 || num > len(namesFromList) {
+							continue
 						}
-						if len(fullContextParts) > 0 {
-							combinedContext := strings.Join(fullContextParts, "\n\n")
-							systemB := s.PromptB + "\n\nСписок (для ориентира):\n" + botA + "\n\nКонтекст:\n" + combinedContext
-							reply, replyErr = s.CallLLM(ctx, requestID, systemB, req.MessageText)
-							if replyErr == nil {
-								reply = StripThink(reply)
-								nameAllHandled = true
-							}
+						name := namesFromList[num-1]
+						if ctxPart, ok := s.GetFullContextByAngelName(ctx, name); ok && ctxPart != "" {
+							fullContextParts = append(fullContextParts, ctxPart)
+						}
+					}
+					if len(fullContextParts) > 0 {
+						combinedContext := strings.Join(fullContextParts, "\n\n")
+						systemB := s.PromptB + "\n\nСписок (для ориентира):\n" + botA + "\n\nКонтекст:\n" + combinedContext
+						reply, replyErr = s.CallLLM(ctx, requestID, systemB, req.MessageText)
+						if replyErr == nil {
+							reply = StripThink(reply)
+							nameAllHandled = true
 						} else {
-							reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
+							reply = "Ошибка при формировании ответа. Попробуйте позже."
 							nameAllHandled = true
 						}
+					} else {
+						reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
+						nameAllHandled = true
 					}
 				}
 			}
-			if !nameAllHandled && (userQ != "" || botA != "" || ctxStored != "") {
+		}
+	if !nameAllHandled && (userQ != "" || botA != "" || ctxStored != "") {
 				var bld strings.Builder
 				if userQ != "" {
 					bld.WriteString("Предыдущий вопрос: ")
