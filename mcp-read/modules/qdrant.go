@@ -140,10 +140,22 @@ func (c *QdrantClient) ExpandChunkIDsToFullContext(ctx context.Context, collecti
 	return strings.Join(parts, "\n\n")
 }
 
-// EnsureFullTextIndex создаёт payload-индекс типа "text" с токенизатором "multilingual" для поля content.
+// fullTextSearchFields по коллекции: в каких полях payload искать (System B).
+// Для chunks — content; для остальных — те поля, что реально есть в payload.
+var fullTextSearchFields = map[string][]string{
+	CollectionChunks:             {"content"},
+	CollectionObitanie:           {"obitanie", "names_text"},
+	CollectionZnakZodiaka:        {"znak_zodiaka", "names_text"},
+	CollectionSpecificnost:      {"specificnost", "name"},
+	CollectionKachestvaEnergii:  {"kachestva_energii", "name"},
+	CollectionIskazheniyaEnergii: {"iskazheniya_energii", "name"},
+	CollectionOther:              {"context", "name"},
+}
+
+// EnsureFullTextIndex создаёт payload-индекс типа "text" с токенизатором "multilingual" для поля.
 // Multilingual даёт лемматизацию (яблоко ↔ яблоки и т.п.). Идемпотентно.
-func (c *QdrantClient) EnsureFullTextIndex(ctx context.Context, collectionName string) {
-	body := []byte(`{"field_name":"content","field_schema":{"type":"text","tokenizer":"multilingual","min_token_len":1,"max_token_len":50,"lowercase":true}}`)
+func (c *QdrantClient) EnsureFullTextIndex(ctx context.Context, collectionName, fieldName string) {
+	body := []byte(`{"field_name":"` + fieldName + `","field_schema":{"type":"text","tokenizer":"multilingual","min_token_len":1,"max_token_len":50,"lowercase":true}}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.QdrantURL+"/collections/"+collectionName+"/index", bytes.NewReader(body))
 	if err != nil {
 		return
@@ -157,19 +169,36 @@ func (c *QdrantClient) EnsureFullTextIndex(ctx context.Context, collectionName s
 	// 200 = создан, 409 = уже есть — оба ок
 }
 
-// ScrollWithFullTextFilter возвращает чанки по полнотекстовому совпадению по полю content.
+// ScrollWithFullTextFilter возвращает чанки по полнотекстовому совпадению.
+// Поля для поиска берутся из fullTextSearchFields по имени коллекции (content только для chunks).
 func (c *QdrantClient) ScrollWithFullTextFilter(ctx context.Context, collectionName, queryText string, limit uint32) ([]ChunkInfo, error) {
 	queryText = strings.TrimSpace(queryText)
 	if queryText == "" {
 		return nil, nil
 	}
-	c.EnsureFullTextIndex(ctx, collectionName)
+	fields := fullTextSearchFields[collectionName]
+	if len(fields) == 0 {
+		fields = []string{"content"}
+	}
+	for _, f := range fields {
+		c.EnsureFullTextIndex(ctx, collectionName, f)
+	}
+	var filterMust interface{}
+	if len(fields) == 1 {
+		filterMust = []map[string]interface{}{
+			{"key": fields[0], "match": map[string]interface{}{"text": queryText}},
+		}
+	} else {
+		should := make([]map[string]interface{}, 0, len(fields))
+		for _, f := range fields {
+			should = append(should, map[string]interface{}{"key": f, "match": map[string]interface{}{"text": queryText}})
+		}
+		filterMust = []map[string]interface{}{{"should": should}}
+	}
 	withPayload := true
 	body := QdrantScrollReq{
 		Filter: map[string]interface{}{
-			"must": []map[string]interface{}{
-				{"key": "content", "match": map[string]interface{}{"text": queryText}},
-			},
+			"must": filterMust,
 		},
 		Limit:       &limit,
 		WithPayload: &withPayload,
