@@ -34,18 +34,26 @@ func parseNumberedList(text string) []string {
 	return names
 }
 
-// extractListAndQuestionFromUserMessage если в сообщении есть нумерованный список (>=3) и вопрос типа «про третьего» — возвращает (список как текст, true).
-// Граница списка: до первого вхождения «расскажи», «про третьего», «про N» и т.п., чтобы в список не попал текст вопроса.
+// extractListAndQuestionFromUserMessage если в сообщении есть нумерованный список (>=3) и вопрос — возвращает (список как текст, true).
+// Граница списка: до первого вхождения «расскажи», «опиши», «про третьего» и т.п.
 func extractListAndQuestionFromUserMessage(msg string) (listText string, ok bool) {
 	msg = strings.TrimSpace(msg)
 	if msg == "" {
 		return "", false
 	}
 	lower := strings.ToLower(msg)
-	// Где начинается вопрос (обрезаем список)
 	questionStart := -1
 	for _, sep := range []string{" расскажи ", " опиши ", " опиши третьего", " опиши 3 ", " про третьего", " про 3 ", " про 4 ", " про 5 ", " про 6 ", " про 7 ", " про 2 ", " про 1 ", " про второго", " про первого", " номер ", " кто такой ", " что за "} {
 		if i := strings.Index(lower, sep); i >= 0 && (questionStart < 0 || i < questionStart) {
+			questionStart = i
+		}
+	}
+	// Если разделитель не найден, режем по первому вхождению «опиши» или «расскажи»
+	if questionStart < 0 {
+		if i := strings.Index(lower, "опиши"); i >= 0 {
+			questionStart = i
+		}
+		if i := strings.Index(lower, "расскажи"); i >= 0 && (questionStart < 0 || i < questionStart) {
 			questionStart = i
 		}
 	}
@@ -144,17 +152,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.LlmLimiter.Release()
 
-	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
-	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
-
-	var contextText string
-	var savedContextRef string
-	var debugMessage string
-	var reply string
-	var replyErr error
-	var nameAllHandled bool
-
-	// Контекст списка name all: по reply_to, по последнему сообщению-списку в сессии или по списку внутри сообщения пользователя
+	// Сначала определяем список для «вопроса по списку» — до добавления текущего user-сообщения в БД,
+	// иначе последнее сообщение ассистента может быть не тем (или сессия в тесте без истории).
 	var botA string
 	var userQ, ctxStored string
 	if req.ReplyToTelegramMessageID != 0 {
@@ -164,13 +163,21 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if botA == "" {
-		// Без reply: последнее сообщение ассистента — нумерованный список (>=3 пунктов)
 		botA, _ = s.GetLastAssistantNumberedList(ctx, req.SessionID, parseNumberedList)
 	}
 	if botA == "" {
-		// Список может быть в самом сообщении: «1. А 2. Б 3. В расскажи про третьего»
 		botA, _ = extractListAndQuestionFromUserMessage(req.MessageText)
 	}
+
+	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
+	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
+
+	var contextText string
+	var savedContextRef string
+	var debugMessage string
+	var reply string
+	var replyErr error
+	var nameAllHandled bool
 	if botA != "" {
 		namesFromList := parseNumberedList(botA)
 		// Ответ по контексту списка (name all): промпт C → номер(а) → контекст из Postgres → промпт B
