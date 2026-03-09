@@ -72,41 +72,6 @@ func containsZero(nums []int) bool {
 	return false
 }
 
-// splitSearchQueryParts разбивает ответ промпта A вида "ключ1 + ключ2 + ключ3" на части для раздельного поиска в Qdrant.
-// Если разделителя " + " нет, возвращает nil (поиск одним запросом).
-func splitSearchQueryParts(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, " + ")
-	var out []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	if len(out) <= 1 {
-		return nil
-	}
-	return out
-}
-
-// dedupeStrings возвращает слайс без дубликатов, порядок первого вхождения сохраняется.
-func dedupeStrings(a []string) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	for _, s := range a {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
-}
-
 // HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
 func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -308,44 +273,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				var buildQueryForFilter string
 				var buildContextKind string
 				var buildContextRef string
-
-				parts := splitSearchQueryParts(searchQuery)
-				if len(parts) > 1 {
-					// Промпт A вернул "ключ1 + ключ2 + ..." — ищем по каждому ключу в Qdrant, объединяем контекст и отдаём в промпт B
-					var allContexts []string
-					var allChunkIDs []string
-					var allSearched []string
-					allOk := true
-					for _, part := range parts {
-						ct, cids, col, searched, qFilter, kind, ref, partErr := s.BuildContext(ctx, requestID, part, attachmentsText, 4000, "default")
-						if partErr != nil {
-							allOk = false
-							break
-						}
-						allContexts = append(allContexts, ct)
-						allChunkIDs = append(allChunkIDs, cids...)
-						allSearched = append(allSearched, searched...)
-						if buildCollection == "" && col != "" {
-							buildCollection = col
-							buildContextRef = ref
-							buildContextKind = kind
-						}
-						if buildQueryForFilter == "" && qFilter != "" {
-							buildQueryForFilter = qFilter
-						}
-					}
-					if allOk && len(allContexts) == len(parts) {
-						contextText = strings.Join(allContexts, "\n\n")
-						buildChunkIDs = dedupeStrings(allChunkIDs)
-						buildCollectionsSearched = dedupeStrings(allSearched)
-					} else {
-						// не все части нашли контекст — fallback на один общий запрос
-						contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
-					}
-				} else {
-					contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
-				}
-
+				contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 				if err != nil {
 					if err.Error() == "chunk_not_found" {
 						contextText = "По подходящим данным в базе ничего не найдено."
