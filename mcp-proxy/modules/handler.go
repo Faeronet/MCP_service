@@ -114,11 +114,26 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var replyErr error
 	var nameAllHandled bool
 
+	// Контекст списка name all: ответ на список или следующий вопрос после списка (последнее сообщение ассистента — нумерованный список)
+	var botA string
+	var userQ, ctxStored string
 	if req.ReplyToTelegramMessageID != 0 {
-		if userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID); ok && botA != "" {
-			namesFromList := parseNumberedList(botA)
-			// Ответ по контексту списка (name all): промпт C → номер(а) → контекст из Postgres → промпт B
-			if len(namesFromList) >= 3 {
+		userQ, botA, ctxStored, _ = s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
+		if botA == "" {
+			if lastMsg, lastOk := s.GetLastAssistantMessage(ctx, req.SessionID); lastOk && lastMsg != "" {
+				botA = lastMsg
+			}
+		}
+	} else {
+		// Пользователь не нажал «Ответить», но последнее сообщение в сессии — список имён → считаем вопрос по контексту списка
+		if lastMsg, lastOk := s.GetLastAssistantMessage(ctx, req.SessionID); lastOk && lastMsg != "" && len(parseNumberedList(lastMsg)) >= 3 {
+			botA = lastMsg
+		}
+	}
+	if botA != "" {
+		namesFromList := parseNumberedList(botA)
+		// Ответ по контексту списка (name all): промпт C → номер(а) → контекст из Postgres → промпт B
+		if len(namesFromList) >= 3 {
 				systemC := s.PromptC + "\n\nСписок:\n" + botA
 				replyC, errC := s.CallLLM(ctx, requestID, systemC, req.MessageText)
 				if errC == nil {
@@ -176,7 +191,6 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				contextText = bld.String()
 				logHandler.Info(ctx, "using reply-to context", logging.KV{"chat_id", req.ChatID})
 			}
-		}
 	}
 
 	if contextText == "" {

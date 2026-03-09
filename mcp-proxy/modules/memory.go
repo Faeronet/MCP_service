@@ -82,6 +82,19 @@ func (s *Server) GetReplyToContext(ctx context.Context, sessionID uuid.UUID, rep
 	return userQuestion, botContent, contextText, true
 }
 
+// GetLastAssistantMessage returns the content of the most recent assistant message in the session (для fallback при ответе по списку name all).
+func (s *Server) GetLastAssistantMessage(ctx context.Context, sessionID uuid.UUID) (content string, ok bool) {
+	err := s.Pool.QueryRow(ctx, `
+		SELECT content FROM chat.messages
+		WHERE session_id = $1 AND role = 'assistant' AND content IS NOT NULL AND content != ''
+		ORDER BY created_at DESC LIMIT 1
+	`, sessionID).Scan(&content)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(content), true
+}
+
 // GetAttachmentsText returns concatenated extracted_text from session attachments.
 func (s *Server) GetAttachmentsText(ctx context.Context, sessionID uuid.UUID) string {
 	rows, err := s.Pool.Query(ctx,
