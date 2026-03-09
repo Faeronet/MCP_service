@@ -95,6 +95,34 @@ func (s *Server) GetLastAssistantMessage(ctx context.Context, sessionID uuid.UUI
 	return strings.TrimSpace(content), true
 }
 
+// GetLastAssistantNumberedList returns the content of the most recent assistant message that parses as a numbered list (>= 3 items).
+// Используется, когда последнее сообщение ассистента могло быть не списком (например, отладочное или «не найдено»).
+func (s *Server) GetLastAssistantNumberedList(ctx context.Context, sessionID uuid.UUID, parseList func(string) []string) (content string, ok bool) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT content FROM chat.messages
+		WHERE session_id = $1 AND role = 'assistant' AND content IS NOT NULL AND content != ''
+		ORDER BY created_at DESC LIMIT 10
+	`, sessionID)
+	if err != nil {
+		return "", false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c string
+		if rows.Scan(&c) != nil {
+			continue
+		}
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if len(parseList(c)) >= 3 {
+			return c, true
+		}
+	}
+	return "", false
+}
+
 // GetAttachmentsText returns concatenated extracted_text from session attachments.
 func (s *Server) GetAttachmentsText(ctx context.Context, sessionID uuid.UUID) string {
 	rows, err := s.Pool.Query(ctx,

@@ -15,10 +15,14 @@ import (
 var logHandler = logging.New("mcp-proxy")
 
 // parseNumberedList разбирает текст вида "1. Имя\n2. Имя\n..." в слайс имён (индекс 0 = номер 1).
+// Поддерживает и строки без переносов: "1. А 2. Б 3. В" (нормализует через \n перед номером).
 func parseNumberedList(text string) []string {
+	text = strings.TrimSpace(text)
+	// Нормализуем "N. " в начале строки для разбора без переносов
+	norm := regexp.MustCompile(`\s+(\d+[.)]\s*)`).ReplaceAllString(text, "\n$1")
 	var names []string
-	re := regexp.MustCompile(`(?m)^\s*\d+[.)]\s*(.+)$`)
-	for _, m := range re.FindAllStringSubmatch(strings.TrimSpace(text), -1) {
+	re := regexp.MustCompile(`(?m)^\s*\d+[.)]\s*(.+?)(?=\s*\d+[.)]|$)`)
+	for _, m := range re.FindAllStringSubmatch(norm, -1) {
 		if len(m) >= 2 {
 			n := strings.TrimSpace(m[1])
 			if n != "" {
@@ -27,6 +31,41 @@ func parseNumberedList(text string) []string {
 		}
 	}
 	return names
+}
+
+// extractListAndQuestionFromUserMessage если в сообщении есть нумерованный список (>=3) и вопрос типа «про третьего» — возвращает (список как текст, true).
+// Граница списка: до первого вхождения «расскажи», «про третьего», «про N» и т.п., чтобы в список не попал текст вопроса.
+func extractListAndQuestionFromUserMessage(msg string) (listText string, ok bool) {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return "", false
+	}
+	lower := strings.ToLower(msg)
+	// Где начинается вопрос (обрезаем список)
+	questionStart := -1
+	for _, sep := range []string{" расскажи ", " про третьего", " про 3 ", " про 4 ", " про 5 ", " про 6 ", " про 7 ", " про 2 ", " про 1 ", " про второго", " про первого", " номер "} {
+		if i := strings.Index(lower, sep); i >= 0 && (questionStart < 0 || i < questionStart) {
+			questionStart = i
+		}
+	}
+	listPart := msg
+	if questionStart > 0 {
+		listPart = strings.TrimSpace(msg[:questionStart])
+	}
+	names := parseNumberedList(listPart)
+	if len(names) < 3 {
+		return "", false
+	}
+	var b strings.Builder
+	for i, n := range names {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(strconv.Itoa(i + 1))
+		b.WriteString(". ")
+		b.WriteString(n)
+	}
+	return b.String(), true
 }
 
 // parseNumbersFromReply извлекает числа из ответа LLM (например "25" или "3, 5, 7" или "3 0 5"). Возвращает 1-based номера; если только 0 — возвращает nil. Ноль включается в результат, если есть и другие числа.
@@ -114,21 +153,22 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var replyErr error
 	var nameAllHandled bool
 
-	// Контекст списка name all: ответ на список или следующий вопрос после списка (последнее сообщение ассистента — нумерованный список)
+	// Контекст списка name all: по reply_to, по последнему сообщению-списку в сессии или по списку внутри сообщения пользователя
 	var botA string
 	var userQ, ctxStored string
 	if req.ReplyToTelegramMessageID != 0 {
 		userQ, botA, ctxStored, _ = s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
 		if botA == "" {
-			if lastMsg, lastOk := s.GetLastAssistantMessage(ctx, req.SessionID); lastOk && lastMsg != "" {
-				botA = lastMsg
-			}
+			botA, _ = s.GetLastAssistantNumberedList(ctx, req.SessionID, parseNumberedList)
 		}
-	} else {
-		// Пользователь не нажал «Ответить», но последнее сообщение в сессии — список имён → считаем вопрос по контексту списка
-		if lastMsg, lastOk := s.GetLastAssistantMessage(ctx, req.SessionID); lastOk && lastMsg != "" && len(parseNumberedList(lastMsg)) >= 3 {
-			botA = lastMsg
-		}
+	}
+	if botA == "" {
+		// Без reply: последнее сообщение ассистента — нумерованный список (>=3 пунктов)
+		botA, _ = s.GetLastAssistantNumberedList(ctx, req.SessionID, parseNumberedList)
+	}
+	if botA == "" {
+		// Список может быть в самом сообщении: «1. А 2. Б 3. В расскажи про третьего»
+		botA, _ = extractListAndQuestionFromUserMessage(req.MessageText)
 	}
 	if botA != "" {
 		namesFromList := parseNumberedList(botA)
