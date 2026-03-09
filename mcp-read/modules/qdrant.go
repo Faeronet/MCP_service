@@ -140,9 +140,10 @@ func (c *QdrantClient) ExpandChunkIDsToFullContext(ctx context.Context, collecti
 	return strings.Join(parts, "\n\n")
 }
 
-// EnsureFullTextIndex создаёт payload-индекс типа "text" для поля content (полнотекстовый поиск). Идемпотентно.
+// EnsureFullTextIndex создаёт payload-индекс типа "text" с токенизатором "multilingual" для поля content.
+// Multilingual даёт лемматизацию (яблоко ↔ яблоки и т.п.). Идемпотентно.
 func (c *QdrantClient) EnsureFullTextIndex(ctx context.Context, collectionName string) {
-	body := []byte(`{"field_name":"content","field_schema":"text"}`)
+	body := []byte(`{"field_name":"content","field_schema":{"type":"text","tokenizer":"multilingual","min_token_len":1,"max_token_len":50,"lowercase":true}}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.QdrantURL+"/collections/"+collectionName+"/index", bytes.NewReader(body))
 	if err != nil {
 		return
