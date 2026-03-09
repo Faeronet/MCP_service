@@ -1,4 +1,7 @@
-FROM python:3.12-slim
+# При таймауте к registry-1.docker.io соберите с зеркалом:
+#   docker build --build-arg PYTHON_BASE=ваш-зеркало/python:3.12-slim -f mcp-write/Dockerfile .
+ARG PYTHON_BASE=python:3.12-slim
+FROM ${PYTHON_BASE}
 WORKDIR /app
 RUN pip install --no-cache-dir uv
 COPY mcp-write/requirements.txt .
