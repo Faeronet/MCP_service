@@ -39,6 +39,7 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
         "doc_id": req.doc_id,
         "version_id": req.version_id,
         "section_path": "sec_0",
+        "content": main_normalized,
         **main_keys,
     }
     qdrant_ops.ensure_collection(config.COLLECTION)
@@ -62,7 +63,8 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
             payload_obitanie = {"chunk_id": obitanie_chunk_id, "obitanie": obitanie_val, "names": names, "doc_ids": doc_ids, "chunk_ids": chunk_ids_list}
         else:
             payload_obitanie = {"chunk_id": obitanie_chunk_id, "obitanie": obitanie_val, "names": [name] if name else [], "doc_ids": [req.doc_id], "chunk_ids": [main_chunk_id] if name else []}
-        text_for_vec = obitanie_val + " " + " ".join(payload_obitanie["names"])
+        payload_obitanie["names_text"] = " ".join(payload_obitanie["names"]) or ""
+        text_for_vec = obitanie_val + " " + payload_obitanie["names_text"]
         vec_obitanie = embed.embed_text(text_for_vec)
         if len(vec_obitanie) != config.VECTOR_SIZE:
             vec_obitanie = (vec_obitanie + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
@@ -86,7 +88,8 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
             payload_znak = {"chunk_id": znak_chunk_id, "znak_zodiaka": znak_val, "names": names, "doc_ids": doc_ids, "chunk_ids": chunk_ids_list}
         else:
             payload_znak = {"chunk_id": znak_chunk_id, "znak_zodiaka": znak_val, "names": [name] if name else [], "doc_ids": [req.doc_id], "chunk_ids": [main_chunk_id] if name else []}
-        text_for_vec = znak_val + " " + " ".join(payload_znak["names"])
+        payload_znak["names_text"] = " ".join(payload_znak["names"]) or ""
+        text_for_vec = znak_val + " " + payload_znak["names_text"]
         vec_znak = embed.embed_text(text_for_vec)
         if len(vec_znak) != config.VECTOR_SIZE:
             vec_znak = (vec_znak + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]

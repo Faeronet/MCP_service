@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from modules import config
 from modules import state
 from modules import handlers
+from modules import qdrant_ops
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
             except UnexpectedResponse as e:
                 if e.status_code != 409:
                     raise
+    qdrant_ops.ensure_all_payload_indexes()
     yield
     state.qdrant.close()
 

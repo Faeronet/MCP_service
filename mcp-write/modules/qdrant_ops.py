@@ -1,4 +1,4 @@
-"""Операции с Qdrant: создание коллекций, upsert, scroll, delete."""
+"""Операции с Qdrant: создание коллекций, upsert, scroll, delete, индексация payload."""
 import logging
 import httpx
 from qdrant_client import QdrantClient
@@ -11,6 +11,60 @@ from . import config
 from . import state
 
 log = logging.getLogger("mcp-write")
+
+# Схема полнотекстового индекса (multilingual для лемматизации: яблоко ↔ яблоки)
+_FULLTEXT_INDEX_SCHEMA = {
+    "type": "text",
+    "tokenizer": "multilingual",
+    "min_token_len": 1,
+    "max_token_len": 50,
+    "lowercase": True,
+}
+
+
+def ensure_payload_index_text(collection_name: str, field_name: str) -> None:
+    """Создаёт payload-индекс типа text (multilingual) для поля. Идемпотентно (409 = уже есть)."""
+    if state.qdrant is None:
+        return
+    url = f"{config.QDRANT_URL.strip('/')}/collections/{collection_name}/index"
+    body = {"field_name": field_name, "field_schema": _FULLTEXT_INDEX_SCHEMA}
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.put(url, json=body)
+        if r.status_code in (200, 201, 409):
+            if r.status_code != 409:
+                log.info("payload index created: collection=%s field=%s", collection_name, field_name)
+            return
+        log.warning("payload index %s.%s: HTTP %s %s", collection_name, field_name, r.status_code, r.text[:200])
+    except Exception as e:
+        log.warning("payload index %s.%s failed: %s", collection_name, field_name, e)
+
+
+def ensure_all_payload_indexes() -> None:
+    """Создаёт полнотекстовые индексы для всех полей payload, по которым нужен поиск (System B)."""
+    # chunks: content + отдельные поля main-чанка (name, situacii_problemy, proyavlenie, gospodstvo)
+    ensure_payload_index_text(config.COLLECTION, "content")
+    ensure_payload_index_text(config.COLLECTION, "name")
+    ensure_payload_index_text(config.COLLECTION, "situacii_problemy")
+    ensure_payload_index_text(config.COLLECTION, "proyavlenie")
+    ensure_payload_index_text(config.COLLECTION, "gospodstvo")
+    if config.INGESTION_SYSTEM == "B":
+        # obitanie: obitanie + names_text (список имён одной строкой для поиска)
+        ensure_payload_index_text(config.COLLECTION_OBITANIE, "obitanie")
+        ensure_payload_index_text(config.COLLECTION_OBITANIE, "names_text")
+        # znak_zodiaka: znak_zodiaka + names_text
+        ensure_payload_index_text(config.COLLECTION_ZNAK_ZODIAKA, "znak_zodiaka")
+        ensure_payload_index_text(config.COLLECTION_ZNAK_ZODIAKA, "names_text")
+        # specificnost, kachestva_energii, iskazheniya_energii: основное поле + name
+        ensure_payload_index_text(config.COLLECTION_SPECIFICNOST, "specificnost")
+        ensure_payload_index_text(config.COLLECTION_SPECIFICNOST, "name")
+        ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "kachestva_energii")
+        ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "name")
+        ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "iskazheniya_energii")
+        ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "name")
+        # other: context + name
+        ensure_payload_index_text(config.COLLECTION_OTHER, "context")
+        ensure_payload_index_text(config.COLLECTION_OTHER, "name")
 
 
 def ensure_collection(name: str | None = None) -> None:
