@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,64 @@ import (
 )
 
 var logHandler = logging.New("mcp-proxy")
+
+// parseNumberedList разбирает текст вида "1. Имя\n2. Имя\n..." в слайс имён (индекс 0 = номер 1).
+func parseNumberedList(text string) []string {
+	var names []string
+	re := regexp.MustCompile(`(?m)^\s*\d+[.)]\s*(.+)$`)
+	for _, m := range re.FindAllStringSubmatch(strings.TrimSpace(text), -1) {
+		if len(m) >= 2 {
+			n := strings.TrimSpace(m[1])
+			if n != "" {
+				names = append(names, n)
+			}
+		}
+	}
+	return names
+}
+
+// parseNumbersFromReply извлекает числа из ответа LLM (например "25" или "3, 5, 7" или "3 0 5"). Возвращает 1-based номера; если только 0 — возвращает nil. Ноль включается в результат, если есть и другие числа.
+func parseNumbersFromReply(reply string) []int {
+	reply = strings.TrimSpace(reply)
+	if reply == "" {
+		return nil
+	}
+	re := regexp.MustCompile(`\d+`)
+	matches := re.FindAllString(reply, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	if len(matches) == 1 {
+		n, _ := strconv.Atoi(matches[0])
+		if n == 0 {
+			return nil // единственный 0 — никого нет
+		}
+		return []int{n}
+	}
+	var nums []int
+	seen := make(map[int]struct{})
+	for _, m := range matches {
+		n, _ := strconv.Atoi(m)
+		if n < 0 {
+			continue
+		}
+		if _, ok := seen[n]; !ok {
+			seen[n] = struct{}{}
+			nums = append(nums, n)
+		}
+	}
+	return nums
+}
+
+// containsZero возвращает true, если в слайсе есть 0.
+func containsZero(nums []int) bool {
+	for _, n := range nums {
+		if n == 0 {
+			return true
+		}
+	}
+	return false
+}
 
 // HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
 func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
@@ -56,24 +115,67 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var nameAllHandled bool
 
 	if req.ReplyToTelegramMessageID != 0 {
-		if userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID); ok && (userQ != "" || botA != "" || ctxStored != "") {
-			var bld strings.Builder
-			if userQ != "" {
-				bld.WriteString("Предыдущий вопрос: ")
-				bld.WriteString(userQ)
-				bld.WriteString("\n")
+		if userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID); ok && botA != "" {
+			namesFromList := parseNumberedList(botA)
+			// Ответ по контексту списка (name all): промпт C → номер(а) → контекст из Postgres → промпт B
+			if len(namesFromList) >= 3 {
+				systemC := s.PromptC + "\n\nСписок:\n" + botA
+				replyC, errC := s.CallLLM(ctx, requestID, systemC, req.MessageText)
+				if errC == nil {
+					replyC = strings.TrimSpace(StripThink(replyC))
+					numbers := parseNumbersFromReply(replyC)
+					if numbers != nil && len(numbers) > 1 && containsZero(numbers) {
+						reply = "Один или несколько из указанных номеров не существуют в списке. Проверьте номера и попробуйте снова."
+						nameAllHandled = true
+					} else if numbers == nil {
+						// Число 0 или пусто — симулируем ответ ИИ
+						reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
+						nameAllHandled = true
+					} else {
+						var fullContextParts []string
+						for _, num := range numbers {
+							if num == 0 || num < 1 || num > len(namesFromList) {
+								continue
+							}
+							name := namesFromList[num-1]
+							if ctxPart, ok := s.GetFullContextByAngelName(ctx, name); ok && ctxPart != "" {
+								fullContextParts = append(fullContextParts, ctxPart)
+							}
+						}
+						if len(fullContextParts) > 0 {
+							combinedContext := strings.Join(fullContextParts, "\n\n")
+							systemB := s.PromptB + "\n\nСписок (для ориентира):\n" + botA + "\n\nКонтекст:\n" + combinedContext
+							reply, replyErr = s.CallLLM(ctx, requestID, systemB, req.MessageText)
+							if replyErr == nil {
+								reply = StripThink(reply)
+								nameAllHandled = true
+							}
+						} else {
+							reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
+							nameAllHandled = true
+						}
+					}
+				}
 			}
-			if botA != "" {
-				bld.WriteString("Ответ: ")
-				bld.WriteString(botA)
-				bld.WriteString("\n\n")
+			if !nameAllHandled && (userQ != "" || botA != "" || ctxStored != "") {
+				var bld strings.Builder
+				if userQ != "" {
+					bld.WriteString("Предыдущий вопрос: ")
+					bld.WriteString(userQ)
+					bld.WriteString("\n")
+				}
+				if botA != "" {
+					bld.WriteString("Ответ: ")
+					bld.WriteString(botA)
+					bld.WriteString("\n\n")
+				}
+				if ctxStored != "" {
+					bld.WriteString("Контекст:\n")
+					bld.WriteString(ctxStored)
+				}
+				contextText = bld.String()
+				logHandler.Info(ctx, "using reply-to context", logging.KV{"chat_id", req.ChatID})
 			}
-			if ctxStored != "" {
-				bld.WriteString("Контекст:\n")
-				bld.WriteString(ctxStored)
-			}
-			contextText = bld.String()
-			logHandler.Info(ctx, "using reply-to context", logging.KV{"chat_id", req.ChatID})
 		}
 	}
 

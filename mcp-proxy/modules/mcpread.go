@@ -116,6 +116,37 @@ func (s *Server) GetFullContextByChunkIDs(ctx context.Context, chunkIDs []string
 	return strings.Join(parts, "\n\n"), true
 }
 
+// GetFullContextByAngelName возвращает полный контекст из core.document_context для данного имени (по core.angel_names.chunk_id).
+func (s *Server) GetFullContextByAngelName(ctx context.Context, name string) (string, bool) {
+	if strings.TrimSpace(name) == "" {
+		return "", false
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT dc.context FROM core.document_context dc
+		INNER JOIN core.angel_names an ON an.chunk_id = dc.chunk_id
+		WHERE trim(an.name) = $1 AND dc.context IS NOT NULL AND trim(dc.context) != ''
+	`, strings.TrimSpace(name))
+	if err != nil {
+		return "", false
+	}
+	defer rows.Close()
+	var parts []string
+	for rows.Next() {
+		var ctx string
+		if err := rows.Scan(&ctx); err != nil {
+			continue
+		}
+		t := strings.TrimSpace(ctx)
+		if t != "" {
+			parts = append(parts, t)
+		}
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, "\n\n"), true
+}
+
 // GetAngelNamesList возвращает отсортированный список уникальных имён из core.angel_names (без дубликатов).
 func (s *Server) GetAngelNamesList(ctx context.Context) ([]string, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT name FROM core.angel_names WHERE trim(name) != '' ORDER BY name`)
