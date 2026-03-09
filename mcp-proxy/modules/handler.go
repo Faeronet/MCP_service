@@ -44,7 +44,7 @@ func extractListAndQuestionFromUserMessage(msg string) (listText string, ok bool
 	lower := strings.ToLower(msg)
 	// Где начинается вопрос (обрезаем список)
 	questionStart := -1
-	for _, sep := range []string{" расскажи ", " про третьего", " про 3 ", " про 4 ", " про 5 ", " про 6 ", " про 7 ", " про 2 ", " про 1 ", " про второго", " про первого", " номер "} {
+	for _, sep := range []string{" расскажи ", " опиши ", " опиши третьего", " опиши 3 ", " про третьего", " про 3 ", " про 4 ", " про 5 ", " про 6 ", " про 7 ", " про 2 ", " про 1 ", " про второго", " про первого", " номер ", " кто такой ", " что за "} {
 		if i := strings.Index(lower, sep); i >= 0 && (questionStart < 0 || i < questionStart) {
 			questionStart = i
 		}
