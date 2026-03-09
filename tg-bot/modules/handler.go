@@ -103,7 +103,12 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	replyText, debugMessage, messageIDStr, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
 	if err != nil {
 		logHandler.Error(ctx, "proxy call", logging.KV{"error", err})
-		hint := "Сервис временно недоступен."
+		hint := "Сервис временно недоступен. Проверьте, что mcp-proxy запущен и доступен по MCP_PROXY_URL."
+		if errStr := err.Error(); errStr != "" && len(errStr) < 120 {
+			hint += " (" + errStr + ")"
+		} else if len(errStr) >= 120 {
+			hint += " (" + errStr[:117] + "...)"
+		}
 		if typingMsgID > 0 {
 			b.EditMessageText(ctx, chatID, typingMsgID, hint)
 		} else {

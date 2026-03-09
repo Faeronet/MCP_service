@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+const proxyRequestTimeout = 120 * time.Second
 
 // ChatResponse from mcp-proxy POST /chat.
 type ChatResponse struct {
@@ -38,7 +41,8 @@ func (b *Bot) CallChat(ctx context.Context, sessionID uuid.UUID, chatID, userID 
 		return "", "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: proxyRequestTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", "", err
 	}
