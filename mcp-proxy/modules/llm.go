@@ -7,11 +7,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // ExtractSearchQuery calls LLM with prompt A; returns search query for Qdrant.
+// К системному промпту добавляется полный список имён ангелов из БД (без количества).
 func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion string) (string, error) {
-	reply, err := s.CallLLM(ctx, requestID, s.PromptA, userQuestion)
+	systemContent := s.PromptA
+	if names, err := s.GetAngelNamesList(ctx); err == nil && len(names) > 0 {
+		systemContent = s.PromptA + "\n\nСписок известных имён ангелов-хранителей:\n" + strings.Join(names, "\n")
+	}
+	reply, err := s.CallLLM(ctx, requestID, systemContent, userQuestion)
 	if err != nil {
 		return "", err
 	}
