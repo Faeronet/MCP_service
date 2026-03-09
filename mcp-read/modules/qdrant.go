@@ -140,6 +140,70 @@ func (c *QdrantClient) ExpandChunkIDsToFullContext(ctx context.Context, collecti
 	return strings.Join(parts, "\n\n")
 }
 
+// EnsureFullTextIndex создаёт payload-индекс типа "text" для поля content (полнотекстовый поиск). Идемпотентно.
+func (c *QdrantClient) EnsureFullTextIndex(ctx context.Context, collectionName string) {
+	body := []byte(`{"field_name":"content","field_schema":"text"}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.QdrantURL+"/collections/"+collectionName+"/index", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+	// 200 = создан, 409 = уже есть — оба ок
+}
+
+// ScrollWithFullTextFilter возвращает чанки по полнотекстовому совпадению по полю content.
+func (c *QdrantClient) ScrollWithFullTextFilter(ctx context.Context, collectionName, queryText string, limit uint32) ([]ChunkInfo, error) {
+	queryText = strings.TrimSpace(queryText)
+	if queryText == "" {
+		return nil, nil
+	}
+	c.EnsureFullTextIndex(ctx, collectionName)
+	withPayload := true
+	body := QdrantScrollReq{
+		Filter: map[string]interface{}{
+			"must": []map[string]interface{}{
+				{"key": "content", "match": map[string]interface{}{"text": queryText}},
+			},
+		},
+		Limit:       &limit,
+		WithPayload: &withPayload,
+	}
+	payloadBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.QdrantURL+"/collections/"+collectionName+"/points/scroll", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+	var scrollRes QdrantScrollResp
+	if err := json.NewDecoder(resp.Body).Decode(&scrollRes); err != nil {
+		return nil, err
+	}
+	var out []ChunkInfo
+	for _, pt := range scrollRes.Result.Points {
+		chunk := payloadToChunkInfo(pt.Payload)
+		if chunk.Text != "" || chunk.ChunkID != "" {
+			out = append(out, chunk)
+		}
+	}
+	return out, nil
+}
+
 func (c *QdrantClient) SearchPoints(ctx context.Context, collectionName string, vec []float32, limit uint64) ([]ChunkInfo, error) {
 	trueVal := true
 	body := QdrantSearchReq{Vector: vec, Limit: limit, WithPayload: &trueVal}

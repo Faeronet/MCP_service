@@ -18,11 +18,60 @@ func searchOneCollectionNoDate(
 	queryForSearch string,
 	tokenBudget int,
 	rerankMinScore float64,
+	useFullTextSearch bool,
 ) (contextText string, chunkIDs []string, found bool) {
 	if tokenBudget <= 0 {
 		tokenBudget = 4000
 	}
 	queryTrim := strings.TrimSpace(queryForSearch)
+
+	if useFullTextSearch {
+		// Полнотекстовый поиск: без векторов и без проверки по границам слов
+		limit := uint32(100)
+		items, err := qdrantClient.ScrollWithFullTextFilter(ctx, collectionName, queryTrim, limit)
+		if err != nil || len(items) == 0 {
+			return "", nil, false
+		}
+		mainChunkIDs := make(map[string]struct{})
+		neighborIDs := make(map[string]struct{})
+		for _, c := range items {
+			if c.ChunkID != "" {
+				mainChunkIDs[c.ChunkID] = struct{}{}
+			}
+			if c.PrevID != "" {
+				neighborIDs[c.PrevID] = struct{}{}
+			}
+			if c.NextID != "" {
+				neighborIDs[c.NextID] = struct{}{}
+			}
+		}
+		for id := range mainChunkIDs {
+			delete(neighborIDs, id)
+		}
+		if len(neighborIDs) > 0 {
+			neighbors := qdrantClient.FetchChunkPayloadsByID(ctx, collectionName, neighborIDs)
+			items = append(items, neighbors...)
+		}
+		texts := make([]string, len(items))
+		for i := range items {
+			texts[i] = items[i].Text
+		}
+		if rerankClient != nil {
+			if err := rerankLimiter.Acquire(ctx); err == nil {
+				_, order, topScore := rerankClient.RerankWithScoreAndOrder(ctx, queryForSearch, texts)
+				rerankLimiter.Release()
+				if topScore >= rerankMinScore && order != nil && len(order) == len(items) {
+					ordered := make([]ChunkInfo, len(items))
+					for i, idx := range order {
+						ordered[i] = items[idx]
+					}
+					items = ordered
+				}
+			}
+		}
+		ctxText, ids := buildContextFromChunks(items, tokenBudget)
+		return ctxText, ids, true
+	}
 
 	for round := 1; round <= MaxSearchRounds; round++ {
 		limit := uint64(20 * round)

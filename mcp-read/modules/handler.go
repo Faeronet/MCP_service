@@ -217,7 +217,7 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 			go func(c string) {
 				defer wg.Done()
 				logHandler.Info(ctx, "build_context: trying collection (parallel)", logging.KV{"collection", c})
-				ctxText, ids, ok := searchOneCollectionNoDate(ctx, s.Qdrant, s.Rerank, s.Config.RerankLimiter, c, vec, queryForSearch, req.TokenBudget, s.Config.RerankMinScore)
+				ctxText, ids, ok := searchOneCollectionNoDate(ctx, s.Qdrant, s.Rerank, s.Config.RerankLimiter, c, vec, queryForSearch, req.TokenBudget, s.Config.RerankMinScore, s.Config.UseFullTextSearch)
 				if ok {
 					mu.Lock()
 					results[c] = &collResult{contextText: ctxText, chunkIDs: ids}

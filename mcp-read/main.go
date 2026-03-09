@@ -65,12 +65,14 @@ func main() {
 	rerankLimiter := ratelimit.NewInFlight(maxRerank)
 	embedLimiter := ratelimit.NewInFlight(maxEmbed)
 
+	useFullText := config.LoadString("USE_FULLTEXT_SEARCH", "true") == "true" || config.LoadString("USE_FULLTEXT_SEARCH", "true") == "1"
 	cfg := &modules.Handler{
-		QdrantURL:      qdrantURL,
-		Redis:          rdb,
-		RerankMinScore: rerankMinScore,
-		RerankLimiter:  rerankLimiter,
-		EmbedLimiter:   embedLimiter,
+		QdrantURL:         qdrantURL,
+		UseFullTextSearch:  useFullText,
+		Redis:              rdb,
+		RerankMinScore:     rerankMinScore,
+		RerankLimiter:      rerankLimiter,
+		EmbedLimiter:       embedLimiter,
 	}
 	embedClient := modules.NewEmbedClient(embedAPIBase, embedAPIKey, embedModel)
 	rerankClient := modules.NewRerankClient(rerankAPIURL, rerankAPIKey, rerankModel)

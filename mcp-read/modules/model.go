@@ -22,8 +22,9 @@ const (
 )
 
 type Handler struct {
-	QdrantURL          string
-	EmbedAPIBase       string
+	QdrantURL           string
+	UseFullTextSearch   bool   // true = полнотекстовый поиск в Qdrant, векторный и проверки по словам отключены
+	EmbedAPIBase        string
 	EmbedAPIKey        string
 	RerankAPIURL       string
 	RerankAPIKey       string
