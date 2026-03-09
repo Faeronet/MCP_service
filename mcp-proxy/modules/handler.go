@@ -152,6 +152,13 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.LlmLimiter.Release()
 
+	var contextText string
+	var savedContextRef string
+	var debugMessage string
+	var reply string
+	var replyErr error
+	var nameAllHandled bool
+
 	// Сначала определяем список для «вопроса по списку» — до добавления текущего user-сообщения в БД,
 	// иначе последнее сообщение ассистента может быть не тем (или сессия в тесте без истории).
 	var botA string
@@ -169,15 +176,19 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		botA, _ = extractListAndQuestionFromUserMessage(req.MessageText)
 	}
 
+	// Если похоже на вопрос по номеру из списка, но список не найден — даём подсказку вместо обычного поиска
+	msgLower := strings.ToLower(strings.TrimSpace(req.MessageText))
+	looksLikeListQuestion := strings.Contains(msgLower, "опиши") || strings.Contains(msgLower, "третьего") ||
+		strings.Contains(msgLower, "расскажи про") || strings.Contains(msgLower, " про 3") || strings.Contains(msgLower, " номер 3")
+	if botA == "" && looksLikeListQuestion {
+		reply = "Чтобы ответить по номеру из списка, отправьте вопрос в том же чате (сессии), где запрашивали список имён, либо вложите в сообщение полный список минимум из 3 пунктов и вопрос, например: «1. Аладиах 2. Анаюель 3. Аниель опиши третьего»."
+		nameAllHandled = true
+		contextText = " " // чтобы не заходить в обычный поиск по Qdrant
+	}
+
 	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
 	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 
-	var contextText string
-	var savedContextRef string
-	var debugMessage string
-	var reply string
-	var replyErr error
-	var nameAllHandled bool
 	if botA != "" {
 		namesFromList := parseNumberedList(botA)
 		// Ответ по контексту списка (name all): промпт C → номер(а) → контекст из Postgres → промпт B
