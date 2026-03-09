@@ -15,13 +15,14 @@ import (
 var logHandler = logging.New("mcp-proxy")
 
 // parseNumberedList разбирает текст вида "1. Имя\n2. Имя\n..." в слайс имён (индекс 0 = номер 1).
-// Поддерживает и строки без переносов: "1. А 2. Б 3. В" (нормализует через \n перед номером).
+// Поддерживает и строки без переносов: "1. А 2. Б 3. В" (нормализует через \n перед номером). Без lookahead — Go regexp его не поддерживает.
 func parseNumberedList(text string) []string {
 	text = strings.TrimSpace(text)
-	// Нормализуем "N. " в начале строки для разбора без переносов
+	// Нормализуем " N." → "\nN." для разбора без переносов
 	norm := regexp.MustCompile(`\s+(\d+[.)]\s*)`).ReplaceAllString(text, "\n$1")
 	var names []string
-	re := regexp.MustCompile(`(?m)^\s*\d+[.)]\s*(.+?)(?=\s*\d+[.)]|$)`)
+	// До конца строки (без lookahead)
+	re := regexp.MustCompile(`(?m)^\s*\d+[.)]\s*(.+)$`)
 	for _, m := range re.FindAllStringSubmatch(norm, -1) {
 		if len(m) >= 2 {
 			n := strings.TrimSpace(m[1])
