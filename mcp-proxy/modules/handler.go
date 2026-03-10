@@ -178,8 +178,15 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Если похоже на вопрос по номеру из списка, но список не найден — даём подсказку вместо обычного поиска
 	msgLower := strings.ToLower(strings.TrimSpace(req.MessageText))
+	msgShort := len(req.MessageText) <= 120
 	looksLikeListQuestion := strings.Contains(msgLower, "опиши") || strings.Contains(msgLower, "третьего") ||
-		strings.Contains(msgLower, "расскажи про") || strings.Contains(msgLower, " про 3") || strings.Contains(msgLower, " номер 3")
+		strings.Contains(msgLower, "расскажи про") || strings.Contains(msgLower, " про 3") || strings.Contains(msgLower, " номер 3") ||
+		strings.Contains(msgLower, "третий") || strings.Contains(msgLower, "3-го") || strings.Contains(msgLower, "3й") ||
+		strings.Contains(msgLower, "второго") || strings.Contains(msgLower, "второй") || strings.Contains(msgLower, "первого") || strings.Contains(msgLower, "первый") ||
+		strings.Contains(msgLower, "четвертого") || strings.Contains(msgLower, "пятого") || strings.Contains(msgLower, "номер 1") || strings.Contains(msgLower, "номер 2") ||
+		strings.Contains(msgLower, "номер 4") || strings.Contains(msgLower, "номер 5") || strings.Contains(msgLower, " про 1 ") || strings.Contains(msgLower, " про 2 ") ||
+		strings.Contains(msgLower, " про 4 ") || strings.Contains(msgLower, " про 5 ") ||
+		((msgShort && (strings.Contains(msgLower, "расскажи") || strings.Contains(msgLower, "про ") || strings.Contains(msgLower, "номер")) && strings.ContainsAny(msgLower, "1234567890")))
 	if botA == "" && looksLikeListQuestion {
 		reply = "Чтобы ответить по номеру из списка, отправьте вопрос в том же чате (сессии), где запрашивали список имён, либо вложите в сообщение полный список минимум из 3 пунктов и вопрос, например: «1. Аладиах 2. Анаюель 3. Аниель опиши третьего»."
 		nameAllHandled = true
@@ -189,9 +196,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
 	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 
-	// Поток «по списку» только если сообщение похоже на вопрос по номеру (опиши третьего, про 3 и т.д.).
-	// Иначе запросы вроде «ангел 24 марта» обрабатываем обычным поиском.
-	if botA != "" && looksLikeListQuestion {
+	// Поток «по списку»: если есть список (botA) и (похоже на вопрос по номеру ИЛИ пользователь ответил на сообщение — значит по контексту списка).
+	if botA != "" && (looksLikeListQuestion || req.ReplyToTelegramMessageID != 0) {
 		namesFromList := parseNumberedList(botA)
 		if len(namesFromList) >= 3 {
 			systemC := s.PromptC + "\n\nСписок:\n" + botA
