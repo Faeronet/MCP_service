@@ -176,7 +176,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		botA, _ = extractListAndQuestionFromUserMessage(req.MessageText)
 	}
 
-	// Если похоже на вопрос по номеру из списка, но список не найден — даём подсказку вместо обычного поиска
+	// Если похоже на вопрос по номеру из списка — обеспечиваем список для потока name_all_lookup (Prompt C).
 	msgLower := strings.ToLower(strings.TrimSpace(req.MessageText))
 	msgShort := len(req.MessageText) <= 120
 	looksLikeListQuestion := strings.Contains(msgLower, "опиши") || strings.Contains(msgLower, "третьего") ||
@@ -188,9 +188,23 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		strings.Contains(msgLower, " про 4 ") || strings.Contains(msgLower, " про 5 ") ||
 		((msgShort && (strings.Contains(msgLower, "расскажи") || strings.Contains(msgLower, "про ") || strings.Contains(msgLower, "номер")) && strings.ContainsAny(msgLower, "1234567890")))
 	if botA == "" && looksLikeListQuestion {
-		reply = "Чтобы ответить по номеру из списка, отправьте вопрос в том же чате (сессии), где запрашивали список имён, либо вложите в сообщение полный список минимум из 3 пунктов и вопрос, например: «1. Аладиах 2. Анаюель 3. Аниель опиши третьего»."
-		nameAllHandled = true
-		contextText = " " // чтобы не заходить в обычный поиск по Qdrant
+		// Список из сессии не найден — подставляем полный список из БД, чтобы запрос пошёл в LLM с промптом name_all_lookup (Prompt C), а не как обычный поиск.
+		if namesFromDB, errList := s.GetAngelNamesList(ctx); errList == nil && len(namesFromDB) >= 3 {
+			var bld strings.Builder
+			for i, n := range namesFromDB {
+				if i > 0 {
+					bld.WriteString("\n")
+				}
+				bld.WriteString(strconv.Itoa(i + 1))
+				bld.WriteString(". ")
+				bld.WriteString(n)
+			}
+			botA = bld.String()
+		} else {
+			reply = "Чтобы ответить по номеру из списка, отправьте вопрос в том же чате (сессии), где запрашивали список имён, либо вложите в сообщение полный список минимум из 3 пунктов и вопрос, например: «1. Аладиах 2. Анаюель 3. Аниель опиши третьего»."
+			nameAllHandled = true
+			contextText = " " // чтобы не заходить в обычный поиск по Qdrant
+		}
 	}
 
 	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
