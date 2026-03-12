@@ -158,7 +158,7 @@ services:
       - loki
 
   # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
-  # Порядок запуска AI: vllm → vllm-embed → rerank, extract-tool (rerank и extract-tool ждут готовности vllm-embed).
+  # Порядок запуска AI: vllm (GPU) + embed-cpu (CPU) → rerank (CPU), extract-tool (CPU).
   vllm:
     profiles:
       - vllm
@@ -192,44 +192,41 @@ services:
       start_period: 300s
     restart: unless-stopped
 
-  # vLLM для эмбеддингов. Запускается после vllm. Пока не станет healthy, rerank и extract-tool не стартуют.
-  # При одной видеокарте — та же GPU 0: задаём --gpu-memory-utilization 0.35, чтобы поместиться рядом с vllm (чат).
-  # При двух GPU: device_ids: ['1'] и NVIDIA_VISIBLE_DEVICES=1 — эмбеддинги на GPU 1.
-  vllm-embed:
+  # Эмбеддинги на CPU (sentence-transformers BAAI/bge-m3). OpenAI-совместимый /v1/embeddings.
+  embed-cpu:
     profiles:
       - vllm
-    image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.30"]
+    build:
+      context: ./embed-cpu
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8000"
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      HF_HOME: /tmp/hf_cache
+    volumes:
+      - ./models:/tmp/hf_cache
     deploy:
       resources:
         limits:
-          memory: 8g
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['1']
-              capabilities: [gpu]
-    volumes:
-      - ./models:/models
-    environment:
-      NVIDIA_VISIBLE_DEVICES: "1"
-      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
-      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
-      HF_HOME: /models
-      VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
+          memory: 4g
     ports:
       - "8002:8000"
-    depends_on:
-      vllm: { condition: service_healthy }
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 60
-      start_period: 300s
+      start_period: 180s
     restart: unless-stopped
 
-  # Реранкер (BAAI/bge-reranker-v2-m3) — та же GPU 1, что и vllm-embed. Запускается после полной готовности vllm-embed.
+  # Опционально: vLLM для эмбеддингов на GPU (при двух видеокартах). По умолчанию используется embed-cpu.
+  # vllm-embed:
+  #   profiles:
+  #     - vllm
+  #   image: vllm/vllm-openai:v0.16.0
+  #   ...
+
+  # Реранкер (BAAI/bge-reranker-v2-m3) на CPU.
   rerank:
     profiles:
       - vllm
@@ -240,22 +237,15 @@ services:
       PORT: "8787"
       MAX_LENGTH: "512"
       MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
-      DEVICE: cuda
-      NVIDIA_VISIBLE_DEVICES: "1"
-      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      DEVICE: cpu
     deploy:
       resources:
         limits:
           memory: 4g
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['1']
-              capabilities: [gpu]
     ports:
       - "8787:8787"
     depends_on:
-      vllm-embed: { condition: service_healthy }
+      embed-cpu: { condition: service_healthy }
     restart: unless-stopped
 
   # --- Application services ---
@@ -378,9 +368,9 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Эмбеддинги: при профиле vllm используется vllm-embed (BAAI/bge-m3)
-      EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      # Эмбеддинги на CPU: embed-cpu (BAAI/bge-m3)
+      EMBED_API_URL: ${EMBED_API_URL:-http://embed-cpu:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
       RERANK_BINDING_HOST: ${RERANK_BINDING_HOST:-http://rerank:8787/api/v1}
       RERANK_API_URL: ${RERANK_API_URL:-http://rerank:8787/api/v1}
@@ -421,8 +411,8 @@ services:
       USE_LLM_CHUNKING: ${USE_LLM_CHUNKING:-}
       USE_LLM_RERANK_QUERY: ${USE_LLM_RERANK_QUERY:-}
       INGESTION_SYSTEM: ${INGESTION_SYSTEM:-B}
-      EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
+      EMBED_API_URL: ${EMBED_API_URL:-http://embed-cpu:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
       RERANK_BINDING_HOST: ${RERANK_BINDING_HOST:-http://rerank:8787/api/v1}
       RERANK_API_URL: ${RERANK_API_URL:-http://rerank:8787/api/v1}
@@ -458,14 +448,13 @@ services:
       mcp-write: { condition: service_started }
     restart: unless-stopped
 
-  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы). При --profile vllm порядок: vllm → vllm-embed → rerank (extract-tool независим).
+  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы) на CPU.
   extract-tool:
     build:
       context: ./extract-tool
       dockerfile: Dockerfile
     environment:
       PORT: "8004"
-      NVIDIA_VISIBLE_DEVICES: "1"
       HF_TOKEN: ${HF_TOKEN:-}
       HF_HOME: /tmp/hf_cache
       ASR_MODEL: ${ASR_MODEL:-openai/whisper-large-v3}
@@ -474,11 +463,8 @@ services:
       OCR_LANGUAGES: ${OCR_LANGUAGES:-ru,en}
     deploy:
       resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['1']
-              capabilities: [gpu]
+        limits:
+          memory: 4g
     ports:
       - "8004:8004"
     restart: unless-stopped
