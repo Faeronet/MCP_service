@@ -163,8 +163,8 @@ services:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    # --max-model-len: при 16 ГБ VRAM дефолт 131072 не помещается (KV-cache ~7 GiB). 32768 — с запасом для 7B/14B кванти.
-    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}", "--port", "8000", "--gpu-memory-utilization", "0.9", "--max-model-len", "${VLLM_MAX_MODEL_LEN:-32768}"]
+    # --max-model-len: при 16 ГБ + Qwen3-14B-AWQ (~9.4 GiB) под KV-cache остаётся ~3 GiB; 32768 нужно ~5 GiB. Дефолт 16384 — помещается (vLLM оценивает макс. ~19648).
+    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}", "--port", "8000", "--gpu-memory-utilization", "0.9", "--max-model-len", "${VLLM_MAX_MODEL_LEN:-16384}"]
     deploy:
       resources:
         limits:
