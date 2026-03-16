@@ -49,6 +49,32 @@ func searchOneCollectionNoDate(
 		if err != nil || len(items) == 0 {
 			return "", nil, false
 		}
+		if limitItems > 0 && queryTrim != "" {
+			queryLower := strings.ToLower(queryTrim)
+			words := strings.Fields(queryLower)
+			wordsRequired := FilterSignificantWords(words)
+			var containing []ChunkInfo
+			for _, c := range items {
+				chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
+				allFound := true
+				for _, w := range wordsRequired {
+					if w == "" {
+						continue
+					}
+					if !chunkContainsQueryWord(chunkLower, w) {
+						allFound = false
+						break
+					}
+				}
+				if allFound {
+					containing = append(containing, c)
+				}
+			}
+			if len(containing) == 0 {
+				return "", nil, false
+			}
+			items = containing
+		}
 		mainChunkIDs := make(map[string]struct{})
 		neighborIDs := make(map[string]struct{})
 		for _, c := range items {
