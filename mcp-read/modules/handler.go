@@ -158,6 +158,11 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
+	triggerColl := CollectionForQuery(req.QueryText)
+	// Если в запросе есть дата, но сработал триггер эмоц./интел./астральный дух — ищем в целевой коллекции, а не только в chunks
+	if hasDate && (triggerColl == CollectionEmocionalnoe || triggerColl == CollectionIntellektualnye || triggerColl == CollectionAstralnyiDuh) {
+		hasDate = false
+	}
 
 	// Коллекции emocionalnoe, intellektualnye, astralnyi_duh — только по триггерам (не в стандартном списке)
 	defaultCollectionsOrder := []string{CollectionChunks, CollectionKachestvaEnergii, CollectionIskazheniyaEnergii, CollectionOther, CollectionSpecificnost, CollectionZnakZodiaka}
@@ -168,7 +173,6 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 		collectionsSearched = []string{CollectionChunks}
 		logHandler.Info(ctx, "build_context: date in query, force chunks", logging.KV{"date", dateStr})
 	} else {
-		triggerColl := CollectionForQuery(req.QueryText)
 		if triggerColl != "" && triggerColl != CollectionChunks {
 			collectionsOrder = make([]string, 0, 1+len(defaultCollectionsOrder))
 			collectionsOrder = append(collectionsOrder, triggerColl)
@@ -186,7 +190,7 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 
 	var vec []float32
 	if !hasDate {
-		if triggerColl := CollectionForQuery(req.QueryText); triggerColl != "" && triggerColl != CollectionChunks {
+		if triggerColl != "" && triggerColl != CollectionChunks {
 			vec = s.Embed.EmbedQuery(ctx, strings.TrimSpace(req.QueryText))
 		} else {
 			vec = s.Embed.EmbedQuery(ctx, queryForSearch)
