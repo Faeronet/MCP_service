@@ -39,7 +39,11 @@ func searchOneCollectionNoDate(
 		// Полнотекстовый поиск: без векторов и без проверки по границам слов
 		limit := uint32(100)
 		if limitItems > 0 {
-			limit = uint32(limitItems * 2) // запросить чуть больше, потом обрежем после rerank
+			// Для эмоц./интел./астральный дух — мало кандидатов, потом rerank и обрез до limitItems (не тащим всю коллекцию)
+			limit = uint32(limitItems * 4)
+			if limit > 20 {
+				limit = 20
+			}
 		}
 		items, err := qdrantClient.ScrollWithFullTextFilter(ctx, collectionName, queryTrim, limit)
 		if err != nil || len(items) == 0 {
@@ -61,7 +65,7 @@ func searchOneCollectionNoDate(
 		for id := range mainChunkIDs {
 			delete(neighborIDs, id)
 		}
-		if len(neighborIDs) > 0 {
+		if limitItems == 0 && len(neighborIDs) > 0 {
 			neighbors := qdrantClient.FetchChunkPayloadsByID(ctx, collectionName, neighborIDs)
 			items = append(items, neighbors...)
 		}

@@ -10,8 +10,8 @@ import (
 
 const RetrievalCacheTTL = 60 * time.Second
 const MaxSearchRounds = 5
-// Макс. чанков для emocionalnoe/intellektualnye/astralnyi_duh — чтобы не отдавать модельке всю коллекцию
-const MaxChunksTriggerCollections = 10
+// Макс. чанков для emocionalnoe/intellektualnye/astralnyi_duh (обычно один ангел на дату/время — не тащим всю коллекцию)
+const MaxChunksTriggerCollections = 3
 
 const (
 	CollectionChunks             = "chunks"

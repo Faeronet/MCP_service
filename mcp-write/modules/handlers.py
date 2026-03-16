@@ -4,12 +4,14 @@ from typing import Any
 from fastapi import HTTPException
 from minio.error import S3Error
 from qdrant_client.models import Filter, FieldCondition, FilterSelector, MatchValue
+from qdrant_client.http.models import PointIdsList
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from . import config
 from . import state
 from .models import IngestDocumentRequest
 from . import extract
+from . import ids
 from . import ingest_system_a
 from . import ingest_system_b
 from . import qdrant_ops
@@ -100,6 +102,13 @@ def delete_document(doc_id: str) -> dict[str, Any]:
                         filter=Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]),
                     ),
                 )
+            except UnexpectedResponse as e:
+                if e.status_code != 404:
+                    log.warning("delete %s for doc_id=%s: %s", coll, doc_id, e)
+        for coll in (config.COLLECTION_EMOCIONALNOE, config.COLLECTION_INTELLEKTUALNYE, config.COLLECTION_ASTRALNYI_DUH):
+            try:
+                point_id = ids.point_id_for_doc_collection(doc_id, coll)
+                state.qdrant.delete(collection_name=coll, points_selector=PointIdsList(points=[point_id]))
             except UnexpectedResponse as e:
                 if e.status_code != 404:
                     log.warning("delete %s for doc_id=%s: %s", coll, doc_id, e)
