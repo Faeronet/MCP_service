@@ -18,6 +18,9 @@ const (
 	CollectionKachestvaEnergii   = "kachestva_energii"
 	CollectionIskazheniyaEnergii = "iskazheniya_energii"
 	CollectionSpecificnost       = "specificnost"
+	CollectionEmocionalnoe       = "emocionalnoe"
+	CollectionIntellektualnye    = "intellektualnye"
+	CollectionAstralnyiDuh       = "astralnyi_duh"
 	CollectionOther              = "other"
 )
 

@@ -122,7 +122,7 @@ func (c *QdrantClient) GetFullDocumentForChunkID(ctx context.Context, collection
 }
 
 func (c *QdrantClient) ExpandChunkIDsToFullContext(ctx context.Context, collectionName string, chunkIDs []string) string {
-	if len(chunkIDs) == 0 || len(chunkIDs) > 2 {
+	if len(chunkIDs) != 1 {
 		return ""
 	}
 	var parts []string
@@ -149,6 +149,9 @@ var fullTextSearchFields = map[string][]string{
 	CollectionSpecificnost:      {"specificnost", "name"},
 	CollectionKachestvaEnergii:  {"kachestva_energii", "name"},
 	CollectionIskazheniyaEnergii: {"iskazheniya_energii", "name"},
+	CollectionEmocionalnoe:      {"emocionalnoe", "name"},
+	CollectionIntellektualnye:   {"intellektualnye", "name"},
+	CollectionAstralnyiDuh:      {"astralnyi_duh", "name"},
 	CollectionOther:              {"context", "name"},
 }
 

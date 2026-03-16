@@ -62,6 +62,13 @@ def ensure_all_payload_indexes() -> None:
         ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "name")
         ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "iskazheniya_energii")
         ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "name")
+        # emocionalnoe, intellektualnye, astralnyi_duh: основное поле + name
+        ensure_payload_index_text(config.COLLECTION_EMOCIONALNOE, "emocionalnoe")
+        ensure_payload_index_text(config.COLLECTION_EMOCIONALNOE, "name")
+        ensure_payload_index_text(config.COLLECTION_INTELLEKTUALNYE, "intellektualnye")
+        ensure_payload_index_text(config.COLLECTION_INTELLEKTUALNYE, "name")
+        ensure_payload_index_text(config.COLLECTION_ASTRALNYI_DUH, "astralnyi_duh")
+        ensure_payload_index_text(config.COLLECTION_ASTRALNYI_DUH, "name")
         # other: context + name
         ensure_payload_index_text(config.COLLECTION_OTHER, "context")
         ensure_payload_index_text(config.COLLECTION_OTHER, "name")

@@ -21,6 +21,9 @@ COLLECTION_ZNAK_ZODIAKA = "znak_zodiaka"
 COLLECTION_SPECIFICNOST = "specificnost"
 COLLECTION_KACHESTVA_ENERGII = "kachestva_energii"
 COLLECTION_ISKAZHENIYA = "iskazheniya_energii"
+COLLECTION_EMOCIONALNOE = "emocionalnoe"
+COLLECTION_INTELLEKTUALNYE = "intellektualnye"
+COLLECTION_ASTRALNYI_DUH = "astralnyi_duh"
 COLLECTION_OTHER = "other"
 VECTOR_SIZE = int(os.getenv("VECTOR_SIZE", os.getenv("EMBEDDING_DIMENSION", "1024")))
 
@@ -46,6 +49,9 @@ SYSTEM_B_LABELS: list[tuple[str, str | list[str] | None]] = [
     ("situacii_problemy", "Ситуации и общие проблемы(влияние АНГЕЛА):"),
     ("proyavlenie", "Проявление:"),
     ("gospodstvo", "Господство:"),
+    ("emocionalnoe", "Эмоциональное:"),
+    ("intellektualnye", "Интеллектуальные:"),
+    ("astralnyi_duh", ["Астральный дух:", "Астральный дух: "]),
     ("adept", "Адепт:"),
     ("pomogaet", "Помогает:"),
 ]

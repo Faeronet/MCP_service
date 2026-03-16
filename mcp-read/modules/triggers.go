@@ -71,6 +71,16 @@ func CollectionForQuery(query string) string {
 		containsWordRu(q, "специфичности") || containsWordRu(q, "спецификации") {
 		return "specificnost"
 	}
+	if containsWordRu(q, "эмоциональное") || strings.Contains(q, "эмоциональн") {
+		return "emocionalnoe"
+	}
+	if containsWordRu(q, "интеллектуальные") || containsWordRu(q, "интелектуальные") ||
+		strings.Contains(q, "интеллектуальн") || strings.Contains(q, "интелектуальн") {
+		return "intellektualnye"
+	}
+	if containsWordRu(q, "астральный дух") || (strings.Contains(q, "астральн") && strings.Contains(q, "дух")) {
+		return "astralnyi_duh"
+	}
 	return "chunks"
 }
 
@@ -165,6 +175,14 @@ func StripRoutingKeywords(query, collection string) string {
 			mkSet("искажение", "искажения", "энергия", "энергии", "ангел", "ангела", "ангелу", "ангелом", "ангеле", "ангелы", "ангелов", "ангелам", "ангелами", "ангелах"))
 	case "specificnost":
 		q = stripTriggersByWords(q, nil, mkSet("специфичность", "спецификация", "специфичности", "спецификации"))
+	case "emocionalnoe":
+		q = stripTriggersByWords(q, nil, mkSet("эмоциональное", "эмоциональные", "эмоционального", "эмоциональных", "эмоциональным", "эмоциональная", "эмоциональной"))
+	case "intellektualnye":
+		q = stripTriggersByWords(q, [][]string{{"интеллектуальные", "способности"}, {"интелектуальные", "способности"}},
+			mkSet("интеллектуальные", "интелектуальные", "интеллектуальных", "интелектуальных", "интеллектуальным", "интелектуальным"))
+	case "astralnyi_duh":
+		q = stripTriggersByWords(q, [][]string{{"астральный", "дух"}},
+			mkSet("астральный", "астрального", "астральному", "астральным", "астральном", "дух", "духа", "духу", "духом", "духе"))
 	}
 	return strings.TrimSpace(strings.Join(strings.Fields(q), " "))
 }

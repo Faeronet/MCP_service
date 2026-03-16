@@ -129,6 +129,39 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
         qdrant_ops.qdrant_upsert(config.COLLECTION_ISKAZHENIYA, point_id, vec_isk, payload_isk)
         chunks_count += 1
 
+    emocionalnoe_val = keys.get("emocionalnoe", "").strip()
+    if emocionalnoe_val:
+        qdrant_ops.ensure_collection(config.COLLECTION_EMOCIONALNOE)
+        point_id = ids.chunk_id_to_point_id(main_chunk_id)
+        payload_em = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "emocionalnoe": emocionalnoe_val}
+        vec_em = embed.embed_text(name + " " + emocionalnoe_val)
+        if len(vec_em) != config.VECTOR_SIZE:
+            vec_em = (vec_em + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
+        qdrant_ops.qdrant_upsert(config.COLLECTION_EMOCIONALNOE, point_id, vec_em, payload_em)
+        chunks_count += 1
+
+    intellektualnye_val = keys.get("intellektualnye", "").strip()
+    if intellektualnye_val:
+        qdrant_ops.ensure_collection(config.COLLECTION_INTELLEKTUALNYE)
+        point_id = ids.chunk_id_to_point_id(main_chunk_id)
+        payload_int = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "intellektualnye": intellektualnye_val}
+        vec_int = embed.embed_text(name + " " + intellektualnye_val)
+        if len(vec_int) != config.VECTOR_SIZE:
+            vec_int = (vec_int + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
+        qdrant_ops.qdrant_upsert(config.COLLECTION_INTELLEKTUALNYE, point_id, vec_int, payload_int)
+        chunks_count += 1
+
+    astralnyi_duh_val = keys.get("astralnyi_duh", "").strip()
+    if astralnyi_duh_val:
+        qdrant_ops.ensure_collection(config.COLLECTION_ASTRALNYI_DUH)
+        point_id = ids.chunk_id_to_point_id(main_chunk_id)
+        payload_ast = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "astralnyi_duh": astralnyi_duh_val}
+        vec_ast = embed.embed_text(name + " " + astralnyi_duh_val)
+        if len(vec_ast) != config.VECTOR_SIZE:
+            vec_ast = (vec_ast + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
+        qdrant_ops.qdrant_upsert(config.COLLECTION_ASTRALNYI_DUH, point_id, vec_ast, payload_ast)
+        chunks_count += 1
+
     rest_context = system_b_parse.get_rest_context(raw, keys)
     qdrant_ops.ensure_collection(config.COLLECTION_OTHER)
     point_id = ids.chunk_id_to_point_id(main_chunk_id)
@@ -139,11 +172,13 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     qdrant_ops.qdrant_upsert(config.COLLECTION_OTHER, point_id, vec_other, payload_other)
     chunks_count += 1
 
-    postgres_ops.save_document_context_postgres(main_chunk_id, req.doc_id, raw)
+    context_for_postgres = system_b_parse.full_context_for_postgres(raw, keys)
+    postgres_ops.save_document_context_postgres(main_chunk_id, req.doc_id, context_for_postgres)
     postgres_ops.save_angel_name_postgres(main_chunk_id, req.doc_id, name)
 
     log.info(
-        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s spec=%s kach=%s isk=%s other=1",
+        "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s spec=%s kach=%s isk=%s em=%s int=%s ast=%s other=1",
         req.doc_id, main_chunk_id, bool(obitanie_val), bool(znak_val), bool(specificnost_val), bool(kachestva_val), bool(iskazheniya_val),
+        bool(emocionalnoe_val), bool(intellektualnye_val), bool(astralnyi_duh_val),
     )
     return {"status": "ok", "chunks_upserted": chunks_count, "doc_id": req.doc_id, "version_id": req.version_id}

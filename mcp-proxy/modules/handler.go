@@ -382,12 +382,13 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 						logHandler.Warn(ctx, "build_context failed", logging.KV{"error", err})
 						contextText = ""
 					}
-				} else if len(buildChunkIDs) <= 2 && len(buildChunkIDs) > 0 {
-					// При 1–2 чанках подставляем полный контекст из Postgres (core.document_context)
-					if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
-						contextText = fullCtx
-						buildContextKind = "full"
-						if len(buildChunkIDs) > 0 {
+				} else if len(buildChunkIDs) == 1 {
+					// При ровно одном чанке подставляем полный контекст из Postgres; для коллекций emocionalnoe/intellektualnye/astralnyi_duh — только чанки
+					skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh"
+					if !skipFullContext {
+						if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
+							contextText = fullCtx
+							buildContextKind = "full"
 							buildContextRef = buildChunkIDs[0]
 						}
 					}

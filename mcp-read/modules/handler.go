@@ -159,6 +159,7 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
 
+	// Коллекции emocionalnoe, intellektualnye, astralnyi_duh — только по триггерам (не в стандартном списке)
 	defaultCollectionsOrder := []string{CollectionChunks, CollectionKachestvaEnergii, CollectionIskazheniyaEnergii, CollectionOther, CollectionSpecificnost, CollectionZnakZodiaka}
 	var collectionsOrder []string
 	var collectionsSearched []string
@@ -237,7 +238,8 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if found && len(chunkIDs) > 0 {
-			if len(chunkIDs) <= 2 {
+			skipFullContext := successCollection == CollectionEmocionalnoe || successCollection == CollectionIntellektualnye || successCollection == CollectionAstralnyiDuh
+			if len(chunkIDs) == 1 && !skipFullContext {
 				expanded := s.Qdrant.ExpandChunkIDsToFullContext(ctx, successCollection, chunkIDs)
 				if expanded != "" {
 					contextText = expanded
