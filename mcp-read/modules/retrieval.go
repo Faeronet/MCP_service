@@ -39,89 +39,87 @@ func searchOneCollectionNoDate(
 		// Полнотекстовый поиск: без векторов и без проверки по границам слов
 		limit := uint32(100)
 		if limitItems > 0 {
-			// Для эмоц./интел./астральный дух — мало кандидатов, потом rerank и обрез до limitItems (не тащим всю коллекцию)
 			limit = uint32(limitItems * 4)
 			if limit > 20 {
 				limit = 20
 			}
 		}
 		items, err := qdrantClient.ScrollWithFullTextFilter(ctx, collectionName, queryTrim, limit)
-		if err != nil {
-			return "", nil, false
-		}
-		if len(items) == 0 && queryTrim != "" {
-			items = qdrantClient.ScrollAllChunksContaining(ctx, collectionName, queryTrim)
-		}
-		if len(items) == 0 {
-			return "", nil, false
-		}
-		if limitItems > 0 && queryTrim != "" {
-			queryLower := strings.ToLower(queryTrim)
-			words := strings.Fields(queryLower)
-			wordsRequired := FilterSignificantWords(words)
-			var containing []ChunkInfo
-			for _, c := range items {
-				chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
-				allFound := true
-				for _, w := range wordsRequired {
-					if w == "" {
-						continue
+		if err == nil {
+			if len(items) == 0 && queryTrim != "" {
+				items = qdrantClient.ScrollAllChunksContaining(ctx, collectionName, queryTrim)
+			}
+			if len(items) > 0 {
+				if limitItems > 0 && queryTrim != "" {
+					queryLower := strings.ToLower(queryTrim)
+					words := strings.Fields(queryLower)
+					wordsRequired := FilterSignificantWords(words)
+					var containing []ChunkInfo
+					for _, c := range items {
+						chunkLower := strings.ToLower(c.Text + " " + c.SearchableText + " " + c.Name)
+						allFound := true
+						for _, w := range wordsRequired {
+							if w == "" {
+								continue
+							}
+							if !chunkContainsQueryWord(chunkLower, w) {
+								allFound = false
+								break
+							}
+						}
+						if allFound {
+							containing = append(containing, c)
+						}
 					}
-					if !chunkContainsQueryWord(chunkLower, w) {
-						allFound = false
-						break
+					if len(containing) > 0 {
+						items = containing
 					}
 				}
-				if allFound {
-					containing = append(containing, c)
-				}
-			}
-			if len(containing) > 0 {
-				items = containing
-			}
-		}
-		mainChunkIDs := make(map[string]struct{})
-		neighborIDs := make(map[string]struct{})
-		for _, c := range items {
-			if c.ChunkID != "" {
-				mainChunkIDs[c.ChunkID] = struct{}{}
-			}
-			if c.PrevID != "" {
-				neighborIDs[c.PrevID] = struct{}{}
-			}
-			if c.NextID != "" {
-				neighborIDs[c.NextID] = struct{}{}
-			}
-		}
-		for id := range mainChunkIDs {
-			delete(neighborIDs, id)
-		}
-		if limitItems == 0 && len(neighborIDs) > 0 {
-			neighbors := qdrantClient.FetchChunkPayloadsByID(ctx, collectionName, neighborIDs)
-			items = append(items, neighbors...)
-		}
-		texts := make([]string, len(items))
-		for i := range items {
-			texts[i] = items[i].Text
-		}
-		if rerankClient != nil {
-			if err := rerankLimiter.Acquire(ctx); err == nil {
-				_, order, topScore := rerankClient.RerankWithScoreAndOrder(ctx, queryForSearch, texts)
-				rerankLimiter.Release()
-				if topScore >= rerankMinScore && order != nil && len(order) == len(items) {
-					ordered := make([]ChunkInfo, len(items))
-					for i, idx := range order {
-						ordered[i] = items[idx]
+				mainChunkIDs := make(map[string]struct{})
+				neighborIDs := make(map[string]struct{})
+				for _, c := range items {
+					if c.ChunkID != "" {
+						mainChunkIDs[c.ChunkID] = struct{}{}
 					}
-					items = ordered
+					if c.PrevID != "" {
+						neighborIDs[c.PrevID] = struct{}{}
+					}
+					if c.NextID != "" {
+						neighborIDs[c.NextID] = struct{}{}
+					}
 				}
+				for id := range mainChunkIDs {
+					delete(neighborIDs, id)
+				}
+				if limitItems == 0 && len(neighborIDs) > 0 {
+					neighbors := qdrantClient.FetchChunkPayloadsByID(ctx, collectionName, neighborIDs)
+					items = append(items, neighbors...)
+				}
+				texts := make([]string, len(items))
+				for i := range items {
+					texts[i] = items[i].Text
+				}
+				if rerankClient != nil {
+					if err := rerankLimiter.Acquire(ctx); err == nil {
+						_, order, topScore := rerankClient.RerankWithScoreAndOrder(ctx, queryForSearch, texts)
+						rerankLimiter.Release()
+						if topScore >= rerankMinScore && order != nil && len(order) == len(items) {
+							ordered := make([]ChunkInfo, len(items))
+							for i, idx := range order {
+								ordered[i] = items[idx]
+							}
+							items = ordered
+						}
+					}
+				}
+				if limitItems > 0 && len(items) > limitItems {
+					items = items[:limitItems]
+				}
+				ctxText, ids := buildContextFromChunks(items, tokenBudget)
+				return ctxText, ids, true
 			}
 		}
-		if limitItems > 0 && len(items) > limitItems {
-			items = items[:limitItems]
-		}
-		ctxText, ids := buildContextFromChunks(items, tokenBudget)
-		return ctxText, ids, true
+		// FTS ничего не нашёл — пробуем векторный поиск и scroll по словам ниже
 	}
 
 	for round := 1; round <= MaxSearchRounds; round++ {

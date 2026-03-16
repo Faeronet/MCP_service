@@ -204,11 +204,6 @@ func (c *QdrantClient) EnsureFullTextIndex(ctx context.Context, collectionName, 
 	// 200 = создан, 409 = уже есть — оба ок
 }
 
-// Для эмоц./интел./астральный дух ищем только в поле с датой/временем (не в name), чтобы не матчить по имени ангела.
-var ftsPrimaryFieldOnlyCollections = map[string]bool{
-	CollectionEmocionalnoe: true, CollectionIntellektualnye: true, CollectionAstralnyiDuh: true,
-}
-
 // ScrollWithFullTextFilter возвращает чанки по полнотекстовому совпадению.
 // Поля для поиска берутся из fullTextSearchFields по имени коллекции (content только для chunks).
 func (c *QdrantClient) ScrollWithFullTextFilter(ctx context.Context, collectionName, queryText string, limit uint32) ([]ChunkInfo, error) {
@@ -219,9 +214,6 @@ func (c *QdrantClient) ScrollWithFullTextFilter(ctx context.Context, collectionN
 	fields := fullTextSearchFields[collectionName]
 	if len(fields) == 0 {
 		fields = []string{"content"}
-	}
-	if ftsPrimaryFieldOnlyCollections[collectionName] && len(fields) > 0 {
-		fields = fields[:1]
 	}
 	for _, f := range fields {
 		c.EnsureFullTextIndex(ctx, collectionName, f)
