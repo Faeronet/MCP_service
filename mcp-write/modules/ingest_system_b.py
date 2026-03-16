@@ -133,7 +133,7 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     if emocionalnoe_val:
         qdrant_ops.ensure_collection(config.COLLECTION_EMOCIONALNOE)
         point_id = ids.point_id_for_doc_collection(req.doc_id, config.COLLECTION_EMOCIONALNOE)
-        payload_em = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "emocionalnoe": emocionalnoe_val}
+        payload_em = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "emocionalnoe": emocionalnoe_val, "section_label": "Эмоциональное"}
         vec_em = embed.embed_text(name + " " + emocionalnoe_val)
         if len(vec_em) != config.VECTOR_SIZE:
             vec_em = (vec_em + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
@@ -144,7 +144,7 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     if intellektualnye_val:
         qdrant_ops.ensure_collection(config.COLLECTION_INTELLEKTUALNYE)
         point_id = ids.point_id_for_doc_collection(req.doc_id, config.COLLECTION_INTELLEKTUALNYE)
-        payload_int = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "intellektualnye": intellektualnye_val}
+        payload_int = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "intellektualnye": intellektualnye_val, "section_label": "Интеллектуальные"}
         vec_int = embed.embed_text(name + " " + intellektualnye_val)
         if len(vec_int) != config.VECTOR_SIZE:
             vec_int = (vec_int + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
@@ -155,7 +155,7 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     if astralnyi_duh_val:
         qdrant_ops.ensure_collection(config.COLLECTION_ASTRALNYI_DUH)
         point_id = ids.point_id_for_doc_collection(req.doc_id, config.COLLECTION_ASTRALNYI_DUH)
-        payload_ast = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "astralnyi_duh": astralnyi_duh_val}
+        payload_ast = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "astralnyi_duh": astralnyi_duh_val, "section_label": "Астральный дух"}
         vec_ast = embed.embed_text(name + " " + astralnyi_duh_val)
         if len(vec_ast) != config.VECTOR_SIZE:
             vec_ast = (vec_ast + [0.0] * config.VECTOR_SIZE)[:config.VECTOR_SIZE]
