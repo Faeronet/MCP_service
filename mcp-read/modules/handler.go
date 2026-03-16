@@ -242,17 +242,8 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if found && len(chunkIDs) > 0 {
-			triggerCollections := successCollection == CollectionEmocionalnoe || successCollection == CollectionIntellektualnye || successCollection == CollectionAstralnyiDuh
-			if triggerCollections {
-				// Для эмоц./интел./астральный дух подставляем полный контекст из chunks по каждому найденному chunk_id — как у остальных коллекций (много чанков → полные карточки).
-				fullFromChunks := s.Qdrant.GetFullContextFromChunksForIDs(ctx, chunkIDs, req.TokenBudget*4)
-				if fullFromChunks != "" {
-					contextText = fullFromChunks
-					contextKind = "full"
-				} else {
-					contextKind = "chunks"
-				}
-			} else if len(chunkIDs) == 1 {
+			skipFullContext := successCollection == CollectionEmocionalnoe || successCollection == CollectionIntellektualnye || successCollection == CollectionAstralnyiDuh
+			if len(chunkIDs) == 1 && !skipFullContext {
 				expanded := s.Qdrant.ExpandChunkIDsToFullContext(ctx, successCollection, chunkIDs)
 				if expanded != "" {
 					contextText = expanded

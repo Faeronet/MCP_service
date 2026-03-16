@@ -8,6 +8,10 @@ import (
 	"github.com/telegram-ai-assistant/root/pkg/ratelimit"
 )
 
+func isTriggerCollection(name string) bool {
+	return name == CollectionEmocionalnoe || name == CollectionIntellektualnye || name == CollectionAstralnyiDuh
+}
+
 func searchOneCollectionNoDate(
 	ctx context.Context,
 	qdrantClient *QdrantClient,
@@ -24,10 +28,19 @@ func searchOneCollectionNoDate(
 		tokenBudget = 4000
 	}
 	queryTrim := strings.TrimSpace(queryForSearch)
+	limitItems := 0
+	if isTriggerCollection(collectionName) {
+		limitItems = MaxChunksTriggerCollections
+	}
+	// Для эмоц./интел./астральный дух всегда полнотекстовый поиск по индексированным полям payload
+	useFTS := useFullTextSearch || isTriggerCollection(collectionName)
 
-	if useFullTextSearch {
+	if useFTS {
 		// Полнотекстовый поиск: без векторов и без проверки по границам слов
 		limit := uint32(100)
+		if limitItems > 0 {
+			limit = uint32(limitItems * 2) // запросить чуть больше, потом обрежем после rerank
+		}
 		items, err := qdrantClient.ScrollWithFullTextFilter(ctx, collectionName, queryTrim, limit)
 		if err != nil || len(items) == 0 {
 			return "", nil, false
@@ -68,6 +81,9 @@ func searchOneCollectionNoDate(
 					items = ordered
 				}
 			}
+		}
+		if limitItems > 0 && len(items) > limitItems {
+			items = items[:limitItems]
 		}
 		ctxText, ids := buildContextFromChunks(items, tokenBudget)
 		return ctxText, ids, true
@@ -153,7 +169,9 @@ func searchOneCollectionNoDate(
 			}
 			items = containing
 		}
-
+		if limitItems > 0 && len(items) > limitItems {
+			items = items[:limitItems]
+		}
 		ctxText, ids := buildContextFromChunks(items, tokenBudget)
 		return ctxText, ids, true
 	}
@@ -161,6 +179,9 @@ func searchOneCollectionNoDate(
 	if queryTrim != "" {
 		scrollItems := qdrantClient.ScrollAllChunksContaining(ctx, collectionName, queryTrim)
 		if len(scrollItems) > 0 {
+			if limitItems > 0 && len(scrollItems) > limitItems {
+				scrollItems = scrollItems[:limitItems]
+			}
 			ctxText, ids := buildContextFromChunks(scrollItems, tokenBudget)
 			return ctxText, ids, true
 		}

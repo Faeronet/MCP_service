@@ -48,6 +48,9 @@ async def lifespan(app: FastAPI):
             config.COLLECTION_SPECIFICNOST,
             config.COLLECTION_KACHESTVA_ENERGII,
             config.COLLECTION_ISKAZHENIYA,
+            config.COLLECTION_EMOCIONALNOE,
+            config.COLLECTION_INTELLEKTUALNYE,
+            config.COLLECTION_ASTRALNYI_DUH,
             config.COLLECTION_OTHER,
         ):
             try:
