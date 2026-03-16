@@ -383,8 +383,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 						contextText = ""
 					}
 				} else if len(buildChunkIDs) == 1 {
-					// При ровно одном чанке подставляем полный контекст из Postgres; для коллекций emocionalnoe/intellektualnye/astralnyi_duh — только чанки
-					skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh"
+					// При ровно одном чанке подставляем полный контекст из Postgres; для знака зодиака, обитания, эмоц./интел./астральный дух — только чанки
+					skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh" ||
+						buildCollection == "znak_zodiaka" || buildCollection == "obitanie"
 					if !skipFullContext {
 						if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
 							contextText = fullCtx
