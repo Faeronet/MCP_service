@@ -46,7 +46,13 @@ func searchOneCollectionNoDate(
 			}
 		}
 		items, err := qdrantClient.ScrollWithFullTextFilter(ctx, collectionName, queryTrim, limit)
-		if err != nil || len(items) == 0 {
+		if err != nil {
+			return "", nil, false
+		}
+		if len(items) == 0 && queryTrim != "" {
+			items = qdrantClient.ScrollAllChunksContaining(ctx, collectionName, queryTrim)
+		}
+		if len(items) == 0 {
 			return "", nil, false
 		}
 		if limitItems > 0 && queryTrim != "" {
