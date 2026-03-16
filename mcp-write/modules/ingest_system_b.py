@@ -39,7 +39,6 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
         "doc_id": req.doc_id,
         "version_id": req.version_id,
         "section_path": "sec_0",
-        "content": main_normalized,
         **main_keys,
     }
     qdrant_ops.ensure_collection(config.COLLECTION)

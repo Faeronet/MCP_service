@@ -42,8 +42,7 @@ def ensure_payload_index_text(collection_name: str, field_name: str) -> None:
 
 def ensure_all_payload_indexes() -> None:
     """Создаёт полнотекстовые индексы для всех полей payload, по которым нужен поиск (System B)."""
-    # chunks: content + отдельные поля main-чанка (name, situacii_problemy, proyavlenie, gospodstvo)
-    ensure_payload_index_text(config.COLLECTION, "content")
+    # chunks: только отдельные поля main-чанка (без дублирующего content)
     ensure_payload_index_text(config.COLLECTION, "name")
     ensure_payload_index_text(config.COLLECTION, "situacii_problemy")
     ensure_payload_index_text(config.COLLECTION, "proyavlenie")
