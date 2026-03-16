@@ -251,9 +251,11 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 					contextRef = chunkIDs[0]
 				} else {
 					contextKind = "chunks"
+					// contextText уже заполнен из results
 				}
 			} else {
 				contextKind = "chunks"
+				// contextText уже заполнен из results, не подставляем полный контекст
 			}
 		}
 	} else {
