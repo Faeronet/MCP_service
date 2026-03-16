@@ -140,6 +140,38 @@ func (c *QdrantClient) ExpandChunkIDsToFullContext(ctx context.Context, collecti
 	return strings.Join(parts, "\n\n")
 }
 
+// GetFullContextFromChunksForIDs возвращает полный контекст из коллекции chunks для каждого chunk_id
+// (цепочка prev+текущий+next). Используется для emocionalnoe/intellektualnye/astralnyi_duh:
+// по найденным chunk_id подставляем полные карточки ангелов из chunks. maxLen — макс. длина строки (0 = без ограничения).
+func (c *QdrantClient) GetFullContextFromChunksForIDs(ctx context.Context, chunkIDs []string, maxLen int) string {
+	if len(chunkIDs) == 0 {
+		return ""
+	}
+	seenDoc := make(map[string]struct{})
+	var parts []string
+	for _, id := range chunkIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		doc := c.GetFullDocumentForChunkID(ctx, CollectionChunks, id)
+		doc = strings.TrimSpace(doc)
+		if doc == "" {
+			continue
+		}
+		if _, ok := seenDoc[doc]; ok {
+			continue
+		}
+		seenDoc[doc] = struct{}{}
+		parts = append(parts, doc)
+	}
+	out := strings.Join(parts, "\n\n")
+	if maxLen > 0 && len(out) > maxLen {
+		out = out[:maxLen]
+	}
+	return out
+}
+
 // fullTextSearchFields по коллекции: в каких полях payload искать (System B).
 // Для chunks — отдельные поля (без дублирующего content).
 var fullTextSearchFields = map[string][]string{
