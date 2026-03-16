@@ -70,10 +70,9 @@ func searchOneCollectionNoDate(
 					containing = append(containing, c)
 				}
 			}
-			if len(containing) == 0 {
-				return "", nil, false
+			if len(containing) > 0 {
+				items = containing
 			}
-			items = containing
 		}
 		mainChunkIDs := make(map[string]struct{})
 		neighborIDs := make(map[string]struct{})

@@ -242,8 +242,7 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if found && len(chunkIDs) > 0 {
-			skipFullContext := successCollection == CollectionEmocionalnoe || successCollection == CollectionIntellektualnye || successCollection == CollectionAstralnyiDuh ||
-				successCollection == CollectionZnakZodiaka || successCollection == CollectionObitanie
+			skipFullContext := successCollection == CollectionEmocionalnoe || successCollection == CollectionIntellektualnye || successCollection == CollectionAstralnyiDuh
 			if len(chunkIDs) == 1 && !skipFullContext {
 				expanded := s.Qdrant.ExpandChunkIDsToFullContext(ctx, successCollection, chunkIDs)
 				if expanded != "" {
