@@ -128,10 +128,11 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
         qdrant_ops.qdrant_upsert(config.COLLECTION_ISKAZHENIYA, point_id, vec_isk, payload_isk)
         chunks_count += 1
 
+    # Один point на документ в коллекции (point_id по doc_id+коллекция), чтобы при повторном инжесте перезаписывать, а не плодить дубли
     emocionalnoe_val = keys.get("emocionalnoe", "").strip()
     if emocionalnoe_val:
         qdrant_ops.ensure_collection(config.COLLECTION_EMOCIONALNOE)
-        point_id = ids.chunk_id_to_point_id(main_chunk_id)
+        point_id = ids.point_id_for_doc_collection(req.doc_id, config.COLLECTION_EMOCIONALNOE)
         payload_em = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "emocionalnoe": emocionalnoe_val}
         vec_em = embed.embed_text(name + " " + emocionalnoe_val)
         if len(vec_em) != config.VECTOR_SIZE:
@@ -142,7 +143,7 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     intellektualnye_val = keys.get("intellektualnye", "").strip()
     if intellektualnye_val:
         qdrant_ops.ensure_collection(config.COLLECTION_INTELLEKTUALNYE)
-        point_id = ids.chunk_id_to_point_id(main_chunk_id)
+        point_id = ids.point_id_for_doc_collection(req.doc_id, config.COLLECTION_INTELLEKTUALNYE)
         payload_int = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "intellektualnye": intellektualnye_val}
         vec_int = embed.embed_text(name + " " + intellektualnye_val)
         if len(vec_int) != config.VECTOR_SIZE:
@@ -153,7 +154,7 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     astralnyi_duh_val = keys.get("astralnyi_duh", "").strip()
     if astralnyi_duh_val:
         qdrant_ops.ensure_collection(config.COLLECTION_ASTRALNYI_DUH)
-        point_id = ids.chunk_id_to_point_id(main_chunk_id)
+        point_id = ids.point_id_for_doc_collection(req.doc_id, config.COLLECTION_ASTRALNYI_DUH)
         payload_ast = {"chunk_id": main_chunk_id, "doc_id": req.doc_id, "name": name, "astralnyi_duh": astralnyi_duh_val}
         vec_ast = embed.embed_text(name + " " + astralnyi_duh_val)
         if len(vec_ast) != config.VECTOR_SIZE:
