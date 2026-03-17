@@ -91,6 +91,30 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// В обычном диалоге: при ответе на сообщение бота подставляем контекст предыдущего вопроса/ответа (без потока «по списку ангелов»).
+	if !nameAllHandled && contextText == "" && req.ReplyToTelegramMessageID != 0 {
+		userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
+		if ok && (userQ != "" || botA != "" || ctxStored != "") {
+			var bld strings.Builder
+			if userQ != "" {
+				bld.WriteString("Предыдущий вопрос: ")
+				bld.WriteString(userQ)
+				bld.WriteString("\n")
+			}
+			if botA != "" {
+				bld.WriteString("Ответ: ")
+				bld.WriteString(botA)
+				bld.WriteString("\n\n")
+			}
+			if ctxStored != "" {
+				bld.WriteString("Контекст:\n")
+				bld.WriteString(ctxStored)
+			}
+			contextText = bld.String()
+			logHandler.Info(ctx, "using reply-to context", logging.KV{"chat_id", req.ChatID})
+		}
+	}
+
 	if !nameAllHandled && contextText == "" {
 		var searchQuery string
 		if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
