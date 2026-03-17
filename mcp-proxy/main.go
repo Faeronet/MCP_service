@@ -15,7 +15,7 @@ import (
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
-//go:embed prompts/query_extract.txt prompts/answer.txt prompts/name_all_lookup.txt
+//go:embed prompts/query_extract.txt prompts/answer.txt
 var promptFS embed.FS
 
 var log = logging.New("mcp-proxy")
@@ -42,15 +42,7 @@ func main() {
 	if promptB == "" {
 		promptB = "Ты помощник. Отвечай по контексту ниже. Кратко, на языке вопроса.\n\nКонтекст:"
 	}
-	var promptC string
-	if raw, err := promptFS.ReadFile("prompts/name_all_lookup.txt"); err == nil {
-		promptC = strings.TrimSpace(string(raw))
-	}
-	if promptC == "" {
-		promptC = "Дан нумерованный список имён ангелов и вопрос. Ответь только номером (номерами) из списка через запятую или пробел, или 0 если ни один не подходит. Без пояснений."
-	}
-
-	srv := modules.NewServer(pool, promptA, promptB, promptC)
+	srv := modules.NewServer(pool, promptA, promptB)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,112 +12,6 @@ import (
 )
 
 var logHandler = logging.New("mcp-proxy")
-
-// parseNumberedList разбирает текст вида "1. Имя\n2. Имя\n..." в слайс имён (индекс 0 = номер 1).
-// Поддерживает и строки без переносов: "1. А 2. Б 3. В" (нормализует через \n перед номером). Без lookahead — Go regexp его не поддерживает.
-func parseNumberedList(text string) []string {
-	text = strings.TrimSpace(text)
-	// Нормализуем " N." → "\nN." для разбора без переносов
-	norm := regexp.MustCompile(`\s+(\d+[.)]\s*)`).ReplaceAllString(text, "\n$1")
-	var names []string
-	// До конца строки (без lookahead)
-	re := regexp.MustCompile(`(?m)^\s*\d+[.)]\s*(.+)$`)
-	for _, m := range re.FindAllStringSubmatch(norm, -1) {
-		if len(m) >= 2 {
-			n := strings.TrimSpace(m[1])
-			if n != "" {
-				names = append(names, n)
-			}
-		}
-	}
-	return names
-}
-
-// extractListAndQuestionFromUserMessage если в сообщении есть нумерованный список (>=3) и вопрос — возвращает (список как текст, true).
-// Граница списка: до первого вхождения «расскажи», «опиши», «про третьего» и т.п.
-func extractListAndQuestionFromUserMessage(msg string) (listText string, ok bool) {
-	msg = strings.TrimSpace(msg)
-	if msg == "" {
-		return "", false
-	}
-	lower := strings.ToLower(msg)
-	questionStart := -1
-	for _, sep := range []string{" расскажи ", " опиши ", " опиши третьего", " опиши 3 ", " про третьего", " про 3 ", " про 4 ", " про 5 ", " про 6 ", " про 7 ", " про 2 ", " про 1 ", " про второго", " про первого", " номер ", " кто такой ", " что за "} {
-		if i := strings.Index(lower, sep); i >= 0 && (questionStart < 0 || i < questionStart) {
-			questionStart = i
-		}
-	}
-	// Если разделитель не найден, режем по первому вхождению «опиши» или «расскажи»
-	if questionStart < 0 {
-		if i := strings.Index(lower, "опиши"); i >= 0 {
-			questionStart = i
-		}
-		if i := strings.Index(lower, "расскажи"); i >= 0 && (questionStart < 0 || i < questionStart) {
-			questionStart = i
-		}
-	}
-	listPart := msg
-	if questionStart > 0 {
-		listPart = strings.TrimSpace(msg[:questionStart])
-	}
-	names := parseNumberedList(listPart)
-	if len(names) < 3 {
-		return "", false
-	}
-	var b strings.Builder
-	for i, n := range names {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(strconv.Itoa(i + 1))
-		b.WriteString(". ")
-		b.WriteString(n)
-	}
-	return b.String(), true
-}
-
-// parseNumbersFromReply извлекает числа из ответа LLM (например "25" или "3, 5, 7" или "3 0 5"). Возвращает 1-based номера; если только 0 — возвращает nil. Ноль включается в результат, если есть и другие числа.
-func parseNumbersFromReply(reply string) []int {
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return nil
-	}
-	re := regexp.MustCompile(`\d+`)
-	matches := re.FindAllString(reply, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	if len(matches) == 1 {
-		n, _ := strconv.Atoi(matches[0])
-		if n == 0 {
-			return nil // единственный 0 — никого нет
-		}
-		return []int{n}
-	}
-	var nums []int
-	seen := make(map[int]struct{})
-	for _, m := range matches {
-		n, _ := strconv.Atoi(m)
-		if n < 0 {
-			continue
-		}
-		if _, ok := seen[n]; !ok {
-			seen[n] = struct{}{}
-			nums = append(nums, n)
-		}
-	}
-	return nums
-}
-
-// containsZero возвращает true, если в слайсе есть 0.
-func containsZero(nums []int) bool {
-	for _, n := range nums {
-		if n == 0 {
-			return true
-		}
-	}
-	return false
-}
 
 // HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
 func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
@@ -159,39 +52,24 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var replyErr error
 	var nameAllHandled bool
 
-	// Сначала определяем список для «вопроса по списку» — до добавления текущего user-сообщения в БД,
-	// иначе последнее сообщение ассистента может быть не тем (или сессия в тесте без истории).
-	var botA string
-	var userQ, ctxStored string
-	if req.ReplyToTelegramMessageID != 0 {
-		userQ, botA, ctxStored, _ = s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
-		if botA == "" {
-			botA, _ = s.GetLastAssistantNumberedList(ctx, req.SessionID, parseNumberedList)
-		}
-	}
-	if botA == "" {
-		botA, _ = s.GetLastAssistantNumberedList(ctx, req.SessionID, parseNumberedList)
-	}
-	if botA == "" {
-		botA, _ = extractListAndQuestionFromUserMessage(req.MessageText)
-	}
+	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
+	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 
-	// Если похоже на вопрос по номеру из списка — обеспечиваем список для потока name_all_lookup (Prompt C).
-	msgLower := strings.ToLower(strings.TrimSpace(req.MessageText))
-	msgShort := len(req.MessageText) <= 120
-	looksLikeListQuestion := strings.Contains(msgLower, "опиши") || strings.Contains(msgLower, "третьего") ||
-		strings.Contains(msgLower, "расскажи про") || strings.Contains(msgLower, " про 3") || strings.Contains(msgLower, " номер 3") ||
-		strings.Contains(msgLower, "третий") || strings.Contains(msgLower, "3-го") || strings.Contains(msgLower, "3й") ||
-		strings.Contains(msgLower, "второго") || strings.Contains(msgLower, "второй") || strings.Contains(msgLower, "первого") || strings.Contains(msgLower, "первый") ||
-		strings.Contains(msgLower, "четвертого") || strings.Contains(msgLower, "пятого") || strings.Contains(msgLower, "номер 1") || strings.Contains(msgLower, "номер 2") ||
-		strings.Contains(msgLower, "номер 4") || strings.Contains(msgLower, "номер 5") || strings.Contains(msgLower, " про 1 ") || strings.Contains(msgLower, " про 2 ") ||
-		strings.Contains(msgLower, " про 4 ") || strings.Contains(msgLower, " про 5 ") ||
-		((msgShort && (strings.Contains(msgLower, "расскажи") || strings.Contains(msgLower, "про ") || strings.Contains(msgLower, "номер")) && strings.ContainsAny(msgLower, "1234567890")))
-	if botA == "" && looksLikeListQuestion {
-		// Список из сессии не найден — подставляем полный список из БД, чтобы запрос пошёл в LLM с промптом name_all_lookup (Prompt C), а не как обычный поиск.
-		if namesFromDB, errList := s.GetAngelNamesList(ctx); errList == nil && len(namesFromDB) >= 3 {
+	lowerMsg := strings.ToLower(strings.TrimSpace(req.MessageText))
+	if IsListAllAngelsRequest(req.MessageText) {
+		names, errList := s.GetAngelNamesList(ctx)
+		if errList != nil {
+			reply = "Ошибка при получении списка."
+			nameAllHandled = true
+		} else if len(names) == 0 {
+			reply = "В базе пока нет имён ангелов-хранителей."
+			nameAllHandled = true
+		} else {
 			var bld strings.Builder
-			for i, n := range namesFromDB {
+			bld.WriteString("Всего ")
+			bld.WriteString(strconv.Itoa(len(names)))
+			bld.WriteString(":\n")
+			for i, n := range names {
 				if i > 0 {
 					bld.WriteString("\n")
 				}
@@ -199,86 +77,21 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				bld.WriteString(". ")
 				bld.WriteString(n)
 			}
-			botA = bld.String()
-		} else {
-			reply = "Чтобы ответить по номеру из списка, отправьте вопрос в том же чате (сессии), где запрашивали список имён, либо вложите в сообщение полный список минимум из 3 пунктов и вопрос, например: «1. Аладиах 2. Анаюель 3. Аниель опиши третьего»."
+			reply = bld.String()
 			nameAllHandled = true
-			contextText = " " // чтобы не заходить в обычный поиск по Qdrant
+		}
+	} else if IsAngelCountRequest(req.MessageText) {
+		names, errList := s.GetAngelNamesList(ctx)
+		if errList != nil {
+			reply = "0"
+			nameAllHandled = true
+		} else {
+			reply = strconv.Itoa(len(names))
+			nameAllHandled = true
 		}
 	}
 
-	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
-	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
-
-	// Поток «по списку»: если есть список (botA) и (похоже на вопрос по номеру ИЛИ пользователь ответил на сообщение — значит по контексту списка).
-	if botA != "" && (looksLikeListQuestion || req.ReplyToTelegramMessageID != 0) {
-		namesFromList := parseNumberedList(botA)
-		if len(namesFromList) >= 3 {
-			systemC := s.PromptC + "\n\nСписок:\n" + botA
-			replyC, errC := s.CallLLM(ctx, requestID, systemC, req.MessageText)
-			if errC != nil {
-				reply = "Не удалось определить номер по списку. Попробуйте снова или задайте вопрос иначе."
-				nameAllHandled = true
-			} else {
-				replyC = strings.TrimSpace(StripThink(replyC))
-				numbers := parseNumbersFromReply(replyC)
-				if numbers != nil && len(numbers) > 1 && containsZero(numbers) {
-					reply = "Один или несколько из указанных номеров не существуют в списке. Проверьте номера и попробуйте снова."
-					nameAllHandled = true
-				} else if numbers == nil {
-					reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
-					nameAllHandled = true
-				} else {
-					var fullContextParts []string
-					for _, num := range numbers {
-						if num == 0 || num < 1 || num > len(namesFromList) {
-							continue
-						}
-						name := namesFromList[num-1]
-						if ctxPart, ok := s.GetFullContextByAngelName(ctx, name); ok && ctxPart != "" {
-							fullContextParts = append(fullContextParts, ctxPart)
-						}
-					}
-					if len(fullContextParts) > 0 {
-						combinedContext := strings.Join(fullContextParts, "\n\n")
-						systemB := s.PromptB + "\n\nСписок (для ориентира):\n" + botA + "\n\nКонтекст:\n" + combinedContext
-						reply, replyErr = s.CallLLM(ctx, requestID, systemB, req.MessageText)
-						if replyErr == nil {
-							reply = StripThink(reply)
-							nameAllHandled = true
-						} else {
-							reply = "Ошибка при формировании ответа. Попробуйте позже."
-							nameAllHandled = true
-						}
-					} else {
-						reply = "По этому списку никого не найдено. Уточните, о ком или о чём вы спрашиваете."
-						nameAllHandled = true
-					}
-				}
-			}
-		}
-	if !nameAllHandled && (userQ != "" || botA != "" || ctxStored != "") {
-				var bld strings.Builder
-				if userQ != "" {
-					bld.WriteString("Предыдущий вопрос: ")
-					bld.WriteString(userQ)
-					bld.WriteString("\n")
-				}
-				if botA != "" {
-					bld.WriteString("Ответ: ")
-					bld.WriteString(botA)
-					bld.WriteString("\n\n")
-				}
-				if ctxStored != "" {
-					bld.WriteString("Контекст:\n")
-					bld.WriteString(ctxStored)
-				}
-				contextText = bld.String()
-				logHandler.Info(ctx, "using reply-to context", logging.KV{"chat_id", req.ChatID})
-			}
-	}
-
-	if contextText == "" {
+	if !nameAllHandled && contextText == "" {
 		var searchQuery string
 		if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
 			searchQuery = q
@@ -288,18 +101,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				searchQuery = req.MessageText
 			}
 		}
-		lowerMsg := strings.ToLower(strings.TrimSpace(req.MessageText))
-		if HasAngelWord(req.MessageText) {
-			if strings.Contains(lowerMsg, "все ангел") || strings.Contains(lowerMsg, "всех ангел") ||
-				strings.Contains(lowerMsg, "ангел вс") || strings.Contains(lowerMsg, "ангелов вс") ||
-				strings.Contains(lowerMsg, "перечисли всех") || strings.Contains(lowerMsg, "список всех") {
-				searchQuery = "[name] all"
-			} else if strings.Contains(lowerMsg, "сколько имен") || strings.Contains(lowerMsg, "количество имен") ||
-				strings.Contains(lowerMsg, "число имен") || strings.Contains(lowerMsg, "сколько ангел") || strings.Contains(lowerMsg, "количество ангел") {
-				searchQuery = "name number"
-			} else if strings.Contains(lowerMsg, "дат") {
-				searchQuery = "[date] list"
-			}
+		if HasAngelWord(req.MessageText) && strings.Contains(lowerMsg, "дат") {
+			searchQuery = "[date] list"
 		}
 		userDateStr := ExtractDateFromQuestion(req.MessageText)
 		if userDateStr != "" {
@@ -323,47 +126,6 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		} else if IsMetaQuestionAboutBot(searchQuery) {
 			contextText = ""
 		} else {
-			normalizedQuery := strings.TrimSpace(strings.ToLower(searchQuery))
-			nq := strings.ReplaceAll(strings.ReplaceAll(normalizedQuery, "[", ""), "]", "")
-			nq = strings.TrimSpace(nq)
-			if IsNameNumberQuery(nq) {
-				// name number: тот же контекст, что при name all — в LLM уходит полный контекст из Postgres + вопрос пользователя.
-				if s.DebugMode == 1 {
-					debugMessage = "🔍 Список имён из Postgres (name number)"
-				}
-				var errNames error
-				contextText, errNames = s.GetAngelNamesFromPostgres(ctx)
-				if errNames != nil {
-					logHandler.Warn(ctx, "getAngelNamesFromPostgres failed", logging.KV{"error", errNames})
-					contextText = ""
-				}
-			} else if IsNameAllQuery(nq) || normalizedQuery == "[name] all" {
-				// name all: только нумерованный список из БД, без дополнения от LLM (LLM может придумывать имена).
-				if s.DebugMode == 1 {
-					debugMessage = "🔍 Список имён из Postgres (name all)"
-				}
-				names, errList := s.GetAngelNamesList(ctx)
-				if errList != nil {
-					contextText = ""
-				} else if len(names) == 0 {
-					reply = "В базе пока нет имён ангелов-хранителей."
-					nameAllHandled = true
-				} else {
-					var bld strings.Builder
-					for i, n := range names {
-						if i > 0 {
-							bld.WriteString("\n")
-						}
-						bld.WriteString(strconv.Itoa(i + 1))
-						bld.WriteString(". ")
-						bld.WriteString(n)
-					}
-					reply = bld.String()
-					nameAllHandled = true
-				}
-			} else if normalizedQuery == "[date] list" {
-				contextText = ""
-			} else {
 				attachmentsText := s.GetAttachmentsText(ctx, req.SessionID)
 				var err error
 				var buildChunkIDs []string
@@ -413,7 +175,6 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				if buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
 					savedContextRef = buildCollection + ":" + buildContextRef
 				}
-			}
 		}
 	}
 

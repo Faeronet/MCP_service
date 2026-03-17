@@ -153,28 +153,40 @@ func IsOnlyDay(s string) bool {
 	return err == nil && n >= 1 && n <= 31
 }
 
-// IsNameAllQuery возвращает true, если ответ промпта A означает «выдать все имена» (name all, [name] all, names all и т.п.).
-func IsNameAllQuery(s string) bool {
-	t := normalizeNameQuery(s)
-	return t == "name all" || t == "names all"
-}
-
-// IsNameNumberQuery возвращает true, если ответ промпта A означает «количество имён» (name number, names number и т.п.) — тогда в LLM отправляем тот же контекст, что и при name all.
-func IsNameNumberQuery(s string) bool {
-	t := normalizeNameQuery(s)
-	return t == "name number" || t == "names number" || t == "number of names" || t == "name count" || t == "names count" ||
-		strings.Contains(t, "количество имен") || strings.Contains(t, "сколько имен") || strings.Contains(t, "число имен")
-}
-
-func normalizeNameQuery(s string) string {
-	t := strings.ToLower(strings.TrimSpace(s))
-	t = strings.ReplaceAll(t, "[", "")
-	t = strings.ReplaceAll(t, "]", "")
-	t = strings.TrimSpace(t)
-	for strings.Contains(t, "  ") {
-		t = strings.ReplaceAll(t, "  ", " ")
+// IsListAllAngelsRequest — запрос «назови всех ангелов которых ты знаешь» и подобные. Ловим до Prompt A, отвечаем списком.
+func IsListAllAngelsRequest(msg string) bool {
+	s := strings.ToLower(strings.TrimSpace(msg))
+	if s == "" || !HasAngelWord(msg) {
+		return false
 	}
-	return t
+	if strings.Contains(s, "назови всех") && strings.Contains(s, "ангел") {
+		return true
+	}
+	if strings.Contains(s, "перечисли всех") && strings.Contains(s, "ангел") {
+		return true
+	}
+	if strings.Contains(s, "всех ангелов") && (strings.Contains(s, "которых") || strings.Contains(s, "знаешь")) {
+		return true
+	}
+	return false
+}
+
+// IsAngelCountRequest — запрос «какое количество ангелов которых ты знаешь» и подобные. Ловим до Prompt A, отвечаем только цифрой.
+func IsAngelCountRequest(msg string) bool {
+	s := strings.ToLower(strings.TrimSpace(msg))
+	if s == "" || !HasAngelWord(msg) {
+		return false
+	}
+	if strings.Contains(s, "какое количество") && strings.Contains(s, "ангел") {
+		return true
+	}
+	if strings.Contains(s, "сколько ангел") {
+		return true
+	}
+	if (strings.Contains(s, "количество ангел") || strings.Contains(s, "число ангел")) && (strings.Contains(s, "которых") || strings.Contains(s, "знаешь")) {
+		return true
+	}
+	return false
 }
 
 func IsMetaQuestionAboutBot(s string) bool {

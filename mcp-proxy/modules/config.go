@@ -20,13 +20,12 @@ type Server struct {
 	LlmContextLength int   // лимит контекста модели (например 40960); вход обрезается до context_length - max_tokens
 	LlmLimiter       *ratelimit.InFlight
 	PerChatLimiter *ratelimit.PerKey
-	PromptA        string
-	PromptB        string
-	PromptC        string // по списку имён + вопрос → номер(а) из списка или 0
-	DebugMode      int
+	PromptA   string
+	PromptB   string
+	DebugMode int
 }
 
-func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
+func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
 	vllmBase := config.LoadString("LLM_BINDING_HOST", "")
 	if vllmBase == "" {
@@ -60,9 +59,8 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 		LlmContextLength: llmContextLength,
 		LlmLimiter:       llmLimiter,
 		PerChatLimiter:   perChatLimiter,
-		PromptA:          promptA,
-		PromptB:          promptB,
-		PromptC:          promptC,
-		DebugMode:        debugMode,
+		PromptA:   promptA,
+		PromptB:   promptB,
+		DebugMode: debugMode,
 	}
 }
