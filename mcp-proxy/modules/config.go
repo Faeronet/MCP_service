@@ -32,6 +32,10 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	if llmBase == "" {
 		llmBase = "http://llm-code:8005/v1"
 	}
+	// Hard guard: requirement is to avoid vLLM in chat flow.
+	if strings.Contains(strings.ToLower(llmBase), "vllm") {
+		llmBase = "http://llm-code:8005/v1"
+	}
 	llmBase = strings.TrimSuffix(llmBase, "/")
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
 	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")

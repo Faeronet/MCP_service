@@ -253,14 +253,29 @@ services:
     build:
       context: ./llm-code
       dockerfile: Dockerfile
+    gpus: all
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
     environment:
       PORT: "8005"
       LLM_CODE_MODEL: ${LLM_CODE_MODEL:-Qwen/Qwen3-0.6B}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      HF_HOME: /models
       # TEMPERATURE=0 → детерминированная генерация
       TEMPERATURE: ${LLM_TEMPERATURE:-0.0}
       TOP_P: ${LLM_TOP_P:-1.0}
     ports:
       - "8005:8005"
+    volumes:
+      - ./models:/models
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8005/health || exit 1"]
       interval: 15s

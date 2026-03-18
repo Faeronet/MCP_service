@@ -9,8 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Fix torch to CPU wheels for predictable deployment (like reranker).
-RUN pip install --no-cache-dir torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+# Use CUDA-enabled PyTorch so this service can run on GPU.
+# If CUDA is not available at runtime, torch will fall back to CPU or error depending on driver setup.
+RUN pip install --no-cache-dir torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124
 
 COPY main.py .
 

@@ -47,6 +47,18 @@ def _load_model() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16 if device == "cuda" else torch.float32
 
+    # Helpful startup log: confirm CUDA visibility from inside the container.
+    try:
+        cuda_ok = torch.cuda.is_available()
+        dev_count = torch.cuda.device_count() if cuda_ok else 0
+        msg = f"[llm-code] cuda_available={cuda_ok} device_count={dev_count}"
+        if cuda_ok and dev_count > 0:
+            cur = torch.cuda.current_device()
+            msg += f" current_device={cur} name={torch.cuda.get_device_name(cur)}"
+        print(msg, flush=True)
+    except Exception as e:
+        print(f"[llm-code] cuda probe failed: {e}", flush=True)
+
     _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     if _tokenizer.pad_token_id is None:
         _tokenizer.pad_token_id = _tokenizer.eos_token_id
