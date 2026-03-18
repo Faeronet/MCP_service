@@ -9,9 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Use CUDA-enabled PyTorch so this service can run on GPU.
-# If CUDA is not available at runtime, torch will fall back to CPU or error depending on driver setup.
-RUN pip install --no-cache-dir torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124
+# RTX 50-series / Blackwell uses compute capability sm_120.
+# The default stable PyTorch wheels may not contain sm_120 kernels, causing:
+# "CUDA error: no kernel image is available for execution on the device".
+# Use a newer nightly CUDA wheel that includes sm_120.
+RUN pip install --no-cache-dir --pre --upgrade \
+  torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/nightly/cu128
 
 COPY main.py .
 
