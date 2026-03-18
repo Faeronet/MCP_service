@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
@@ -36,7 +37,28 @@ class ChatCompletionsRequest(BaseModel):
 
 _tokenizer = None
 _model = None
-_model_lock = None
+
+
+def _resolve_model_name(model_name: str) -> str:
+    """
+    Try to resolve a HF model id to a local directory under /models.
+    Your local folder layout may not match `owner/repo`.
+    """
+    if os.path.isabs(model_name) and os.path.isdir(model_name):
+        return model_name
+
+    models_dir = os.getenv("MODELS_DIR", "/models")
+    last = model_name.split("/")[-1] if "/" in model_name else model_name
+    candidates = [
+        os.path.join(models_dir, model_name),  # /models/Qwen/Qwen3-14B-AWQ
+        os.path.join(models_dir, last),  # /models/Qwen3-14B-AWQ
+        os.path.join(models_dir, model_name.replace("/", "_")),  # /models/Qwen_Qwen3-14B-AWQ
+        os.path.join(models_dir, model_name.replace("/", "--")),  # /models/Qwen--Qwen3-14B-AWQ
+    ]
+    for c in candidates:
+        if os.path.isdir(c):
+            return c
+    return model_name
 
 
 def _load_model() -> None:
@@ -48,13 +70,7 @@ def _load_model() -> None:
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     torch_dtype = torch.float16 if device.type == "cuda" else torch.float32
 
-    # If model name is a HF repo id, try to resolve it to a local directory under /models.
-    models_dir = os.getenv("MODELS_DIR", "/models")
-    resolved_model_name = MODEL_NAME
-    if not os.path.isabs(MODEL_NAME):
-        candidate = os.path.join(models_dir, MODEL_NAME)
-        if os.path.isdir(candidate):
-            resolved_model_name = candidate
+    resolved_model_name = _resolve_model_name(MODEL_NAME)
 
     # Helpful startup log: confirm CUDA visibility from inside the container.
     try:
@@ -72,13 +88,20 @@ def _load_model() -> None:
     if _tokenizer.pad_token_id is None:
         _tokenizer.pad_token_id = _tokenizer.eos_token_id
 
-    _model = AutoModelForCausalLM.from_pretrained(
-        resolved_model_name,
-        trust_remote_code=True,
-        torch_dtype=torch_dtype,
-        device_map=None,  # keep everything on one device; avoids cpu/gpu tensor mismatch
-    )
-    _model.to(device)
+    # Load model weights and keep everything on one device; avoids cpu/cuda tensor mismatch.
+    try:
+        _model = AutoModelForCausalLM.from_pretrained(
+            resolved_model_name,
+            trust_remote_code=True,
+            torch_dtype=torch_dtype,
+            device_map=None,
+        )
+        _model.to(device)
+    except Exception as e:
+        print(f"[llm-code] model load failed for {resolved_model_name}: {e}", flush=True)
+        traceback.print_exc()
+        raise
+
     _model.eval()
 
 
@@ -112,26 +135,31 @@ def chat_completions(req: ChatCompletionsRequest) -> Dict[str, Any]:
 
     prompt = _build_prompt(req.messages)
 
-    inputs = _tokenizer(prompt, return_tensors="pt")
-    model_device = next(_model.parameters()).device
-    inputs = {k: v.to(model_device) for k, v in inputs.items()}
-    input_ids = inputs["input_ids"]
+    try:
+        inputs = _tokenizer(prompt, return_tensors="pt")
+        model_device = next(_model.parameters()).device
+        inputs = {k: v.to(model_device) for k, v in inputs.items()}
+        input_ids = inputs["input_ids"]
 
-    with torch.no_grad():
-        outputs = _model.generate(
-            **inputs,
-            max_new_tokens=max_new,
-            do_sample=(TEMPERATURE > 0),
-            temperature=TEMPERATURE if TEMPERATURE > 0 else None,
-            top_p=TOP_P if TEMPERATURE > 0 else None,
-            pad_token_id=_tokenizer.eos_token_id,
-            eos_token_id=_tokenizer.eos_token_id,
-        )
+        with torch.no_grad():
+            outputs = _model.generate(
+                **inputs,
+                max_new_tokens=max_new,
+                do_sample=(TEMPERATURE > 0),
+                temperature=TEMPERATURE if TEMPERATURE > 0 else None,
+                top_p=TOP_P if TEMPERATURE > 0 else None,
+                pad_token_id=_tokenizer.eos_token_id,
+                eos_token_id=_tokenizer.eos_token_id,
+            )
 
-    gen_ids = outputs[0][input_ids.shape[-1] :]
-    text = _tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
-    if text == "":
-        text = _tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        gen_ids = outputs[0][input_ids.shape[-1] :]
+        text = _tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        if text == "":
+            text = _tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+    except Exception as e:
+        print(f"[llm-code] generate failed: {e}", flush=True)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex}",
