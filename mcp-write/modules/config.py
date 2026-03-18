@@ -7,7 +7,13 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
-VLLM_BASE = (os.getenv("VLLM_OPENAI_BASE") or "http://vllm:8000/v1").strip().rstrip("/")
+# LLM base for chat/completions.
+# Prefer code-based LLM binding (llm-code, ollama, etc) via LLM_BINDING_HOST.
+VLLM_BASE = (
+    os.getenv("LLM_BINDING_HOST")
+    or os.getenv("VLLM_OPENAI_BASE")
+    or "http://vllm:8000/v1"
+).strip().rstrip("/")
 EMBEDDING_BINDING_HOST = (os.getenv("EMBEDDING_BINDING_HOST") or "").strip().rstrip("/")
 EMBED_API_URL = (os.getenv("EMBED_API_URL") or "").strip().rstrip("/")
 EMBED_BASE = EMBEDDING_BINDING_HOST or EMBED_API_URL or VLLM_BASE

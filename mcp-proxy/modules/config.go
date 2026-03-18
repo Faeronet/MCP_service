@@ -27,11 +27,12 @@ type Server struct {
 
 func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
-	vllmBase := config.LoadString("LLM_BINDING_HOST", "")
-	if vllmBase == "" {
-		vllmBase = config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1")
+	// Prefer code-based LLM service (llm-code) over vLLM.
+	llmBase := config.LoadString("LLM_BINDING_HOST", "")
+	if llmBase == "" {
+		llmBase = "http://llm-code:8005/v1"
 	}
-	vllmBase = strings.TrimSuffix(vllmBase, "/")
+	llmBase = strings.TrimSuffix(llmBase, "/")
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
 	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")
 	llmMaxTokens := config.LoadInt("LLM_MAX_TOKENS", 2048)
@@ -52,7 +53,7 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	return &Server{
 		Pool:             pool,
 		McpReadURL:       mcpReadURL,
-		VllmBase:         vllmBase,
+		VllmBase:         llmBase, // Backward-compatible field name.
 		LlmModel:         llmModel,
 		LlmAPIKey:        llmAPIKey,
 		LlmMaxTokens:     llmMaxTokens,

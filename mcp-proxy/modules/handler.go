@@ -13,7 +13,7 @@ import (
 
 var logHandler = logging.New("mcp-proxy")
 
-// HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
+	// HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
 func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -125,9 +125,11 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				searchQuery = req.MessageText
 			}
 		}
+
 		if HasAngelWord(req.MessageText) && strings.Contains(lowerMsg, "дат") {
 			searchQuery = "[date] list"
 		}
+
 		userDateStr := ExtractDateFromQuestion(req.MessageText)
 		if userDateStr != "" {
 			_, _, modelHasDate := ParseDayMonthFromQuery(searchQuery)
@@ -144,61 +146,62 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				searchQuery = userDateStr
 			}
 		}
+
 		day, month, hasDate := ParseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > MaxDaysInMonth(month)) {
 			contextText = "date not found"
 		} else if IsMetaQuestionAboutBot(searchQuery) {
 			contextText = ""
 		} else {
-				attachmentsText := s.GetAttachmentsText(ctx, req.SessionID)
-				var err error
-				var buildChunkIDs []string
-				var buildCollection string
-				var buildCollectionsSearched []string
-				var buildQueryForFilter string
-				var buildContextKind string
-				var buildContextRef string
-				contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
-				if err != nil {
-					if err.Error() == "chunk_not_found" {
-						contextText = "По подходящим данным в базе ничего не найдено."
-					} else if err.Error() == "date_not_found" {
-						contextText = "Данные не найдены."
-					} else {
-						logHandler.Warn(ctx, "build_context failed", logging.KV{"error", err})
-						contextText = ""
-					}
-				} else if len(buildChunkIDs) == 1 {
-					// При ровно одном чанке подставляем полный контекст из Postgres; для коллекций emocionalnoe/intellektualnye/astralnyi_duh — только чанки
-					skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh"
-					if skipFullContext {
-						buildContextKind = "chunks"
-					} else {
-						if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
-							contextText = fullCtx
-							buildContextKind = "full"
-							buildContextRef = buildChunkIDs[0]
-						}
+			attachmentsText := s.GetAttachmentsText(ctx, req.SessionID)
+			var err error
+			var buildChunkIDs []string
+			var buildCollection string
+			var buildCollectionsSearched []string
+			var buildQueryForFilter string
+			var buildContextKind string
+			var buildContextRef string
+			contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			if err != nil {
+				if err.Error() == "chunk_not_found" {
+					contextText = "По подходящим данным в базе ничего не найдено."
+				} else if err.Error() == "date_not_found" {
+					contextText = "Данные не найдены."
+				} else {
+					logHandler.Warn(ctx, "build_context failed", logging.KV{"error", err})
+					contextText = ""
+				}
+			} else if len(buildChunkIDs) == 1 {
+				// При ровно одном чанке подставляем полный контекст из Postgres; для коллекций emocionalnoe/intellektualnye/astralnyi_duh — только чанки
+				skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh"
+				if skipFullContext {
+					buildContextKind = "chunks"
+				} else {
+					if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
+						contextText = fullCtx
+						buildContextKind = "full"
+						buildContextRef = buildChunkIDs[0]
 					}
 				}
-				if s.DebugMode == 1 {
-					debugMessage = "🔍 В Qdrant отправлено (ответ модели на промпт A):\n" + searchQuery
-					if buildQueryForFilter != "" {
-						debugMessage += "\n\nПосле вырезания триггеров (на поиск по словам): " + buildQueryForFilter
-					}
-					if len(buildCollectionsSearched) > 0 {
-						debugMessage += "\n\nИскало в: " + strings.Join(buildCollectionsSearched, ", ")
-					}
-					if buildCollection != "" {
-						debugMessage += "\n\nНайдено в: " + buildCollection
-					}
-					if len(buildChunkIDs) > 0 {
-						debugMessage += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
-					}
+			}
+			if s.DebugMode == 1 {
+				debugMessage = "🔍 В Qdrant отправлено (поисковый запрос):\n" + searchQuery
+				if buildQueryForFilter != "" {
+					debugMessage += "\n\nПосле вырезания триггеров (на поиск по словам): " + buildQueryForFilter
 				}
-				if buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
-					savedContextRef = buildCollection + ":" + buildContextRef
+				if len(buildCollectionsSearched) > 0 {
+					debugMessage += "\n\nИскало в: " + strings.Join(buildCollectionsSearched, ", ")
 				}
+				if buildCollection != "" {
+					debugMessage += "\n\nНайдено в: " + buildCollection
+				}
+				if len(buildChunkIDs) > 0 {
+					debugMessage += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
+				}
+			}
+			if buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
+				savedContextRef = buildCollection + ":" + buildContextRef
+			}
 		}
 	}
 
@@ -211,7 +214,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if replyErr != nil {
 		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr})
-		hint := "Модель недоступна. Проверьте, что vLLM запущен и в .env указан VLLM_OPENAI_BASE."
+		hint := "Модель недоступна. Проверьте, что llm-code запущен и в .env указан LLM_BINDING_HOST (по умолчанию http://llm-code:8005/v1)."
 		if errStr := replyErr.Error(); len(errStr) < 120 {
 			hint = "Ошибка LLM: " + errStr
 		}

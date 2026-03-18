@@ -25,8 +25,8 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 	return reply, nil
 }
 
-// CallLLM calls vLLM chat completion; systemContent = system prompt, userQuery = user message.
-// Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length (vLLM 400).
+// CallLLM calls OpenAI-compatible /chat/completions endpoint (llm-code в контейнере).
+// Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
 func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
 	maxInputTokens := s.LlmContextLength - s.LlmMaxTokens
 	if maxInputTokens <= 0 {
@@ -66,7 +66,7 @@ func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuer
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bb, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("vllm %d: %s", resp.StatusCode, string(bb))
+		return "", fmt.Errorf("llm %d: %s", resp.StatusCode, string(bb))
 	}
 	var out struct {
 		Choices []struct {
