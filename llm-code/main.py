@@ -36,6 +36,7 @@ class ChatCompletionsRequest(BaseModel):
 
 _tokenizer = None
 _model = None
+_model_lock = None
 
 
 def _load_model() -> None:
@@ -44,14 +45,22 @@ def _load_model() -> None:
         return
 
     # device selection: prefer GPU if present
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    torch_dtype = torch.float16 if device == "cuda" else torch.float32
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    torch_dtype = torch.float16 if device.type == "cuda" else torch.float32
+
+    # If model name is a HF repo id, try to resolve it to a local directory under /models.
+    models_dir = os.getenv("MODELS_DIR", "/models")
+    resolved_model_name = MODEL_NAME
+    if not os.path.isabs(MODEL_NAME):
+        candidate = os.path.join(models_dir, MODEL_NAME)
+        if os.path.isdir(candidate):
+            resolved_model_name = candidate
 
     # Helpful startup log: confirm CUDA visibility from inside the container.
     try:
         cuda_ok = torch.cuda.is_available()
         dev_count = torch.cuda.device_count() if cuda_ok else 0
-        msg = f"[llm-code] cuda_available={cuda_ok} device_count={dev_count}"
+        msg = f"[llm-code] cuda_available={cuda_ok} device_count={dev_count} resolved_model_name={resolved_model_name}"
         if cuda_ok and dev_count > 0:
             cur = torch.cuda.current_device()
             msg += f" current_device={cur} name={torch.cuda.get_device_name(cur)}"
@@ -59,16 +68,17 @@ def _load_model() -> None:
     except Exception as e:
         print(f"[llm-code] cuda probe failed: {e}", flush=True)
 
-    _tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    _tokenizer = AutoTokenizer.from_pretrained(resolved_model_name, trust_remote_code=True)
     if _tokenizer.pad_token_id is None:
         _tokenizer.pad_token_id = _tokenizer.eos_token_id
 
     _model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
+        resolved_model_name,
         trust_remote_code=True,
         torch_dtype=torch_dtype,
-        device_map="auto" if device == "cuda" else None,
+        device_map=None,  # keep everything on one device; avoids cpu/gpu tensor mismatch
     )
+    _model.to(device)
     _model.eval()
 
 
@@ -103,14 +113,9 @@ def chat_completions(req: ChatCompletionsRequest) -> Dict[str, Any]:
     prompt = _build_prompt(req.messages)
 
     inputs = _tokenizer(prompt, return_tensors="pt")
+    model_device = next(_model.parameters()).device
+    inputs = {k: v.to(model_device) for k, v in inputs.items()}
     input_ids = inputs["input_ids"]
-    attention_mask = inputs.get("attention_mask")
-
-    # move to GPU if model not using device_map auto
-    if torch.cuda.is_available() and next(_model.parameters()).is_cuda is False:
-        inputs = {k: v.to("cuda") for k, v in inputs.items()}
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs.get("attention_mask")
 
     with torch.no_grad():
         outputs = _model.generate(

@@ -265,7 +265,7 @@ services:
               capabilities: [gpu]
     environment:
       PORT: "8005"
-      LLM_CODE_MODEL: ${LLM_CODE_MODEL:-Qwen/Qwen3-0.6B}
+      LLM_CODE_MODEL: ${LLM_CODE_MODEL:-Qwen/Qwen3-14B-AWQ}
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       HF_HOME: /models
