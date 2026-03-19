@@ -10,25 +10,21 @@ import (
 	"strings"
 )
 
-// ExtractSearchQuery calls LLM with prompt A; returns search query for Qdrant.
-// К системному промпту добавляется полный список имён ангелов из БД (без количества).
-func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion string) (string, error) {
-	systemContent := s.PromptA
-	if names, err := s.GetAngelNamesList(ctx); err == nil && len(names) > 0 {
-		systemContent = s.PromptA + "\n\nСписок известных имён ангелов-хранителей:\n" + strings.Join(names, "\n")
+// truncateUTF8 cuts s to at most maxBytes without breaking a UTF-8 code point.
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
 	}
-	reply, err := s.CallLLM(ctx, requestID, systemContent, userQuestion)
-	if err != nil {
-		return "", err
+	s = s[:maxBytes]
+	for len(s) > 0 && (s[len(s)-1]&0xC0) == 0x80 {
+		s = s[:len(s)-1]
 	}
-	reply = StripThink(reply)
-	return reply, nil
+	return s
 }
 
-// CallLLM calls OpenAI-compatible /chat/completions (vLLM или другой OpenAI-совместимый сервер).
-// Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
-func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
-	maxOut := s.LlmMaxTokens
+// llmCharBudget mirrors CallLLM limits: max output tokens and max system prompt size in runes/bytes (same as before: byte length).
+func (s *Server) llmCharBudget(userQueryLen int) (maxOut int, systemMaxChars int) {
+	maxOut = s.LlmMaxTokens
 	if maxOut > s.LlmContextLength-256 {
 		maxOut = s.LlmContextLength - 256
 		if maxOut < 128 {
@@ -39,15 +35,88 @@ func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuer
 	if maxInputTokens <= 0 {
 		maxInputTokens = 512
 	}
-	// Приблизительно ~4 символа на токен (кириллица/латиница)
-	maxInputChars := maxInputTokens * 4
-	margin := 256
-	systemMax := maxInputChars - len(userQuery) - margin
-	if systemMax < 500 {
-		systemMax = 500
+	// Консервативнее 4 символа/токен — кириллица и спецсимволы; иначе vLLM отклоняет запрос, этап A «молча» падает в fallback.
+	maxInputChars := maxInputTokens * 3
+	margin := 512
+	systemMaxChars = maxInputChars - userQueryLen - margin
+	if systemMaxChars < 500 {
+		systemMaxChars = 500
 	}
+	return maxOut, systemMaxChars
+}
+
+// ExtractSearchQuery calls LLM with prompt A; returns search query for Qdrant.
+// К системному промпту добавляется список имён; бюджет подгоняется под контекст, иначе prompt A (~32KB+) обрезается в CallLLM
+// с потерей хвоста и без имён — модель перестаёт выдавать ключ поиска, цепочка выглядит как «сразу только промпт B».
+func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion string) (string, error) {
+	_, systemMax := s.llmCharBudget(len(userQuestion))
+	const namesHeader = "\n\nСписок известных имён ангелов-хранителей:\n"
+	truncSuffix := "\n\n[промпт извлечения обрезан по лимиту контекста модели]\n"
+
+	namesPart := ""
+	if names, err := s.GetAngelNamesList(ctx); err == nil && len(names) > 0 {
+		joined := strings.Join(names, "\n")
+		maxNames := systemMax / 3
+		if maxNames < 1500 {
+			maxNames = 1500
+		}
+		if maxNames > 14000 {
+			maxNames = 14000
+		}
+		if len(joined) > maxNames {
+			joined = truncateUTF8(joined, maxNames) + "\n..."
+		}
+		namesPart = namesHeader + joined
+	}
+
+	room := systemMax - len(namesPart)
+	if room < 2048 {
+		namesPart = ""
+		room = systemMax
+	}
+	pa := s.PromptA
+	if len(pa) > room {
+		if room <= len(truncSuffix)+64 {
+			pa = truncateUTF8(pa, room)
+		} else {
+			trim := room - len(truncSuffix)
+			if trim < 128 {
+				trim = 128
+			}
+			if len(pa) > trim {
+				pa = truncateUTF8(pa, trim) + truncSuffix
+			}
+		}
+	}
+	systemContent := pa + namesPart
 	if len(systemContent) > systemMax {
-		systemContent = systemContent[:systemMax] + "\n\n[... контекст обрезан из-за лимита модели ...]"
+		systemContent = truncateUTF8(systemContent, systemMax)
+	}
+
+	reply, err := s.CallLLMWithBudget(ctx, requestID, systemContent, userQuestion)
+	if err != nil {
+		return "", err
+	}
+	reply = StripThink(reply)
+	return reply, nil
+}
+
+// CallLLM calls OpenAI-compatible /chat/completions (vLLM или другой OpenAI-совместимый сервер).
+// Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
+func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
+	return s.CallLLMWithBudget(ctx, requestID, systemContent, userQuery)
+}
+
+// CallLLMWithBudget uses the same maxOut/system cap as llmCharBudget (final ответ с длинным промптом B + контекст).
+func (s *Server) CallLLMWithBudget(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
+	maxOut, systemMax := s.llmCharBudget(len(userQuery))
+	if len(systemContent) > systemMax {
+		suffix := "\n\n[... контекст обрезан из-за лимита модели ...]"
+		n := systemMax - len(suffix)
+		if n < 256 {
+			n = 256
+		}
+		systemContent = truncateUTF8(systemContent, n) + suffix
 	}
 	messages := []map[string]interface{}{
 		{"role": "system", "content": systemContent},

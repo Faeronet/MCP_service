@@ -150,8 +150,12 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.Config.EmbedLimiter.Acquire(ctx); err != nil {
+		logHandler.Warn(ctx, "build_context: embed limiter full", logging.KV{"error", err})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{Context: ""})
+		_ = json.NewEncoder(w).Encode(BuildContextResponse{
+			Context: "",
+			Error:   "embed_limit",
+		})
 		return
 	}
 	defer s.Config.EmbedLimiter.Release()

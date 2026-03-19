@@ -122,6 +122,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
 			searchQuery = q
 		} else {
+			if err != nil {
+				logHandler.Warn(ctx, "extract_search_query (prompt A) failed, using fallback text", logging.KV{"error", err})
+			}
 			searchQuery = ExtractDateFromQuestion(req.MessageText)
 			if searchQuery == "" {
 				searchQuery = req.MessageText
@@ -166,11 +169,14 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 			var buildContextRef string
 			contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
 			if err != nil {
-				if err.Error() == "chunk_not_found" {
+				switch err.Error() {
+				case "chunk_not_found":
 					contextText = "По подходящим данным в базе ничего не найдено."
-				} else if err.Error() == "date_not_found" {
+				case "date_not_found":
 					contextText = "Данные не найдены."
-				} else {
+				case "embed_limit":
+					contextText = "Поиск временно перегружен (лимит эмбеддинга). Повторите вопрос через минуту."
+				default:
 					logHandler.Warn(ctx, "build_context failed", logging.KV{"error", err})
 					contextText = ""
 				}
