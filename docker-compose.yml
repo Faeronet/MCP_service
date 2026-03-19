@@ -159,7 +159,7 @@ services:
 
   # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
   # Порядок запуска AI: vllm (GPU) + embed-cpu (CPU) → rerank (CPU), extract-tool (CPU).
-  # KV-cache: --max-model-len (меньше = меньше VRAM). Не ставьте 2048: тогда max_tokens+промпт не влезают (RAG ломается).
+  # KV-cache: --max-model-len и --max-num-seqs (меньше = меньше VRAM).
   # Должно совпадать с LLM_CONTEXT_LENGTH у mcp-proxy (или быть больше).
   vllm:
     profiles:
@@ -175,9 +175,9 @@ services:
       - "--gpu-memory-utilization"
       - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
       - "--max-model-len"
-      - "${VLLM_MAX_MODEL_LEN:-8192}"
+      - "${VLLM_MAX_MODEL_LEN:-2048}"
       - "--max-num-seqs"
-      - "${VLLM_MAX_NUM_SEQS:-4}"
+      - "${VLLM_MAX_NUM_SEQS:-1}"
     deploy:
       resources:
         limits:

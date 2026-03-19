@@ -46,8 +46,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	defer s.LlmLimiter.Release()
 
 	var contextText string
-	var replyToPrefix string // ответ на сообщение бота — не должен отключать промпт A и BuildContext
+	var replyToPrefix string // PREVIOUS_QUESTION / PREVIOUS_ANSWER без дублирования CONTEXT
 	var savedContextRef string
+	var useStoredReplyContext bool // вопрос по ответу бота: в LLM — тот же CONTEXT, что был у того ответа (full или чанк)
 	var debugMessage string
 	var reply string
 	var replyErr error
@@ -92,11 +93,10 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// При ответе на сообщение бота добавляем предыдущий вопрос/ответ/сохранённый контекст в system,
-	// но не пропускаем ExtractSearchQuery (промпт A) и BuildContext — иначе запрос уходит сразу в LLM только с промптом B.
+	// Ответ на сообщение бота: в префиксе — только предыдущий вопрос и ответ; факты для уточнения — из сохранённого CONTEXT того ответа.
 	if !nameAllHandled && req.ReplyToTelegramMessageID != 0 {
-		userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
-		if ok && (userQ != "" || botA != "" || ctxStored != "") {
+		userQ, botA, ctxForLLM, ctxRef, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
+		if ok && (userQ != "" || botA != "" || ctxForLLM != "") {
 			var bld strings.Builder
 			if userQ != "" {
 				bld.WriteString("Предыдущий вопрос: ")
@@ -108,16 +108,18 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				bld.WriteString(botA)
 				bld.WriteString("\n\n")
 			}
-			if ctxStored != "" {
-				bld.WriteString("Контекст:\n")
-				bld.WriteString(ctxStored)
-			}
 			replyToPrefix = bld.String()
+			if ctxForLLM != "" {
+				useStoredReplyContext = true
+				contextText = ctxForLLM
+				savedContextRef = ctxRef
+				logHandler.Info(ctx, "reply-to: using stored answer CONTEXT for LLM", logging.KV{"chat_id", req.ChatID}, logging.KV{"has_ref", ctxRef != ""})
+			}
 			logHandler.Info(ctx, "reply-to prefix for chat", logging.KV{"chat_id", req.ChatID})
 		}
 	}
 
-	if !nameAllHandled {
+	if !nameAllHandled && !useStoredReplyContext {
 		var searchQuery string
 		if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
 			searchQuery = q
@@ -212,6 +214,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				savedContextRef = buildCollection + ":" + buildContextRef
 			}
 		}
+	} else if !nameAllHandled && useStoredReplyContext && s.DebugMode == 1 {
+		debugMessage = "↩️ Уточнение по ответу бота: CONTEXT тот же, что использовался для того ответа (без нового поиска)."
 	}
 
 	if !nameAllHandled {

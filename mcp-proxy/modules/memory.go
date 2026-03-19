@@ -53,16 +53,18 @@ func (s *Server) GetContextByTelegramMessageID(ctx context.Context, sessionID uu
 	if err != nil {
 		return "", false
 	}
-	if contextRef != nil && *contextRef != "" {
-		if full, ok := s.GetFullContextByRef(ctx, *contextRef); ok && full != "" {
+	if contextRef != nil && strings.TrimSpace(*contextRef) != "" {
+		if full, ok := s.GetFullContextByRef(ctx, strings.TrimSpace(*contextRef)); ok && strings.TrimSpace(full) != "" {
 			return full, true
 		}
 	}
-	return contextText, true
+	return strings.TrimSpace(contextText), true
 }
 
-// GetReplyToContext returns (userQuestion, botAnswer, contextText) for the message we're replying to.
-func (s *Server) GetReplyToContext(ctx context.Context, sessionID uuid.UUID, replyToTelegramMessageID int) (userQuestion, botAnswer, contextText string, ok bool) {
+// GetReplyToContext returns предыдущий вопрос пользователя, текст ответа бота, фактический CONTEXT,
+// который использовался для того ответа (полный текст из Postgres по context_ref, если ответ строился на full;
+// иначе ровно context_text — фрагмент чанка), и сохранённый context_ref для цепочки follow-up (пусто если был только чанк).
+func (s *Server) GetReplyToContext(ctx context.Context, sessionID uuid.UUID, replyToTelegramMessageID int) (userQuestion, botAnswer, contextForLLM, storedContextRef string, ok bool) {
 	var botMsgID uuid.UUID
 	var botContent string
 	err := s.Pool.QueryRow(ctx, `
@@ -71,15 +73,53 @@ func (s *Server) GetReplyToContext(ctx context.Context, sessionID uuid.UUID, rep
 		LIMIT 1
 	`, sessionID, replyToTelegramMessageID).Scan(&botMsgID, &botContent)
 	if err != nil {
-		return "", "", "", false
+		return "", "", "", "", false
 	}
-	contextText, _ = s.GetContextByTelegramMessageID(ctx, sessionID, replyToTelegramMessageID)
+
+	var ctxText string
+	var ctxRef *string
+	_ = s.Pool.QueryRow(ctx, `
+		SELECT ac.context_text, ac.context_ref FROM chat.answer_context ac
+		WHERE ac.session_id = $1 AND ac.message_id = $2
+	`, sessionID, botMsgID).Scan(&ctxText, &ctxRef)
+
+	contextForLLM = ""
+	storedContextRef = ""
+	if ctxRef != nil && strings.TrimSpace(*ctxRef) != "" {
+		storedContextRef = strings.TrimSpace(*ctxRef)
+		// Ответ строился на полном контексте документа — в LLM снова подставляем полный текст из того же ref.
+		if full, okFull := s.GetFullContextByRef(ctx, storedContextRef); okFull && strings.TrimSpace(full) != "" {
+			contextForLLM = strings.TrimSpace(full)
+		}
+		// mcp-read недоступен — пробуем тот же chunk_id в Postgres (как при первичном ответе).
+		if contextForLLM == "" {
+			if parts := strings.SplitN(storedContextRef, ":", 2); len(parts) == 2 {
+				cid := strings.TrimSpace(parts[1])
+				if cid != "" {
+					if full, ok2 := s.GetFullContextByChunkIDs(ctx, []string{cid}); ok2 && strings.TrimSpace(full) != "" {
+						contextForLLM = strings.TrimSpace(full)
+					}
+				}
+			}
+		}
+	}
+	if contextForLLM == "" && strings.TrimSpace(ctxText) != "" {
+		// Сохранён только фрагмент чанка (без ref) — в LLM уходит ровно он.
+		contextForLLM = strings.TrimSpace(ctxText)
+		storedContextRef = ""
+	}
+	if contextForLLM == "" {
+		storedContextRef = ""
+	}
+
+	var prevUserContent string
 	_ = s.Pool.QueryRow(ctx, `
 		SELECT content FROM chat.messages
 		WHERE session_id = $1 AND created_at < (SELECT created_at FROM chat.messages WHERE id = $2)
 		ORDER BY created_at DESC LIMIT 1
-	`, sessionID, botMsgID).Scan(&userQuestion)
-	return userQuestion, botContent, contextText, true
+	`, sessionID, botMsgID).Scan(&prevUserContent)
+
+	return prevUserContent, botContent, contextForLLM, storedContextRef, true
 }
 
 // GetLastAssistantMessage returns the content of the most recent assistant message in the session (для fallback при ответе по списку name all).
