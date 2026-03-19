@@ -364,7 +364,7 @@ services:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
       mcp-read: { condition: service_started }
-      llm-code: { condition: service_started }
+      vllm: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/healthz"]
       interval: 10s
