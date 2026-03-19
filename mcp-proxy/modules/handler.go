@@ -93,29 +93,15 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Ответ на сообщение бота: в префиксе — только предыдущий вопрос и ответ; факты для уточнения — из сохранённого CONTEXT того ответа.
+	// Ответ на сообщение бота: факты для уточнения — только из сохранённого CONTEXT того ответа.
 	if !nameAllHandled && req.ReplyToTelegramMessageID != 0 {
-		userQ, botA, ctxForLLM, ctxRef, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
-		if ok && (userQ != "" || botA != "" || ctxForLLM != "") {
-			var bld strings.Builder
-			if userQ != "" {
-				bld.WriteString("Предыдущий вопрос: ")
-				bld.WriteString(userQ)
-				bld.WriteString("\n")
-			}
-			if botA != "" {
-				bld.WriteString("Ответ: ")
-				bld.WriteString(botA)
-				bld.WriteString("\n\n")
-			}
-			replyToPrefix = bld.String()
-			if ctxForLLM != "" {
-				useStoredReplyContext = true
-				contextText = ctxForLLM
-				savedContextRef = ctxRef
-				logHandler.Info(ctx, "reply-to: using stored answer CONTEXT for LLM", logging.KV{"chat_id", req.ChatID}, logging.KV{"has_ref", ctxRef != ""})
-			}
-			logHandler.Info(ctx, "reply-to prefix for chat", logging.KV{"chat_id", req.ChatID})
+		_, _, ctxForLLM, ctxRef, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
+		if ok && ctxForLLM != "" {
+			useStoredReplyContext = true
+			contextText = ctxForLLM
+			savedContextRef = ctxRef
+			// Для уточняющего вопроса не добавляем в system предыдущий вопрос/ответ — только CONTEXT.
+			logHandler.Info(ctx, "reply-to: using stored answer CONTEXT for LLM", logging.KV{"chat_id", req.ChatID}, logging.KV{"has_ref", ctxRef != ""})
 		}
 	}
 
