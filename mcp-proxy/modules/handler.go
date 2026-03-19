@@ -46,6 +46,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	defer s.LlmLimiter.Release()
 
 	var contextText string
+	var replyToPrefix string // ответ на сообщение бота — не должен отключать промпт A и BuildContext
 	var savedContextRef string
 	var debugMessage string
 	var reply string
@@ -91,8 +92,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// В обычном диалоге: при ответе на сообщение бота подставляем контекст предыдущего вопроса/ответа (без потока «по списку ангелов»).
-	if !nameAllHandled && contextText == "" && req.ReplyToTelegramMessageID != 0 {
+	// При ответе на сообщение бота добавляем предыдущий вопрос/ответ/сохранённый контекст в system,
+	// но не пропускаем ExtractSearchQuery (промпт A) и BuildContext — иначе запрос уходит сразу в LLM только с промптом B.
+	if !nameAllHandled && req.ReplyToTelegramMessageID != 0 {
 		userQ, botA, ctxStored, ok := s.GetReplyToContext(ctx, req.SessionID, req.ReplyToTelegramMessageID)
 		if ok && (userQ != "" || botA != "" || ctxStored != "") {
 			var bld strings.Builder
@@ -110,12 +112,12 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				bld.WriteString("Контекст:\n")
 				bld.WriteString(ctxStored)
 			}
-			contextText = bld.String()
-			logHandler.Info(ctx, "using reply-to context", logging.KV{"chat_id", req.ChatID})
+			replyToPrefix = bld.String()
+			logHandler.Info(ctx, "reply-to prefix for chat", logging.KV{"chat_id", req.ChatID})
 		}
 	}
 
-	if !nameAllHandled && contextText == "" {
+	if !nameAllHandled {
 		var searchQuery string
 		if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
 			searchQuery = q
@@ -206,7 +208,12 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !nameAllHandled {
-		systemContent := s.PromptB + "\n" + contextText
+		systemExtra := replyToPrefix
+		if replyToPrefix != "" && contextText != "" {
+			systemExtra += "\n"
+		}
+		systemExtra += contextText
+		systemContent := s.PromptB + "\n" + systemExtra
 		reply, replyErr = s.CallLLM(ctx, requestID, systemContent, req.MessageText)
 		if s.DebugMode == 0 {
 			reply = StripThink(reply)
