@@ -28,9 +28,16 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 // CallLLM calls OpenAI-compatible /chat/completions (vLLM или другой OpenAI-совместимый сервер).
 // Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
 func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
-	maxInputTokens := s.LlmContextLength - s.LlmMaxTokens
+	maxOut := s.LlmMaxTokens
+	if maxOut > s.LlmContextLength-256 {
+		maxOut = s.LlmContextLength - 256
+		if maxOut < 128 {
+			maxOut = 128
+		}
+	}
+	maxInputTokens := s.LlmContextLength - maxOut
 	if maxInputTokens <= 0 {
-		maxInputTokens = 38912
+		maxInputTokens = 512
 	}
 	// Приблизительно ~4 символа на токен (кириллица/латиница)
 	maxInputChars := maxInputTokens * 4
@@ -47,7 +54,7 @@ func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuer
 		{"role": "user", "content": userQuery},
 	}
 	payload, _ := json.Marshal(map[string]interface{}{
-		"model": s.LlmModel, "messages": messages, "max_tokens": s.LlmMaxTokens,
+		"model": s.LlmModel, "messages": messages, "max_tokens": maxOut,
 		"chat_template_kwargs": map[string]interface{}{"enable_thinking": false},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.VllmBase+"/chat/completions", bytes.NewReader(payload))

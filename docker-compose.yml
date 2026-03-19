@@ -159,7 +159,8 @@ services:
 
   # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
   # Порядок запуска AI: vllm (GPU) + embed-cpu (CPU) → rerank (CPU), extract-tool (CPU).
-  # KV-cache: основной рычаг — --max-model-len (меньше = меньше VRAM под KV). Дополнительно — --max-num-seqs (меньше параллельных seq).
+  # KV-cache: --max-model-len (меньше = меньше VRAM). Не ставьте 2048: тогда max_tokens+промпт не влезают (RAG ломается).
+  # Должно совпадать с LLM_CONTEXT_LENGTH у mcp-proxy (или быть больше).
   vllm:
     profiles:
       - vllm
@@ -167,12 +168,14 @@ services:
     command:
       - "--model"
       - "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}"
+      - "--quantization"
+      - "${VLLM_QUANTIZATION:-awq}"
       - "--port"
       - "8000"
       - "--gpu-memory-utilization"
       - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
       - "--max-model-len"
-      - "${VLLM_MAX_MODEL_LEN:-2048}"
+      - "${VLLM_MAX_MODEL_LEN:-8192}"
       - "--max-num-seqs"
       - "${VLLM_MAX_NUM_SEQS:-4}"
     deploy:
@@ -362,6 +365,10 @@ services:
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
       LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-${LLM_CODE_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}}}
+      # Совпадайте с VLLM_MAX_MODEL_LEN в .env (дефолт 8192).
+      LLM_CONTEXT_LENGTH: ${LLM_CONTEXT_LENGTH:-8192}
+      # Запас под промпт (RAG): max_tokens + input ≤ max_model_len
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       BOT_DEBUG: ${BOT_DEBUG:-0}
     ports:

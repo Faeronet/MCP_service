@@ -38,16 +38,29 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	llmBase = strings.TrimSuffix(llmBase, "/")
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
 	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")
-	llmMaxTokens := config.LoadInt("LLM_MAX_TOKENS", 2048)
+	llmMaxTokens := config.LoadInt("LLM_MAX_TOKENS", 1024)
 	if llmMaxTokens < 256 {
 		llmMaxTokens = 4096
 	}
 	if llmMaxTokens > 32768 {
 		llmMaxTokens = 32768
 	}
-	llmContextLength := config.LoadInt("LLM_CONTEXT_LENGTH", 40960)
-	if llmContextLength < 2048 {
-		llmContextLength = 40960
+	llmContextLength := config.LoadInt("LLM_CONTEXT_LENGTH", 8192)
+	if llmContextLength < 512 {
+		llmContextLength = 8192
+	}
+	// max_tokens не может занимать весь контекст — иначе vLLM: «maximum input length of 0 tokens».
+	if llmMaxTokens >= llmContextLength {
+		llmMaxTokens = llmContextLength / 2
+		if llmMaxTokens < 256 {
+			llmMaxTokens = 256
+		}
+	}
+	if llmMaxTokens > llmContextLength-256 {
+		llmMaxTokens = llmContextLength - 256
+		if llmMaxTokens < 128 {
+			llmMaxTokens = 128
+		}
 	}
 	maxInflightLLM := config.LoadInt("MAX_INFLIGHT_LLM", 32)
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
