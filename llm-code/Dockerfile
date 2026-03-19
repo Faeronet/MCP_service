@@ -4,7 +4,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get -y install --no-install-recommends curl \
+# gptqmodel тянет pypcre и др. — нужен gcc для сборки нативных расширений.
+RUN apt-get update && apt-get -y install --no-install-recommends \
+    curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # gptqmodel при сборке wheel вызывает setup, которому нужен уже установленный torch.
