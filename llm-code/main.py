@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
@@ -8,7 +9,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 import torch
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.utils.quantization_config import AwqBackend
 
@@ -64,7 +65,6 @@ class ChatCompletionsRequest(BaseModel):
     model: Optional[str] = None
     messages: List[ChatMessage]
     max_tokens: Optional[int] = None
-    # mcp-proxy sends this extra field; we ignore it.
     chat_template_kwargs: Optional[Dict[str, Any]] = None
 
 
@@ -156,24 +156,36 @@ def _awq_quantization_config_dict(qc: Any, backend: AwqBackend) -> dict[str, Any
     return d
 
 
-def _awq_backend_override() -> AwqBackend | None:
+def _awq_backend_try_names() -> list[str] | None:
     """
-    Pip wheel gptqmodel often lacks ExLlama V2 CUDA ext (`gptqmodel_exllamav2_awq_kernels`).
-    HF AwqConfig defaults to AUTO → ExLlama V2 → import error.
-    Set LLM_CODE_AWQ_BACKEND=torch_awq (default) or marlin, gemm, etc.
-    Empty / exllama_v2 = no override (use checkpoint default / auto).
+    Список имён бэкенда по порядку. None = не трогать quantization_config (риск ExLlama).
+
+    По умолчанию (пусто или auto): marlin → gemm_triton → torch_awq (marlin обычно намного быстрее torch_awq).
+    Явно: LLM_CODE_AWQ_BACKEND=marlin или torch_awq — только один.
+    exllama_v2: без override (как в чекпойнте).
     """
-    raw = (os.getenv("LLM_CODE_AWQ_BACKEND") or "torch_awq").strip().lower()
-    if raw in ("", "auto", "exllama_v2"):
+    raw = (os.getenv("LLM_CODE_AWQ_BACKEND") or "").strip().lower()
+    if raw in ("exllama_v2", "exllamav2"):
         return None
-    try:
-        return AwqBackend(raw)
-    except ValueError:
-        print(
-            f"[llm-code] invalid LLM_CODE_AWQ_BACKEND={raw!r}, using torch_awq",
-            flush=True,
-        )
-        return AwqBackend.TORCH_AWQ
+    if raw in ("", "auto"):
+        return ["marlin", "gemm_triton", "torch_awq"]
+    return [raw]
+
+
+def _resolve_attn_implementation() -> str:
+    """
+    sdpa — без лишних зависимостей.
+    auto: flash_attention_2 если установлен flash-attn, иначе sdpa.
+    """
+    raw = (os.getenv("LLM_CODE_ATTN_IMPLEMENTATION") or "auto").strip().lower()
+    if raw in ("", "auto"):
+        try:
+            import flash_attn  # noqa: F401
+
+            return "flash_attention_2"
+        except ImportError:
+            return "sdpa"
+    return raw
 
 
 def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.device):
@@ -183,36 +195,50 @@ def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.devic
     """
     awq = _is_awq_path(resolved) or _is_awq_path(MODEL_NAME)
     if awq and torch.cuda.is_available():
-        backend = _awq_backend_override()
         load_kw: dict[str, Any] = {
             "trust_remote_code": True,
             "device_map": "auto",
             "torch_dtype": torch_dtype,
         }
-        # SDPA быстрее eager attention на GPU (если слой поддерживается конфигом модели)
-        attn = (os.getenv("LLM_CODE_ATTN_IMPLEMENTATION") or "sdpa").strip()
+        attn = _resolve_attn_implementation()
         if attn.lower() not in ("", "none", "eager"):
             load_kw["attn_implementation"] = attn
             print(f"[llm-code] attn_implementation={attn!r}", flush=True)
-        if backend is not None:
+
+        try_names = _awq_backend_try_names()
+        if try_names is None:
+            print("[llm-code] AWQ: backend override disabled (checkpoint default)", flush=True)
+            return AutoModelForCausalLM.from_pretrained(resolved, **load_kw)
+
+        last_err: BaseException | None = None
+        for name in try_names:
+            try:
+                backend = AwqBackend(name)
+            except ValueError:
+                print(f"[llm-code] skip unknown AWQ backend name {name!r}", flush=True)
+                continue
             config = AutoConfig.from_pretrained(resolved, trust_remote_code=True)
             qc = getattr(config, "quantization_config", None)
             new_qc = _awq_quantization_config_dict(qc, backend)
-            if new_qc is not None:
-                config.quantization_config = new_qc
-                load_kw["config"] = config
-                print(
-                    f"[llm-code] AWQ backend override: requested={backend.value!r} "
-                    f"config.quantization_config['backend']={new_qc.get('backend')!r}",
-                    flush=True,
-                )
-            else:
-                print(
-                    "[llm-code] no usable quantization_config; cannot set AWQ backend",
-                    flush=True,
-                )
-        return AutoModelForCausalLM.from_pretrained(resolved, **load_kw)
-    attn = (os.getenv("LLM_CODE_ATTN_IMPLEMENTATION") or "sdpa").strip()
+            if new_qc is None:
+                print("[llm-code] no usable quantization_config; cannot set AWQ backend", flush=True)
+                last_err = RuntimeError("missing quantization_config")
+                continue
+            config.quantization_config = new_qc
+            attempt_kw = {**load_kw, "config": config}
+            print(f"[llm-code] AWQ trying backend={backend.value!r} ...", flush=True)
+            try:
+                m = AutoModelForCausalLM.from_pretrained(resolved, **attempt_kw)
+                print(f"[llm-code] AWQ using backend={backend.value!r}", flush=True)
+                return m
+            except BaseException as e:
+                last_err = e
+                print(f"[llm-code] AWQ backend={backend.value!r} failed: {e}", flush=True)
+        if last_err is not None:
+            raise last_err
+        raise RuntimeError("no AWQ backend could be loaded")
+
+    attn = _resolve_attn_implementation()
     load_plain: dict[str, Any] = {
         "trust_remote_code": True,
         "torch_dtype": torch_dtype,
@@ -238,11 +264,15 @@ def _load_model() -> None:
     if device.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
         try:
             torch.set_float32_matmul_precision("high")
         except Exception:
             pass
-        print("[llm-code] CUDA: TF32 matmul/cudnn enabled, matmul precision=high", flush=True)
+        print(
+            "[llm-code] CUDA: TF32 + cudnn.benchmark, matmul precision=high",
+            flush=True,
+        )
 
     resolved_model_name = _resolve_model_name(MODEL_NAME)
 
@@ -270,6 +300,13 @@ def _load_model() -> None:
         raise
 
     _model.eval()
+
+    if _env_flag("LLM_CODE_TORCH_COMPILE", default_true=False):
+        try:
+            _model = torch.compile(_model, mode="reduce-overhead")  # type: ignore[assignment]
+            print("[llm-code] torch.compile(mode=reduce-overhead) applied", flush=True)
+        except Exception as e:
+            print(f"[llm-code] torch.compile skipped: {e}", flush=True)
 
 
 def _build_prompt(
@@ -319,6 +356,12 @@ def chat_completions(req: ChatCompletionsRequest) -> Dict[str, Any]:
 
     max_new = req.max_tokens or MAX_NEW_TOKENS_DEFAULT
     max_new = max(1, int(max_new))
+    if MAX_NEW_TOKENS_CAP > 0 and max_new > MAX_NEW_TOKENS_CAP:
+        print(
+            f"[llm-code] capping max_new_tokens {max_new} -> {MAX_NEW_TOKENS_CAP} (LLM_CODE_MAX_NEW_TOKENS_CAP)",
+            flush=True,
+        )
+        max_new = MAX_NEW_TOKENS_CAP
 
     prompt = _build_prompt(req.messages, req.chat_template_kwargs)
 
@@ -340,8 +383,17 @@ def chat_completions(req: ChatCompletionsRequest) -> Dict[str, Any]:
             gen_kw["temperature"] = TEMPERATURE
             gen_kw["top_p"] = TOP_P
 
+        t0 = time.monotonic()
         with torch.inference_mode():
             outputs = _model.generate(**gen_kw)
+        dt = time.monotonic() - t0
+        n_out = int(outputs.shape[1] - input_ids.shape[1])
+        if _env_flag("LLM_CODE_LOG_TIMING", default_true=True):
+            tps = n_out / dt if dt > 0 else 0.0
+            print(
+                f"[llm-code] generate: {dt:.2f}s, new_tokens≈{n_out}, ~{tps:.2f} tok/s",
+                flush=True,
+            )
 
         gen_ids = outputs[0][input_ids.shape[-1] :]
         text = _tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
