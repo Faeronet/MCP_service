@@ -22,9 +22,12 @@ func truncateUTF8(s string, maxBytes int) string {
 	return s
 }
 
-// llmCharBudget mirrors CallLLM limits: max output tokens and max system prompt size in runes/bytes (same as before: byte length).
-func (s *Server) llmCharBudget(userQueryLen int) (maxOut int, systemMaxChars int) {
+// llmCharBudget: maxOutCap 0 = LlmMaxTokens; иначе верхняя граница max_tokens (для короткого ответа промпта A).
+func (s *Server) llmCharBudget(userQueryLen int, maxOutCap int) (maxOut int, systemMaxChars int) {
 	maxOut = s.LlmMaxTokens
+	if maxOutCap > 0 && maxOutCap < maxOut {
+		maxOut = maxOutCap
+	}
 	if maxOut > s.LlmContextLength-256 {
 		maxOut = s.LlmContextLength - 256
 		if maxOut < 128 {
@@ -49,7 +52,7 @@ func (s *Server) llmCharBudget(userQueryLen int) (maxOut int, systemMaxChars int
 // answer.txt очень длинный; CallLLM обрезает system по префиксу до лимита — если B шёл первым, CONTEXT оказывался за пределом.
 // Здесь под CONTEXT резервируется место, длинный answer.txt укорачивается с конца (оставляем начало с правилами).
 func (s *Server) ComposeAnswerSystem(promptB, replyPrefix, contextText string, userQueryLen int) string {
-	_, maxTotal := s.llmCharBudget(userQueryLen)
+	_, maxTotal := s.llmCharBudget(userQueryLen, 0)
 	const sep = "\n\n=== CONTEXT (данные для ответа; единственный источник фактов) ===\n"
 	const headSuffix = "\n\n[хвост файла инструкций снят — опирайся на CONTEXT ниже]"
 	overhead := len(sep)
@@ -102,7 +105,7 @@ func (s *Server) ComposeAnswerSystem(promptB, replyPrefix, contextText string, u
 // К системному промпту добавляется список имён; бюджет подгоняется под контекст, иначе prompt A (~32KB+) обрезается в CallLLM
 // с потерей хвоста и без имён — модель перестаёт выдавать ключ поиска, цепочка выглядит как «сразу только промпт B».
 func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion string) (string, error) {
-	_, systemMax := s.llmCharBudget(len(userQuestion))
+	_, systemMax := s.llmCharBudget(len(userQuestion), s.LlmExtractMaxTokens)
 	const namesHeader = "\n\nСписок известных имён ангелов-хранителей:\n"
 	truncSuffix := "\n\n[промпт извлечения обрезан по лимиту контекста модели]\n"
 
@@ -146,7 +149,7 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 		systemContent = truncateUTF8(systemContent, systemMax)
 	}
 
-	reply, err := s.CallLLMWithBudget(ctx, requestID, systemContent, userQuestion)
+	reply, err := s.callLLMWithBudget(ctx, requestID, systemContent, userQuestion, s.LlmExtractMaxTokens)
 	if err != nil {
 		return "", err
 	}
@@ -157,12 +160,16 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 // CallLLM calls OpenAI-compatible /chat/completions (vLLM или другой OpenAI-совместимый сервер).
 // Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
 func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
-	return s.CallLLMWithBudget(ctx, requestID, systemContent, userQuery)
+	return s.callLLMWithBudget(ctx, requestID, systemContent, userQuery, 0)
 }
 
-// CallLLMWithBudget uses the same maxOut/system cap as llmCharBudget (final ответ с длинным промптом B + контекст).
+// CallLLMWithBudget — финальный ответ (max_tokens = LlmMaxTokens).
 func (s *Server) CallLLMWithBudget(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
-	maxOut, systemMax := s.llmCharBudget(len(userQuery))
+	return s.callLLMWithBudget(ctx, requestID, systemContent, userQuery, 0)
+}
+
+func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent, userQuery string, maxOutCap int) (string, error) {
+	maxOut, systemMax := s.llmCharBudget(len(userQuery), maxOutCap)
 	if len(systemContent) > systemMax {
 		suffix := "\n\n[... контекст обрезан из-за лимита модели ...]"
 		n := systemMax - len(suffix)

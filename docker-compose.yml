@@ -178,6 +178,10 @@ services:
       - "${VLLM_MAX_MODEL_LEN:-2048}"
       - "--max-num-seqs"
       - "${VLLM_MAX_NUM_SEQS:-1}"
+      # Фиксированный размер KV-cache на GPU (байты). 1.3 GiB = 1395864371.
+      # В vLLM при заданном kv-cache-memory расчёт KV из --gpu-memory-utilization для кэша не используется (см. CacheConfig).
+      - "--kv-cache-memory"
+      - "${VLLM_KV_CACHE_MEMORY_BYTES:-1395864371}"
     deploy:
       resources:
         limits:
@@ -351,10 +355,14 @@ services:
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
       LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-${LLM_CODE_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}}}
-      # Совпадайте с VLLM_MAX_MODEL_LEN в .env (дефолт 8192).
+      # Совпадайте с VLLM_MAX_MODEL_LEN в .env.
       LLM_CONTEXT_LENGTH: ${LLM_CONTEXT_LENGTH:-8192}
       # Запас под промпт (RAG): max_tokens + input ≤ max_model_len
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+      # Ускорение: no_date = не вызывать промпт A, если в сообщении есть дата; never = всегда без A; always = как раньше
+      LLM_QUERY_EXTRACT: ${LLM_QUERY_EXTRACT:-no_date}
+      # Короткий max_tokens только для промпта A (извлечение ключа поиска)
+      LLM_EXTRACT_MAX_TOKENS: ${LLM_EXTRACT_MAX_TOKENS:-256}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       BOT_DEBUG: ${BOT_DEBUG:-0}
     ports:

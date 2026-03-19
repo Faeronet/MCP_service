@@ -120,15 +120,25 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !nameAllHandled && !useStoredReplyContext {
+		userDateStr := ExtractDateFromQuestion(req.MessageText)
 		var searchQuery string
-		if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
-			searchQuery = q
-		} else {
-			if err != nil {
-				logHandler.Warn(ctx, "extract_search_query (prompt A) failed, using fallback text", logging.KV{"error", err})
+		// Промпт A = второй round-trip к LLM; по умолчанию пропускаем, если в вопросе уже есть дата (LLM_QUERY_EXTRACT=no_date).
+		if s.ShouldRunQueryExtractLLM(req.MessageText) {
+			if q, err := s.ExtractSearchQuery(ctx, requestID, req.MessageText); err == nil && strings.TrimSpace(q) != "" {
+				searchQuery = q
+			} else {
+				if err != nil {
+					logHandler.Warn(ctx, "extract_search_query (prompt A) failed, using fallback text", logging.KV{"error", err})
+				}
+				searchQuery = userDateStr
+				if searchQuery == "" {
+					searchQuery = req.MessageText
+				}
 			}
-			searchQuery = ExtractDateFromQuestion(req.MessageText)
-			if searchQuery == "" {
+		} else {
+			if userDateStr != "" {
+				searchQuery = userDateStr
+			} else {
 				searchQuery = req.MessageText
 			}
 		}
@@ -136,8 +146,6 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		if HasAngelWord(req.MessageText) && strings.Contains(lowerMsg, "дат") {
 			searchQuery = "[date] list"
 		}
-
-		userDateStr := ExtractDateFromQuestion(req.MessageText)
 		if userDateStr != "" {
 			_, _, modelHasDate := ParseDayMonthFromQuery(searchQuery)
 			trimmed := strings.TrimSpace(searchQuery)

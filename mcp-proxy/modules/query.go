@@ -233,3 +233,17 @@ func TranslateMonthToRussian(s string) string {
 	}
 	return out
 }
+
+// ShouldRunQueryExtractLLM — вызывать ли промпт A (отдельный LLM-запрос) для формулировки поискового ключа.
+// Режимы (LLM_QUERY_EXTRACT): always | never | no_date — по умолчанию no_date: при явной дате в сообщении этап A пропускается (быстрее).
+func (s *Server) ShouldRunQueryExtractLLM(message string) bool {
+	mode := strings.ToLower(strings.TrimSpace(s.QueryExtractMode))
+	switch mode {
+	case "never", "0", "off", "false", "no":
+		return false
+	case "always", "1", "on", "true", "yes":
+		return true
+	default:
+		return ExtractDateFromQuestion(message) == ""
+	}
+}

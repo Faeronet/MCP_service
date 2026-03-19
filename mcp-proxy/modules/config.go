@@ -23,6 +23,10 @@ type Server struct {
 	PromptA   string
 	PromptB   string
 	DebugMode int
+	// QueryExtractMode: always | never | no_date (по умолчанию no_date — без LLM-этапа A, если в тексте есть дата).
+	QueryExtractMode string
+	// LlmExtractMaxTokens — max_tokens только для промпта A (короткая строка); меньше = быстрее декодирование.
+	LlmExtractMaxTokens int
 }
 
 func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
@@ -66,6 +70,17 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	llmLimiter := ratelimit.NewInFlight(maxInflightLLM)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
 	debugMode := config.LoadInt("BOT_DEBUG", 0)
+	queryExtractMode := strings.ToLower(strings.TrimSpace(config.LoadString("LLM_QUERY_EXTRACT", "no_date")))
+	if queryExtractMode == "" {
+		queryExtractMode = "no_date"
+	}
+	extractMax := config.LoadInt("LLM_EXTRACT_MAX_TOKENS", 256)
+	if extractMax < 32 {
+		extractMax = 32
+	}
+	if extractMax > 2048 {
+		extractMax = 2048
+	}
 	return &Server{
 		Pool:             pool,
 		McpReadURL:       mcpReadURL,
@@ -79,5 +94,7 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 		PromptA:   promptA,
 		PromptB:   promptB,
 		DebugMode: debugMode,
+		QueryExtractMode:      queryExtractMode,
+		LlmExtractMaxTokens: extractMax,
 	}
 }
