@@ -9,7 +9,7 @@ import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
-from transformers.utils.quantization_config import AwqBackend, AwqConfig
+from transformers.utils.quantization_config import AwqBackend
 
 
 app = FastAPI()
@@ -99,52 +99,33 @@ def _is_awq_path(path_or_id: str) -> bool:
     return "awq" in p
 
 
-def _awq_config_with_backend(qc: Any, backend: AwqBackend) -> AwqConfig | None:
+def _awq_quantization_config_dict(qc: Any, backend: AwqBackend) -> dict[str, Any] | None:
     """
-    Checkpoint `quantization_config` is often a plain dict from config.json.
-    Assigning `.backend` on a dict does nothing useful; gptqmodel then stays on AUTO → ExLlama V2.
-    Rebuild AwqConfig so the backend is definitely applied.
+    Force AWQ `backend` (e.g. torch_awq) in the quantization config.
+
+    Must stay a plain dict: some transformers versions call
+    `quantization_config.get("quant_method")` (see quantizers/auto.py), so an
+    `AwqConfig` instance on `PretrainedConfig` breaks loading.
     """
     if qc is None:
         return None
-    if isinstance(qc, AwqConfig):
-        d = qc.to_dict()
-    elif isinstance(qc, dict):
+
+    if isinstance(qc, dict):
         d = dict(qc)
     elif hasattr(qc, "to_dict"):
-        d = qc.to_dict()
+        d = dict(qc.to_dict())
     else:
-        try:
-            qc.backend = backend  # type: ignore[attr-defined]
-            if isinstance(qc, AwqConfig):
-                return qc
-            return None
-        except (AttributeError, TypeError):
-            return None
+        return None
 
-    d["backend"] = backend
-    # AwqConfig / GPTQConfig parent set quant_method internally; raw JSON duplicates break from_dict.
-    d.pop("quant_method", None)
-    d.pop("checkpoint_format", None)
-    try:
-        return AwqConfig.from_dict(d)
-    except (TypeError, ValueError) as e:
-        print(f"[llm-code] AwqConfig.from_dict failed ({e}), building minimal AwqConfig", flush=True)
-    # Minimal path: fields present in typical HF AWQ config.json
-    version = d.get("version", "gemm")
-    fmt_kw: dict[str, Any] = {}
-    if version is not None:
-        fmt_kw["version"] = version
-    if d.get("format") is not None:
-        fmt_kw["format"] = d["format"]
-    return AwqConfig(
-        bits=int(d.get("bits", 4)),
-        group_size=int(d.get("group_size", 128)),
-        zero_point=bool(d.get("zero_point", True)),
-        backend=backend,
-        modules_to_not_convert=d.get("modules_to_not_convert"),
-        **fmt_kw,
-    )
+    d["backend"] = backend.value
+    # Enum / object from to_dict() → JSON-friendly strings for HF quantizer checks
+    qm = d.get("quant_method")
+    if qm is not None and hasattr(qm, "value"):
+        d["quant_method"] = qm.value
+    elif d.get("quant_method") is None:
+        d["quant_method"] = "awq"
+
+    return d
 
 
 def _awq_backend_override() -> AwqBackend | None:
@@ -183,14 +164,13 @@ def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.devic
         if backend is not None:
             config = AutoConfig.from_pretrained(resolved, trust_remote_code=True)
             qc = getattr(config, "quantization_config", None)
-            new_qc = _awq_config_with_backend(qc, backend)
+            new_qc = _awq_quantization_config_dict(qc, backend)
             if new_qc is not None:
                 config.quantization_config = new_qc
                 load_kw["config"] = config
-                eff = getattr(config.quantization_config, "backend", backend)
                 print(
                     f"[llm-code] AWQ backend override: requested={backend.value!r} "
-                    f"config.backend={getattr(eff, 'value', eff)!r}",
+                    f"config.quantization_config['backend']={new_qc.get('backend')!r}",
                     flush=True,
                 )
             else:
