@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import traceback
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Literal, Optional
 
 import torch
@@ -12,7 +13,38 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from transformers.utils.quantization_config import AwqBackend
 
 
-app = FastAPI()
+_tokenizer = None
+_model = None
+
+
+def _env_flag(name: str, default_true: bool = True) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default_true
+    return v.strip().lower() not in ("0", "false", "no", "off")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Предзагрузка весов при старте процесса (пока Uvicorn не начнёт принимать запросы)."""
+    global _tokenizer, _model
+    if _env_flag("LLM_CODE_PRELOAD", default_true=True):
+        print("[llm-code] LLM_CODE_PRELOAD: loading model at startup...", flush=True)
+        try:
+            _load_model()
+        except Exception:
+            print("[llm-code] startup preload failed (process will exit)", flush=True)
+            raise
+        print("[llm-code] model loaded; accepting traffic", flush=True)
+    else:
+        print(
+            "[llm-code] LLM_CODE_PRELOAD=0: model will load on first /v1/chat/completions",
+            flush=True,
+        )
+    yield
+
+
+app = FastAPI(lifespan=_lifespan)
 
 MODEL_NAME = os.getenv("LLM_CODE_MODEL") or os.getenv("LLM_MODEL", "Qwen/Qwen3-0.6B")
 PORT = int(os.getenv("PORT", "8005"))
@@ -34,10 +66,6 @@ class ChatCompletionsRequest(BaseModel):
     max_tokens: Optional[int] = None
     # mcp-proxy sends this extra field; we ignore it.
     chat_template_kwargs: Optional[Dict[str, Any]] = None
-
-
-_tokenizer = None
-_model = None
 
 
 def _resolve_hf_hub_snapshot(models_dir: str, model_id: str) -> Optional[str]:
