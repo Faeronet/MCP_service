@@ -49,8 +49,8 @@ app = FastAPI(lifespan=_lifespan)
 MODEL_NAME = os.getenv("LLM_CODE_MODEL") or os.getenv("LLM_MODEL", "Qwen/Qwen3-0.6B")
 PORT = int(os.getenv("PORT", "8005"))
 
-# generation params
-MAX_NEW_TOKENS_DEFAULT = int(os.getenv("MAX_NEW_TOKENS", "2048"))
+# generation params (2048 по умолчанию сильно тянет время; vLLM на том же железе обычно быстрее из‑за ядер/батчинга)
+MAX_NEW_TOKENS_DEFAULT = int(os.getenv("MAX_NEW_TOKENS", "1024"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 TOP_P = float(os.getenv("TOP_P", "1.0"))
 
@@ -184,11 +184,16 @@ def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.devic
     awq = _is_awq_path(resolved) or _is_awq_path(MODEL_NAME)
     if awq and torch.cuda.is_available():
         backend = _awq_backend_override()
-        load_kw: dict = {
+        load_kw: dict[str, Any] = {
             "trust_remote_code": True,
             "device_map": "auto",
             "torch_dtype": torch_dtype,
         }
+        # SDPA быстрее eager attention на GPU (если слой поддерживается конфигом модели)
+        attn = (os.getenv("LLM_CODE_ATTN_IMPLEMENTATION") or "sdpa").strip()
+        if attn.lower() not in ("", "none", "eager"):
+            load_kw["attn_implementation"] = attn
+            print(f"[llm-code] attn_implementation={attn!r}", flush=True)
         if backend is not None:
             config = AutoConfig.from_pretrained(resolved, trust_remote_code=True)
             qc = getattr(config, "quantization_config", None)
@@ -207,12 +212,16 @@ def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.devic
                     flush=True,
                 )
         return AutoModelForCausalLM.from_pretrained(resolved, **load_kw)
-    m = AutoModelForCausalLM.from_pretrained(
-        resolved,
-        trust_remote_code=True,
-        torch_dtype=torch_dtype,
-        device_map=None,
-    )
+    attn = (os.getenv("LLM_CODE_ATTN_IMPLEMENTATION") or "sdpa").strip()
+    load_plain: dict[str, Any] = {
+        "trust_remote_code": True,
+        "torch_dtype": torch_dtype,
+        "device_map": None,
+    }
+    if attn.lower() not in ("", "none", "eager"):
+        load_plain["attn_implementation"] = attn
+        print(f"[llm-code] attn_implementation={attn!r}", flush=True)
+    m = AutoModelForCausalLM.from_pretrained(resolved, **load_plain)
     m.to(device)
     return m
 
@@ -225,6 +234,15 @@ def _load_model() -> None:
     # device selection: prefer GPU if present
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     torch_dtype = torch.float16 if device.type == "cuda" else torch.float32
+
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
+        print("[llm-code] CUDA: TF32 matmul/cudnn enabled, matmul precision=high", flush=True)
 
     resolved_model_name = _resolve_model_name(MODEL_NAME)
 
@@ -254,13 +272,33 @@ def _load_model() -> None:
     _model.eval()
 
 
-def _build_prompt(messages: List[ChatMessage]) -> str:
-    # Most chat-capable models (Qwen) support apply_chat_template.
-    # Fall back to a simple concatenation if template is not available.
+def _build_prompt(
+    messages: List[ChatMessage],
+    chat_template_kwargs: Optional[Dict[str, Any]] = None,
+) -> str:
+    # Qwen3: enable_thinking=True сильно удлиняет ответ и время — по умолчанию выключаем
+    # (LLM_CODE_QWEN_THINKING=1 чтобы включить «мышление» в шаблоне).
     assert _tokenizer is not None
     raw_messages = [{"role": m.role, "content": m.content} for m in messages]
     if hasattr(_tokenizer, "apply_chat_template"):
-        return _tokenizer.apply_chat_template(raw_messages, tokenize=False, add_generation_prompt=True)
+        tmpl_kw: Dict[str, Any] = {}
+        if _env_flag("LLM_CODE_QWEN_THINKING", default_true=False):
+            tmpl_kw["enable_thinking"] = True
+        else:
+            tmpl_kw["enable_thinking"] = False
+        if chat_template_kwargs:
+            tmpl_kw.update(chat_template_kwargs)
+        try:
+            return _tokenizer.apply_chat_template(
+                raw_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                chat_template_kwargs=tmpl_kw,
+            )
+        except (TypeError, ValueError):
+            return _tokenizer.apply_chat_template(
+                raw_messages, tokenize=False, add_generation_prompt=True
+            )
     return "\n".join([f"{m['role']}: {m['content']}" for m in raw_messages]) + "\nassistant:"
 
 
@@ -282,7 +320,7 @@ def chat_completions(req: ChatCompletionsRequest) -> Dict[str, Any]:
     max_new = req.max_tokens or MAX_NEW_TOKENS_DEFAULT
     max_new = max(1, int(max_new))
 
-    prompt = _build_prompt(req.messages)
+    prompt = _build_prompt(req.messages, req.chat_template_kwargs)
 
     try:
         inputs = _tokenizer(prompt, return_tensors="pt")
@@ -290,16 +328,20 @@ def chat_completions(req: ChatCompletionsRequest) -> Dict[str, Any]:
         inputs = {k: v.to(model_device) for k, v in inputs.items()}
         input_ids = inputs["input_ids"]
 
-        with torch.no_grad():
-            outputs = _model.generate(
-                **inputs,
-                max_new_tokens=max_new,
-                do_sample=(TEMPERATURE > 0),
-                temperature=TEMPERATURE if TEMPERATURE > 0 else None,
-                top_p=TOP_P if TEMPERATURE > 0 else None,
-                pad_token_id=_tokenizer.eos_token_id,
-                eos_token_id=_tokenizer.eos_token_id,
-            )
+        gen_kw: Dict[str, Any] = {
+            **inputs,
+            "max_new_tokens": max_new,
+            "do_sample": TEMPERATURE > 0,
+            "use_cache": True,
+            "pad_token_id": _tokenizer.eos_token_id,
+            "eos_token_id": _tokenizer.eos_token_id,
+        }
+        if TEMPERATURE > 0:
+            gen_kw["temperature"] = TEMPERATURE
+            gen_kw["top_p"] = TOP_P
+
+        with torch.inference_mode():
+            outputs = _model.generate(**gen_kw)
 
         gen_ids = outputs[0][input_ids.shape[-1] :]
         text = _tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
