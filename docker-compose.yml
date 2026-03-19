@@ -159,12 +159,22 @@ services:
 
   # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
   # Порядок запуска AI: vllm (GPU) + embed-cpu (CPU) → rerank (CPU), extract-tool (CPU).
+  # KV-cache: основной рычаг — --max-model-len (меньше = меньше VRAM под KV). Дополнительно — --max-num-seqs (меньше параллельных seq).
   vllm:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    # --max-model-len: при 16 ГБ + Qwen3-14B-AWQ (~9.4 GiB) под KV-cache остаётся ~3 GiB; 32768 нужно ~5 GiB. Дефолт 16384 — помещается (vLLM оценивает макс. ~19648).
-    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}", "--port", "8000", "--gpu-memory-utilization", "0.9", "--max-model-len", "${VLLM_MAX_MODEL_LEN:-16384}"]
+    command:
+      - "--model"
+      - "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}"
+      - "--port"
+      - "8000"
+      - "--gpu-memory-utilization"
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+      - "--max-model-len"
+      - "${VLLM_MAX_MODEL_LEN:-2048}"
+      - "--max-num-seqs"
+      - "${VLLM_MAX_NUM_SEQS:-4}"
     deploy:
       resources:
         limits:
@@ -246,44 +256,6 @@ services:
       - "8787:8787"
     depends_on:
       embed-cpu: { condition: service_healthy }
-    restart: unless-stopped
-
-  # Кодовый LLM-сервис (без vLLM): OpenAI-compatible /v1/chat/completions.
-  llm-code:
-    build:
-      context: ./llm-code
-      dockerfile: Dockerfile
-    gpus: all
-    deploy:
-      resources:
-        limits:
-          # 14B AWQ: нужен запас RAM помимо VRAM; при нехватке увеличьте.
-          memory: 24g
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['0']
-              capabilities: [gpu]
-    environment:
-      PORT: "8005"
-      # Локальный кэш: /models/hub/models--Qwen--Qwen3-14B-AWQ/snapshots/<hash> (HF_HOME=/models)
-      LLM_CODE_MODEL: Qwen/Qwen3-14B-AWQ
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
-      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
-      HF_HOME: /models
-      # TEMPERATURE=0 → детерминированная генерация
-      TEMPERATURE: ${LLM_TEMPERATURE:-0.0}
-      TOP_P: ${LLM_TOP_P:-1.0}
-    ports:
-      - "8005:8005"
-    volumes:
-      - ./models:/models
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8005/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 60
-      start_period: 60s
     restart: unless-stopped
 
   # --- Application services ---
@@ -380,10 +352,10 @@ services:
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MCP_READ_URL: http://mcp-read:8082
-      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://llm-code:8005/v1}
+      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://vllm:8000/v1}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
       LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
-      LLM_MODEL: ${LLM_CODE_MODEL:-Qwen/Qwen3-0.6B}
+      LLM_MODEL: ${LLM_MODEL:-${LLM_CODE_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}}}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       BOT_DEBUG: ${BOT_DEBUG:-0}
     ports:
@@ -445,9 +417,9 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-documents}
-      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://llm-code:8005/v1}
+      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://vllm:8000/v1}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      LLM_MODEL: ${LLM_CODE_MODEL:-Qwen/Qwen3-0.6B}
+      LLM_MODEL: ${LLM_MODEL:-${LLM_CODE_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}}}
       USE_LLM_CHUNKING: ${USE_LLM_CHUNKING:-}
       USE_LLM_RERANK_QUERY: ${USE_LLM_RERANK_QUERY:-}
       INGESTION_SYSTEM: ${INGESTION_SYSTEM:-B}
@@ -466,7 +438,7 @@ services:
       migrate: { condition: service_completed_successfully }
       qdrant: { condition: service_started }
       minio: { condition: service_healthy }
-      llm-code: { condition: service_started }
+      vllm: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8001/healthz"]
       interval: 10s
