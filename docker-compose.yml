@@ -360,11 +360,12 @@ services:
       BOT_DEBUG: ${BOT_DEBUG:-0}
     ports:
       - "8083:8083"
+    # vllm в profiles: [vllm] — нельзя depends_on: vllm без профиля (compose: undefined service).
+    # Поднимайте LLM: docker compose --profile vllm up -d (vllm стартует рядом; прокси переждёт по retry).
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
       mcp-read: { condition: service_started }
-      vllm: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/healthz"]
       interval: 10s
@@ -433,12 +434,12 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "8001:8001"
+    # см. mcp-proxy: без depends_on vllm (профиль vllm).
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
       qdrant: { condition: service_started }
       minio: { condition: service_healthy }
-      vllm: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8001/healthz"]
       interval: 10s
