@@ -27,14 +27,13 @@ type Server struct {
 
 func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
-	// Prefer code-based LLM service (llm-code) over vLLM.
-	llmBase := config.LoadString("LLM_BINDING_HOST", "")
+	// OpenAI-compatible /v1 (vLLM в Docker или хост): LLM_BINDING_HOST либо VLLM_OPENAI_BASE.
+	llmBase := strings.TrimSpace(config.LoadString("LLM_BINDING_HOST", ""))
 	if llmBase == "" {
-		llmBase = "http://llm-code:8005/v1"
+		llmBase = strings.TrimSpace(config.LoadString("VLLM_OPENAI_BASE", ""))
 	}
-	// Hard guard: requirement is to avoid vLLM in chat flow.
-	if strings.Contains(strings.ToLower(llmBase), "vllm") {
-		llmBase = "http://llm-code:8005/v1"
+	if llmBase == "" {
+		llmBase = "http://vllm:8000/v1"
 	}
 	llmBase = strings.TrimSuffix(llmBase, "/")
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")

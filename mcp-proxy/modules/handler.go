@@ -214,7 +214,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if replyErr != nil {
 		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr})
-		hint := "Модель недоступна. Проверьте, что llm-code запущен и в .env указан LLM_BINDING_HOST (по умолчанию http://llm-code:8005/v1)."
+		hint := "Модель недоступна. Проверьте vLLM (docker compose --profile vllm) и LLM_BINDING_HOST / VLLM_OPENAI_BASE (по умолчанию http://vllm:8000/v1)."
 		if errStr := replyErr.Error(); len(errStr) < 120 {
 			hint = "Ошибка LLM: " + errStr
 		}

@@ -25,7 +25,7 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 	return reply, nil
 }
 
-// CallLLM calls OpenAI-compatible /chat/completions endpoint (llm-code в контейнере).
+// CallLLM calls OpenAI-compatible /chat/completions (vLLM или другой OpenAI-совместимый сервер).
 // Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
 func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
 	maxInputTokens := s.LlmContextLength - s.LlmMaxTokens
