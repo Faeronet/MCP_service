@@ -103,7 +103,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	replyText, debugMessage, messageIDStr, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
 	if err != nil {
 		logHandler.Error(ctx, "proxy call", logging.KV{"error", err})
-		hint := "Сервис временно недоступен. Запустите mcp-proxy (docker compose up mcp-proxy), порт 8083. URL: MCP_PROXY_URL (в Docker часто http://host.docker.internal:8083; с хоста — http://127.0.0.1:8083)."
+		hint := "Сервис временно недоступен. Запустите mcp-proxy (docker compose up -d mcp-proxy). В контейнерах MCP_PROXY_URL=http://mcp-proxy:8083; с хоста/Cursor — http://127.0.0.1:8083. Не используйте host.docker.internal на Linux к проброшенному порту — часто connection refused."
 		if errStr := err.Error(); errStr != "" && len(errStr) < 120 {
 			hint += " (" + errStr + ")"
 		} else if len(errStr) >= 120 {

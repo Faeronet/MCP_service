@@ -48,7 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	proxyURL := strings.TrimSuffix(config.LoadString("MCP_PROXY_URL", "http://host.docker.internal:8083"), "/")
+	proxyURL := strings.TrimSuffix(config.LoadString("MCP_PROXY_URL", "http://mcp-proxy:8083"), "/")
 	extractToolURL := strings.TrimSuffix(config.LoadString("EXTRACT_TOOL_URL", config.LoadString("OCR_SERVICE_URL", config.LoadString("ASR_SERVICE_URL", "http://extract-tool:8004"))), "/")
 	debounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	workerConcurrency := config.LoadInt("WORKER_CONCURRENCY", 64)

@@ -274,9 +274,6 @@ services:
             - driver: nvidia
               device_ids: ['0']
               capabilities: [gpu]
-    # Чат в админке ходит в mcp-proxy; host.docker.internal обходит сбои DNS имени mcp-proxy в bridge-сети.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
@@ -289,7 +286,8 @@ services:
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       MCP_WRITE_URL: http://mcp-write:8001
-      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://host.docker.internal:8083}
+      # Внутри compose надёжнее http://mcp-proxy:8083 (host.docker.internal:8083 на Linux часто connection refused).
+      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://mcp-proxy:8083}
       LOKI_URL: http://loki:3100
       GRAFANA_URL: http://grafana:3000
     volumes:
@@ -301,6 +299,7 @@ services:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+      mcp-proxy: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
       interval: 10s
@@ -332,8 +331,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
-      # Порт 8083 проброшен на хост; надёжнее, чем имя mcp-proxy (иногда «no such host» в Docker DNS).
-      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://host.docker.internal:8083}
+      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://mcp-proxy:8083}
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://extract-tool:8004}
       EXTRACT_TOOL_URL: ${EXTRACT_TOOL_URL:-http://extract-tool:8004}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
@@ -345,7 +343,7 @@ services:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      mcp-proxy: { condition: service_started }
+      mcp-proxy: { condition: service_healthy }
       extract-tool: { condition: service_started }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/healthz"]
