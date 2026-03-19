@@ -4,6 +4,5 @@ pydantic>=2.7.0
 httpx>=0.27.0
 transformers>=4.40.0
 accelerate>=0.30.0
-# AWQ в transformers требует gptqmodel (см. quantizer_awq.py)
-gptqmodel>=5.0
+# gptqmodel ставится в Dockerfile отдельно с --no-build-isolation (setup ищет torch в окружении)
 
