@@ -189,18 +189,23 @@ func IsAngelCountRequest(msg string) bool {
 	return false
 }
 
+// IsMetaQuestionAboutBot — только явные вопросы «о боте», без подстрок вроде «что ты»/«what you»
+// (они входят в обычные запросы: «что ты знаешь про…», «what you know about») и раньше отключали BuildContext.
 func IsMetaQuestionAboutBot(s string) bool {
 	q := strings.ToLower(strings.TrimSpace(s))
-	if q == "" || len(q) > 120 {
+	if q == "" || len(q) > 200 {
 		return false
 	}
 	if strings.Contains(q, "who are you") || strings.Contains(q, "what are you") || strings.Contains(q, "what is your name") ||
-		strings.Contains(q, "who you") || strings.Contains(q, "what you") || strings.Contains(q, "tell me about yourself") {
+		strings.Contains(q, "tell me about yourself") {
 		return true
 	}
-	if strings.Contains(q, "кто ты") || strings.Contains(q, "кто вы") || strings.Contains(q, "что ты") || strings.Contains(q, "что вы") ||
-		strings.Contains(q, "как тебя зовут") || strings.Contains(q, "как вас зовут") || strings.Contains(q, "расскажи о себе") ||
-		strings.Contains(q, "расскажите о себе") || strings.Contains(q, "ты кто") || strings.Contains(q, "вы кто") {
+	// Не используем голые "who you" / "what you" — ловят "what you know..."
+	if strings.Contains(q, "кто ты") || strings.Contains(q, "кто вы") ||
+		strings.Contains(q, "как тебя зовут") || strings.Contains(q, "как вас зовут") ||
+		strings.Contains(q, "расскажи о себе") || strings.Contains(q, "расскажите о себе") ||
+		strings.Contains(q, "ты кто") || strings.Contains(q, "вы кто") ||
+		strings.Contains(q, "что ты за") || strings.Contains(q, "что вы за") {
 		return true
 	}
 	return false

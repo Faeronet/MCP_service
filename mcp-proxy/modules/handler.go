@@ -152,7 +152,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		day, month, hasDate := ParseDayMonthFromQuery(searchQuery)
 		if hasDate && (day < 1 || day > MaxDaysInMonth(month)) {
 			contextText = "date not found"
-		} else if IsMetaQuestionAboutBot(searchQuery) {
+		} else if IsMetaQuestionAboutBot(req.MessageText) {
+			// Мета-вопрос смотрим по исходному сообщению; searchQuery от промпта A даёт ложные срабатывания («что ты знаешь…»).
 			contextText = ""
 		} else {
 			attachmentsText := s.GetAttachmentsText(ctx, req.SessionID)
