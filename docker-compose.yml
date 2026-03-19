@@ -257,7 +257,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 8g
+          # 14B AWQ: нужен запас RAM помимо VRAM; при нехватке увеличьте.
+          memory: 24g
         reservations:
           devices:
             - driver: nvidia
@@ -265,7 +266,7 @@ services:
               capabilities: [gpu]
     environment:
       PORT: "8005"
-      # Force a small model that works with plain transformers (no AWQ dependency).
+      # Локальный кэш: /models/hub/models--Qwen--Qwen3-14B-AWQ/snapshots/<hash> (HF_HOME=/models)
       LLM_CODE_MODEL: Qwen/Qwen3-14B-AWQ
       NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
