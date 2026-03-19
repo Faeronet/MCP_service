@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Literal, Optional
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers.utils.quantization_config import AwqBackend, AwqConfig
 
 
 app = FastAPI()
@@ -98,6 +99,74 @@ def _is_awq_path(path_or_id: str) -> bool:
     return "awq" in p
 
 
+def _awq_config_with_backend(qc: Any, backend: AwqBackend) -> AwqConfig | None:
+    """
+    Checkpoint `quantization_config` is often a plain dict from config.json.
+    Assigning `.backend` on a dict does nothing useful; gptqmodel then stays on AUTO → ExLlama V2.
+    Rebuild AwqConfig so the backend is definitely applied.
+    """
+    if qc is None:
+        return None
+    if isinstance(qc, AwqConfig):
+        d = qc.to_dict()
+    elif isinstance(qc, dict):
+        d = dict(qc)
+    elif hasattr(qc, "to_dict"):
+        d = qc.to_dict()
+    else:
+        try:
+            qc.backend = backend  # type: ignore[attr-defined]
+            if isinstance(qc, AwqConfig):
+                return qc
+            return None
+        except (AttributeError, TypeError):
+            return None
+
+    d["backend"] = backend
+    # AwqConfig / GPTQConfig parent set quant_method internally; raw JSON duplicates break from_dict.
+    d.pop("quant_method", None)
+    d.pop("checkpoint_format", None)
+    try:
+        return AwqConfig.from_dict(d)
+    except (TypeError, ValueError) as e:
+        print(f"[llm-code] AwqConfig.from_dict failed ({e}), building minimal AwqConfig", flush=True)
+    # Minimal path: fields present in typical HF AWQ config.json
+    version = d.get("version", "gemm")
+    fmt_kw: dict[str, Any] = {}
+    if version is not None:
+        fmt_kw["version"] = version
+    if d.get("format") is not None:
+        fmt_kw["format"] = d["format"]
+    return AwqConfig(
+        bits=int(d.get("bits", 4)),
+        group_size=int(d.get("group_size", 128)),
+        zero_point=bool(d.get("zero_point", True)),
+        backend=backend,
+        modules_to_not_convert=d.get("modules_to_not_convert"),
+        **fmt_kw,
+    )
+
+
+def _awq_backend_override() -> AwqBackend | None:
+    """
+    Pip wheel gptqmodel often lacks ExLlama V2 CUDA ext (`gptqmodel_exllamav2_awq_kernels`).
+    HF AwqConfig defaults to AUTO → ExLlama V2 → import error.
+    Set LLM_CODE_AWQ_BACKEND=torch_awq (default) or marlin, gemm, etc.
+    Empty / exllama_v2 = no override (use checkpoint default / auto).
+    """
+    raw = (os.getenv("LLM_CODE_AWQ_BACKEND") or "torch_awq").strip().lower()
+    if raw in ("", "auto", "exllama_v2"):
+        return None
+    try:
+        return AwqBackend(raw)
+    except ValueError:
+        print(
+            f"[llm-code] invalid LLM_CODE_AWQ_BACKEND={raw!r}, using torch_awq",
+            flush=True,
+        )
+        return AwqBackend.TORCH_AWQ
+
+
 def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.device):
     """
     AWQ: transformers ожидает gptqmodel; для квантованных весов лучше device_map='auto' на CUDA.
@@ -105,12 +174,31 @@ def _load_causal_lm(resolved: str, torch_dtype: torch.dtype, device: torch.devic
     """
     awq = _is_awq_path(resolved) or _is_awq_path(MODEL_NAME)
     if awq and torch.cuda.is_available():
-        return AutoModelForCausalLM.from_pretrained(
-            resolved,
-            trust_remote_code=True,
-            device_map="auto",
-            torch_dtype=torch_dtype,
-        )
+        backend = _awq_backend_override()
+        load_kw: dict = {
+            "trust_remote_code": True,
+            "device_map": "auto",
+            "torch_dtype": torch_dtype,
+        }
+        if backend is not None:
+            config = AutoConfig.from_pretrained(resolved, trust_remote_code=True)
+            qc = getattr(config, "quantization_config", None)
+            new_qc = _awq_config_with_backend(qc, backend)
+            if new_qc is not None:
+                config.quantization_config = new_qc
+                load_kw["config"] = config
+                eff = getattr(config.quantization_config, "backend", backend)
+                print(
+                    f"[llm-code] AWQ backend override: requested={backend.value!r} "
+                    f"config.backend={getattr(eff, 'value', eff)!r}",
+                    flush=True,
+                )
+            else:
+                print(
+                    "[llm-code] no usable quantization_config; cannot set AWQ backend",
+                    flush=True,
+                )
+        return AutoModelForCausalLM.from_pretrained(resolved, **load_kw)
     m = AutoModelForCausalLM.from_pretrained(
         resolved,
         trust_remote_code=True,
