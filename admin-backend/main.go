@@ -88,7 +88,7 @@ func main() {
 		AdminUser:     config.LoadString("ADMIN_USER", "admin"),
 		AdminPass:     config.LoadString("ADMIN_PASSWORD", "admin"),
 		MCPWriteURL:   config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001"),
-		MCPProxyURL:   config.LoadString("MCP_PROXY_URL", "http://mcp-proxy:8083"),
+		MCPProxyURL:   config.LoadString("MCP_PROXY_URL", "http://host.docker.internal:8083"),
 		LokiURL:       config.LoadString("LOKI_URL", "http://loki:3100"),
 	})
 
