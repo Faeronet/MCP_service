@@ -45,6 +45,59 @@ func (s *Server) llmCharBudget(userQueryLen int) (maxOut int, systemMaxChars int
 	return maxOut, systemMaxChars
 }
 
+// ComposeAnswerSystem склеивает промпт B и извлечённый CONTEXT так, чтобы данные из Qdrant/Postgres не отрезались:
+// answer.txt очень длинный; CallLLM обрезает system по префиксу до лимита — если B шёл первым, CONTEXT оказывался за пределом.
+// Здесь под CONTEXT резервируется место, длинный answer.txt укорачивается с конца (оставляем начало с правилами).
+func (s *Server) ComposeAnswerSystem(promptB, replyPrefix, contextText string, userQueryLen int) string {
+	_, maxTotal := s.llmCharBudget(userQueryLen)
+	const sep = "\n\n=== CONTEXT (данные для ответа; единственный источник фактов) ===\n"
+	const headSuffix = "\n\n[хвост файла инструкций снят — опирайся на CONTEXT ниже]"
+	overhead := len(sep)
+
+	var tail strings.Builder
+	if strings.TrimSpace(replyPrefix) != "" {
+		tail.WriteString(replyPrefix)
+		if strings.TrimSpace(contextText) != "" {
+			tail.WriteString("\n")
+		}
+	}
+	tail.WriteString(contextText)
+	tailStr := tail.String()
+
+	const wantHeadMin = 2048
+	maxTail := maxTotal - overhead - wantHeadMin
+	if maxTail < 384 {
+		maxTail = maxTotal - overhead - 600
+	}
+	if maxTail < 128 {
+		maxTail = 128
+	}
+	if len(tailStr) > maxTail {
+		tailStr = truncateUTF8(tailStr, maxTail) + "\n[... CONTEXT обрезан по лимиту модели ...]"
+	}
+
+	headBudget := maxTotal - overhead - len(tailStr)
+	head := promptB
+	if len(head) > headBudget {
+		trim := headBudget - len(headSuffix)
+		if trim < 256 {
+			trim = 256
+		}
+		if trim+len(headSuffix) > headBudget {
+			trim = headBudget - len(headSuffix)
+			if trim < 100 {
+				trim = 100
+			}
+		}
+		head = truncateUTF8(promptB, trim) + headSuffix
+	}
+	out := head + sep + tailStr
+	if len(out) > maxTotal {
+		out = truncateUTF8(out, maxTotal)
+	}
+	return out
+}
+
 // ExtractSearchQuery calls LLM with prompt A; returns search query for Qdrant.
 // К системному промпту добавляется список имён; бюджет подгоняется под контекст, иначе prompt A (~32KB+) обрезается в CallLLM
 // с потерей хвоста и без имён — модель перестаёт выдавать ключ поиска, цепочка выглядит как «сразу только промпт B».

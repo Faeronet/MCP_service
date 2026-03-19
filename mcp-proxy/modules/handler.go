@@ -215,12 +215,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !nameAllHandled {
-		systemExtra := replyToPrefix
-		if replyToPrefix != "" && contextText != "" {
-			systemExtra += "\n"
-		}
-		systemExtra += contextText
-		systemContent := s.PromptB + "\n" + systemExtra
+		systemContent := s.ComposeAnswerSystem(s.PromptB, replyToPrefix, contextText, len(req.MessageText))
 		reply, replyErr = s.CallLLM(ctx, requestID, systemContent, req.MessageText)
 		if s.DebugMode == 0 {
 			reply = StripThink(reply)
