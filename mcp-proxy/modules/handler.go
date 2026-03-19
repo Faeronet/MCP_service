@@ -163,7 +163,16 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 			var buildQueryForFilter string
 			var buildContextKind string
 			var buildContextRef string
-			contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, 4000, "default")
+			// tokenBudget управляет тем, сколько материала вернётся в CONTEXT (и как быстро пройдёт построение/усечение).
+			// Для ускорения берём небольшой, но достаточный бюджет под вход LLM.
+			tokenBudget := s.LlmContextLength - s.LlmMaxTokens
+			if tokenBudget > 1200 {
+				tokenBudget = 1200
+			}
+			if tokenBudget < 512 {
+				tokenBudget = 512
+			}
+			contextText, buildChunkIDs, buildCollection, buildCollectionsSearched, buildQueryForFilter, buildContextKind, buildContextRef, err = s.BuildContext(ctx, requestID, searchQuery, attachmentsText, tokenBudget, "default")
 			if err != nil {
 				switch err.Error() {
 				case "chunk_not_found":

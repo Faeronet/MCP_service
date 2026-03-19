@@ -369,11 +369,12 @@ services:
       # Совпадайте с VLLM_MAX_MODEL_LEN в .env.
       LLM_CONTEXT_LENGTH: ${LLM_CONTEXT_LENGTH:-8192}
       # Запас под промпт (RAG): max_tokens + input ≤ max_model_len
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1024}
+      # Для ускорения генерации ограничиваем output max_tokens.
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-256}
       # Ускорение: no_date = не вызывать промпт A, если в сообщении есть дата; never = всегда без A; always = как раньше
       LLM_QUERY_EXTRACT: ${LLM_QUERY_EXTRACT:-no_date}
       # Короткий max_tokens только для промпта A (извлечение ключа поиска)
-      LLM_EXTRACT_MAX_TOKENS: ${LLM_EXTRACT_MAX_TOKENS:-256}
+      LLM_EXTRACT_MAX_TOKENS: ${LLM_EXTRACT_MAX_TOKENS:-128}
       MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       BOT_DEBUG: ${BOT_DEBUG:-0}
     ports:
