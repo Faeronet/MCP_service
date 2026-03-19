@@ -184,8 +184,8 @@ services:
       - "${VLLM_MAX_NUM_SEQS:-1}"
       # Фиксированный размер KV-cache на GPU (байты). 1.3 GiB = 1395864371.
       # В vLLM при заданном kv-cache-memory расчёт KV из --gpu-memory-utilization для кэша не используется (см. CacheConfig).
-      - #"--kv-cache-memory"
-      - #"${VLLM_KV_CACHE_MEMORY_BYTES:-1395864371}"
+      #- "--kv-cache-memory"
+      #- "${VLLM_KV_CACHE_MEMORY_BYTES:-1395864371}"
     deploy:
       resources:
         limits:
