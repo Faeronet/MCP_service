@@ -183,15 +183,26 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 					contextText = ""
 				}
 			} else if len(buildChunkIDs) == 1 {
-				// При ровно одном чанке подставляем полный контекст из Postgres; для коллекций emocionalnoe/intellektualnye/astralnyi_duh — только чанки
+				// Один чанк: в LLM — полный document_context из Postgres (если есть), иначе текст от mcp-read; ref всегда сохраняем для уточнений.
+				// Коллекции emocionalnoe/intellektualnye/astralnyi_duh — по-прежнему только чанки, без полного документа.
 				skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh"
+				cid := strings.TrimSpace(buildChunkIDs[0])
 				if skipFullContext {
 					buildContextKind = "chunks"
-				} else {
-					if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && fullCtx != "" {
-						contextText = fullCtx
+				} else if buildCollection != "" && cid != "" {
+					ref := buildCollection + ":" + cid
+					savedContextRef = ref
+					if fullCtx, ok := s.ResolveFullContextFromRef(ctx, ref); ok && strings.TrimSpace(fullCtx) != "" {
+						contextText = strings.TrimSpace(fullCtx)
 						buildContextKind = "full"
-						buildContextRef = buildChunkIDs[0]
+						buildContextRef = cid
+					}
+				} else if cid != "" {
+					// Нет коллекции в ответе — хотя бы Postgres по chunk_id
+					if fullCtx, ok := s.GetFullContextByChunkIDs(ctx, buildChunkIDs); ok && strings.TrimSpace(fullCtx) != "" {
+						contextText = strings.TrimSpace(fullCtx)
+						buildContextKind = "full"
+						buildContextRef = cid
 					}
 				}
 			}
@@ -210,7 +221,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 					debugMessage += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
 				}
 			}
-			if buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
+			// savedContextRef для одного чанка уже выставлен выше; здесь — случаи full от mcp-read при нескольких чанках / без раннего ref.
+			if savedContextRef == "" && buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
 				savedContextRef = buildCollection + ":" + buildContextRef
 			}
 		}

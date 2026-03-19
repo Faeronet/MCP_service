@@ -52,6 +52,36 @@ func (s *Server) BuildContext(ctx context.Context, requestID, query, attachments
 	return out.Context, out.ChunkIDs, out.SearchCollection, out.CollectionsSearched, out.QueryForFilter, out.ContextKind, out.ContextRef, nil
 }
 
+// ResolveFullContextFromRef сначала берёт полный текст из Postgres (core.document_context по chunk_id),
+// затем при отсутствии строки — mcp-read /mcp/full_context. Так уточняющий вопрос и один чанк
+// получают тот же «полный документ», а не только фрагмент из Qdrant.
+func (s *Server) ResolveFullContextFromRef(ctx context.Context, ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", false
+	}
+	parts := strings.SplitN(ref, ":", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	chunkID := strings.TrimSpace(parts[1])
+	if chunkID == "" {
+		return "", false
+	}
+	if full, ok := s.GetFullContextByChunkIDs(ctx, []string{chunkID}); ok {
+		if t := strings.TrimSpace(full); t != "" {
+			return t, true
+		}
+	}
+	f, ok := s.GetFullContextByRef(ctx, ref)
+	if ok {
+		if t := strings.TrimSpace(f); t != "" {
+			return t, true
+		}
+	}
+	return "", false
+}
+
 // GetFullContextByRef calls mcp-read /mcp/full_context for "collection:chunk_id".
 func (s *Server) GetFullContextByRef(ctx context.Context, ref string) (string, bool) {
 	ref = strings.TrimSpace(ref)

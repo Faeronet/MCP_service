@@ -54,7 +54,8 @@ func (s *Server) GetContextByTelegramMessageID(ctx context.Context, sessionID uu
 		return "", false
 	}
 	if contextRef != nil && strings.TrimSpace(*contextRef) != "" {
-		if full, ok := s.GetFullContextByRef(ctx, strings.TrimSpace(*contextRef)); ok && strings.TrimSpace(full) != "" {
+		ref := strings.TrimSpace(*contextRef)
+		if full, ok := s.ResolveFullContextFromRef(ctx, ref); ok && strings.TrimSpace(full) != "" {
 			return full, true
 		}
 	}
@@ -87,20 +88,9 @@ func (s *Server) GetReplyToContext(ctx context.Context, sessionID uuid.UUID, rep
 	storedContextRef = ""
 	if ctxRef != nil && strings.TrimSpace(*ctxRef) != "" {
 		storedContextRef = strings.TrimSpace(*ctxRef)
-		// Ответ строился на полном контексте документа — в LLM снова подставляем полный текст из того же ref.
-		if full, okFull := s.GetFullContextByRef(ctx, storedContextRef); okFull && strings.TrimSpace(full) != "" {
+		// Сначала Postgres (document_context), иначе mcp-read — тот же полный документ, что и при первичном ответе.
+		if full, okFull := s.ResolveFullContextFromRef(ctx, storedContextRef); okFull && strings.TrimSpace(full) != "" {
 			contextForLLM = strings.TrimSpace(full)
-		}
-		// mcp-read недоступен — пробуем тот же chunk_id в Postgres (как при первичном ответе).
-		if contextForLLM == "" {
-			if parts := strings.SplitN(storedContextRef, ":", 2); len(parts) == 2 {
-				cid := strings.TrimSpace(parts[1])
-				if cid != "" {
-					if full, ok2 := s.GetFullContextByChunkIDs(ctx, []string{cid}); ok2 && strings.TrimSpace(full) != "" {
-						contextForLLM = strings.TrimSpace(full)
-					}
-				}
-			}
 		}
 	}
 	if contextForLLM == "" && strings.TrimSpace(ctxText) != "" {
