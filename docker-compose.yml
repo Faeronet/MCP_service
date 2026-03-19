@@ -161,10 +161,14 @@ services:
   # Порядок запуска AI: vllm (GPU) + embed-cpu (CPU) → rerank (CPU), extract-tool (CPU).
   # KV-cache: --max-model-len и --max-num-seqs (меньше = меньше VRAM).
   # Должно совпадать с LLM_CONTEXT_LENGTH у mcp-proxy (или быть больше).
+  # GPU: без проброса GPU контейнер не видит CUDA → «No CUDA runtime», «Failed to infer device type».
+  # Нужны драйвер NVIDIA + nvidia-container-toolkit. Проверка: docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
   vllm:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
+    gpus: all
+    shm_size: "2gb"
     command:
       - "--model"
       - "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}"
@@ -186,14 +190,21 @@ services:
       resources:
         limits:
           memory: 24g
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
+      # PyTorch 2+: предпочтительно PYTORCH_ALLOC_CONF; старое имя оставлено для совместимости
+      PYTORCH_ALLOC_CONF: expandable_segments:True
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     ports:
       - "8000:8000"
