@@ -50,8 +50,10 @@ app = FastAPI(lifespan=_lifespan)
 MODEL_NAME = os.getenv("LLM_CODE_MODEL") or os.getenv("LLM_MODEL", "Qwen/Qwen3-0.6B")
 PORT = int(os.getenv("PORT", "8005"))
 
-# generation params (2048 по умолчанию сильно тянет время; vLLM на том же железе обычно быстрее из‑за ядер/батчинга)
-MAX_NEW_TOKENS_DEFAULT = int(os.getenv("MAX_NEW_TOKENS", "1024"))
+# generation params — vLLM обычно быстрее; здесь лимиты чтобы не раздувать задержку
+MAX_NEW_TOKENS_DEFAULT = int(os.getenv("MAX_NEW_TOKENS", "512"))
+# Жёсткий потолок на ответ (клиент может запросить больше — обрежем). 0 = без потолка.
+MAX_NEW_TOKENS_CAP = int(os.getenv("LLM_CODE_MAX_NEW_TOKENS_CAP", "1024"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 TOP_P = float(os.getenv("TOP_P", "1.0"))
 
