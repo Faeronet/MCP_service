@@ -49,7 +49,7 @@ func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, 
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return 0
+		text = "Пустой ответ от сервиса. Повторите запрос."
 	}
 	chunks := splitMessageChunks(text, maxTelegramMessageLen)
 	if len(chunks) == 0 {

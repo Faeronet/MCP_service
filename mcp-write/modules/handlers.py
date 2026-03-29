@@ -54,6 +54,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     raw = extract.extract_text_from_file(data, key)
     if not raw or not raw.strip():
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
+    raw = raw.replace("\ufeff", "").replace("\u200b", "").replace("\xa0", " ")
 
     return ingest_system_b.ingest_document_system_b(req, raw)
 

@@ -46,7 +46,8 @@ def _all_label_positions(raw: str) -> list[tuple[int, str, str]]:
                     break
                 entries.append((pos, label, key_name))
                 idx = pos + 1
-    entries.sort(key=lambda x: x[0])
+    # Сначала позиция в тексте, затем более длинная метка (чтобы «Физическое:» побеждало «Физическое»).
+    entries.sort(key=lambda x: (x[0], -len(x[1])))
     return entries
 
 
@@ -93,7 +94,12 @@ def parse_system_b_keys(raw: str) -> dict[str, str]:
             val, _ = _truncate_at_first_period(segment)
         else:
             val = segment
-        if val and (key_name not in out or len(val) > len(out.get(key_name, ""))):
+        if not val:
+            continue
+        if key_name == "fizicheskoe":
+            prev = (out.get(key_name) or "").strip()
+            out[key_name] = (prev + " " + val).strip() if prev else val
+        elif key_name not in out or len(val) > len(out.get(key_name, "")):
             out[key_name] = val
     return out
 

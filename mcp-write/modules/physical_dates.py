@@ -29,6 +29,20 @@ _RU_MONTH_GEN: dict[str, int] = {
     "декабря": 12,
 }
 
+_RU_MONTH_SHORT: dict[str, int] = {
+    "янв": 1,
+    "фев": 2,
+    "мар": 3,
+    "апр": 4,
+    "июн": 6,
+    "июл": 7,
+    "авг": 8,
+    "сен": 9,
+    "окт": 10,
+    "ноя": 11,
+    "дек": 12,
+}
+
 _RU_MONTH_NOM: dict[str, int] = {
     "январь": 1,
     "февраль": 2,
@@ -62,8 +76,18 @@ def parse_fizicheskie_daty_ddmm(val: str) -> list[str]:
     seen: set[tuple[int, int]] = set()
     out: list[str] = []
 
-    # Числовые dd.mm / dd/mm / dd-mm (не забираем фрагменты вроде 2015.01)
-    for m in re.finditer(r"(?<![0-9])(\d{1,2})\s*([./-])\s*(\d{1,2})(?![0-9])", text):
+    # dd mm (без разделителя, месяц двумя цифрами 01–12)
+    for m in re.finditer(r"(?<![0-9])(\d{1,2})\s+(\d{1,2})(?![0-9])", text):
+        try:
+            day = int(m.group(1))
+            mon = int(m.group(2))
+        except ValueError:
+            continue
+        if 1 <= mon <= 12:
+            _add_date(seen, out, day, mon)
+
+    # Числовые dd.mm / dd/mm / dd-mm / dd,mm (не забираем фрагменты вроде 2015.01)
+    for m in re.finditer(r"(?<![0-9])(\d{1,2})\s*([.,/\-])\s*(\d{1,2})(?![0-9])", text):
         try:
             day = int(m.group(1))
             mon = int(m.group(3))
@@ -74,7 +98,11 @@ def parse_fizicheskie_daty_ddmm(val: str) -> list[str]:
     # «12 января» / «5 март»
     for m in re.finditer(r"(\d{1,2})\s+([а-яё]+)", text):
         d_raw, mon_word = m.group(1), m.group(2)
-        mon = _RU_MONTH_GEN.get(mon_word) or _RU_MONTH_NOM.get(mon_word)
+        mon = (
+            _RU_MONTH_GEN.get(mon_word)
+            or _RU_MONTH_NOM.get(mon_word)
+            or _RU_MONTH_SHORT.get(mon_word)
+        )
         if mon is None:
             continue
         try:

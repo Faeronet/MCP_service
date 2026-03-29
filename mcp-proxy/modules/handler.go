@@ -267,6 +267,11 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		if s.DebugMode == 0 {
 			reply = StripThink(reply)
 		}
+		// Иначе в Telegram остаётся «...» без текста: StripThink вырезал весь ответ, а отладочное сообщение ушло отдельным письмом.
+		if strings.TrimSpace(reply) == "" {
+			logHandler.Warn(ctx, "llm reply empty after strip", logging.KV{"request_id", requestID}, logging.KV{"debug_mode", s.DebugMode})
+			reply = "Ответ модели пустой (часто весь текст был во внутреннем блоке рассуждения). Повторите вопрос. Чтобы видеть полный сырой вывод, выставьте BOT_DEBUG=1 у mcp-proxy (как у tg-bot)."
+		}
 	}
 	if replyErr != nil {
 		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr}, logging.KV{"vllm_base", s.VllmBase}, logging.KV{"llm_model", s.LlmModel})
