@@ -283,27 +283,51 @@ services:
     depends_on:
       - admin-backend
 
-  bot-service:
+  # Логика чата и LLM (HTTP). Telegram — только tg-bot.
+  mcp-proxy:
     build:
       context: .
-      dockerfile: bot-service/Dockerfile
+      dockerfile: mcp-proxy/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      MCP_READ_URL: http://mcp-read:8082
+      BOT_DEBUG: ${BOT_DEBUG:-0}
+      LLM_QUERY_EXTRACT: ${LLM_QUERY_EXTRACT:-no_date}
+      LLM_EXTRACT_MAX_TOKENS: ${LLM_EXTRACT_MAX_TOKENS:-128}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-256}
+      LLM_CONTEXT_LENGTH: ${LLM_CONTEXT_LENGTH:-8192}
+      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
+      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
+      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      mcp-read: { condition: service_started }
+    restart: unless-stopped
+
+  tg-bot:
+    build:
+      context: .
+      dockerfile: tg-bot/Dockerfile
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_DEBUG: ${TELEGRAM_DEBUG:-false}
       BOT_DEBUG: ${BOT_DEBUG:-0}
+      MCP_PROXY_URL: http://mcp-proxy:8083
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
-      MCP_READ_URL: http://mcp-read:8082
+      EXTRACT_TOOL_URL: ${EXTRACT_TOOL_URL:-http://extract-tool:8004}
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://extract-tool:8004}
-      # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
-      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Имя модели в запросах — должно совпадать с загруженной в vLLM (по умолчанию Qwen3-14B-AWQ).
-      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
-      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -311,8 +335,7 @@ services:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
-      rabbitmq: { condition: service_healthy }
-      mcp-read: { condition: service_started }
+      mcp-proxy: { condition: service_started }
       extract-tool: { condition: service_started }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/healthz"]

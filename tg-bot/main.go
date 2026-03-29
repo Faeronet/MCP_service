@@ -53,6 +53,7 @@ func main() {
 	debounceMs := config.LoadInt("PER_CHAT_DEBOUNCE_MS", 500)
 	workerConcurrency := config.LoadInt("WORKER_CONCURRENCY", 64)
 	perChatLimiter := ratelimit.NewPerKey(5, 1*time.Minute)
+	botDebug := config.LoadInt("BOT_DEBUG", 0)
 
 	app := &modules.Bot{
 		Bot:            nil,
@@ -64,6 +65,7 @@ func main() {
 		ChatMu:         make(map[int64]chan struct{}),
 		ChatMuGuard:    &sync.Mutex{},
 		PerChatLimiter: perChatLimiter,
+		DebugMode:      botDebug,
 	}
 
 	updatesCh := make(chan tgbotapi.Update, 512)
@@ -93,6 +95,10 @@ func main() {
 	bot.Debug = config.LoadBool("TELEGRAM_DEBUG", false)
 	app.Bot = bot
 	log.Info(ctx, "bot authorized", logging.KV{"username", bot.Self.UserName})
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	go app.StartReminderWorker(workerCtx)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60

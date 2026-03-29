@@ -5,7 +5,7 @@
 ## Стек
 
 - **Инфраструктура:** MinIO, Postgres, RabbitMQ, Redis, Qdrant, Loki, Promtail, Grafana, vLLM (OpenAI-compatible).
-- **Сервисы:** admin-backend (Go), admin-web-ui (React/TS), tg-bot (Go), mcp-read (Go), mcp-write (Python), ingestion-worker (Python), attachment-worker (Python), log-indexer (Go).
+- **Сервисы:** admin-backend (Go), admin-web-ui (React/TS), **tg-bot** (Telegram, Go), **mcp-proxy** (чат + LLM + напоминания, HTTP), mcp-read (Go), mcp-write (Python), ingestion-worker (Python), attachment-worker (Python), log-indexer (Go). Ранее в репозитории ошибочно добавляли `bot-service` как монолит — он удалён; используйте только **tg-bot → mcp-proxy → mcp-read**.
 
 ## Быстрый старт
 

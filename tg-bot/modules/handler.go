@@ -81,6 +81,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		b.handleStart(ctx, chatID, userID, msg.Chat.UserName)
 		return
 	}
+	if b.TryHandleReminderDebugCommand(ctx, chatID, text) {
+		return
+	}
 
 	key := fmt.Sprintf("user:%d", userID)
 	if b.PerChatLimiter != nil && !b.PerChatLimiter.Allow(key) {
@@ -100,7 +103,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 
 	typingMsgID := b.SendReplyTyping(ctx, chatID)
 
-	replyText, debugMessage, messageIDStr, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
+	replyText, debugMessage, messageIDStr, reminderExtra, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
 	if err != nil {
 		logHandler.Error(ctx, "proxy call", logging.KV{"error", err})
 		hint := "Сервис временно недоступен. Запустите mcp-proxy (docker compose up -d mcp-proxy). В контейнерах MCP_PROXY_URL=http://mcp-proxy:8083; с хоста/Cursor — http://127.0.0.1:8083. Не используйте host.docker.internal на Linux к проброшенному порту — часто connection refused."
@@ -125,6 +128,9 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		if msgID, err := uuid.Parse(messageIDStr); err == nil && firstMsgID > 0 {
 			_ = b.UpdateMessageTelegramID(ctx, msgID, firstMsgID)
 		}
+	}
+	if strings.TrimSpace(reminderExtra) != "" {
+		b.SendReply(ctx, chatID, reminderExtra)
 	}
 }
 
@@ -235,7 +241,7 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		return
 	}
 
-	replyText, debugMessage, messageIDStr, err := b.CallChat(ctx, sessionID, chatID, userID, username, userMsg, 0, requestID)
+	replyText, debugMessage, messageIDStr, reminderExtra, err := b.CallChat(ctx, sessionID, chatID, userID, username, userMsg, 0, requestID)
 	if err != nil {
 		logHandler.Warn(ctx, "proxy call for attachment", logging.KV{"error", err})
 		b.EditMessageText(ctx, chatID, typingMsgID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
@@ -257,5 +263,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		if msgID, err := uuid.Parse(messageIDStr); err == nil && firstMsgID > 0 {
 			_ = b.UpdateMessageTelegramID(ctx, msgID, firstMsgID)
 		}
+	}
+	if strings.TrimSpace(reminderExtra) != "" {
+		b.SendReply(ctx, chatID, reminderExtra)
 	}
 }
