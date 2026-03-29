@@ -174,8 +174,7 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
-  # vLLM для эмбеддингов. При одной видеокарте — та же GPU 0: задаём --gpu-memory-utilization 0.35, чтобы поместиться рядом с vllm (чат).
-  # При двух GPU: device_ids: ['1'] и NVIDIA_VISIBLE_DEVICES=1 — эмбеддинги на GPU 1.
+  # vLLM для эмбеддингов. По умолчанию GPU 0 (одна карта). Две карты — override: device_ids ['1'], NVIDIA_VISIBLE_DEVICES_EMBED=1.
   vllm-embed:
     profiles:
       - vllm
@@ -188,12 +187,12 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['1']
+              device_ids: ['0']
               capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
-      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES_EMBED:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
@@ -202,7 +201,7 @@ services:
       - "8002:8000"
     restart: unless-stopped
 
-  # Реранкер (BAAI/bge-reranker-v2-m3) — та же GPU 1, что и vllm-embed. API: POST /api/v1/rerank.
+  # Реранкер (BAAI/bge-reranker-v2-m3). По умолчанию GPU 0; две карты — override с GPU 1. API: POST /api/v1/rerank.
   rerank:
     profiles:
       - vllm
@@ -214,7 +213,7 @@ services:
       MAX_LENGTH: "512"
       MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       DEVICE: cuda
-      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES_RERANK:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     deploy:
       resources:
@@ -223,7 +222,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['1']
+              device_ids: ['0']
               capabilities: [gpu]
     ports:
       - "8787:8787"
@@ -234,13 +233,7 @@ services:
     build:
       context: .
       dockerfile: admin-backend/Dockerfile
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['0', '1']
-              capabilities: [gpu]
+    # Без проброса GPU: метрики контейнеров через Docker API; GPU в UI — N/A без override (device_ids).
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
@@ -432,27 +425,20 @@ services:
       mcp-write: { condition: service_started }
     restart: unless-stopped
 
-  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы zip/tar.gz/tar.xz). POST /extract, /ocr, /asr.
+  # extract-tool: OCR/ASR/текст/PDF/архивы — только CPU (образ python + torch CPU). GPU не пробрасывается.
+  # Опционально CUDA: отдельный Dockerfile/override с torch CUDA и EXTRACT_USE_CUDA=1.
   extract-tool:
     build:
       context: ./extract-tool
       dockerfile: Dockerfile
     environment:
       PORT: "8004"
-      NVIDIA_VISIBLE_DEVICES: "1"
       HF_TOKEN: ${HF_TOKEN:-}
       HF_HOME: /tmp/hf_cache
       ASR_MODEL: ${ASR_MODEL:-openai/whisper-large-v3}
       ASR_LANGUAGE: ${ASR_LANGUAGE:-ru}
       OCR_MODEL: ${OCR_MODEL:-PaddlePaddle/PaddleOCR-VL-1.5}
       OCR_LANGUAGES: ${OCR_LANGUAGES:-ru,en}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['1']
-              capabilities: [gpu]
     ports:
       - "8004:8004"
     restart: unless-stopped

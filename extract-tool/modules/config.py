@@ -19,7 +19,9 @@ AUDIO_EXT = {".ogg", ".mp3", ".wav", ".m4a", ".flac", ".opus", ".mpga"}
 
 
 def device() -> str:
-    if not os.getenv("NVIDIA_VISIBLE_DEVICES"):
+    """По умолчанию CPU (штатный Docker-образ без CUDA). CUDA только при явном EXTRACT_USE_CUDA=1 и доступном GPU."""
+    flag = (os.getenv("EXTRACT_USE_CUDA") or "").strip().lower()
+    if flag not in ("1", "true", "yes", "on"):
         return "cpu"
     try:
         import torch

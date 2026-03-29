@@ -47,7 +47,7 @@ docker compose up -d && sleep 15 && for f in migrations/*.up.sql; do psql "${POS
 3. **Прокси/VPN** — если доступ в интернет только через прокси или VPN, настройте их для демона Docker.
 4. **Зеркало** — если в сети есть корпоративное зеркало Docker Hub, укажите его в `daemon.json` в `registry-mirrors`.
 
-Все сервисы, кроме vLLM, запускаются по умолчанию. **GPU в Docker не требуется** — драйвер `nvidia` не используется, пока не запускаете vLLM с профилем `vllm`. Остальные сервисы перезапускаются при падении (`restart: unless-stopped`).
+Все сервисы, кроме vLLM, запускаются по умолчанию. **extract-tool** (OCR/ASR) в штатном образе работает **только на CPU** и не запрашивает NVIDIA. **GPU в Docker** нужен только для профиля `vllm` (чат, эмбеддинги, реранк). Остальные сервисы перезапускаются при падении (`restart: unless-stopped`).
 
 ### Запуск на ПК с игровой видеокартой (RTX 3080 Ti и др.)
 
@@ -186,7 +186,8 @@ sudo systemctl restart docker
 
 **Текущее состояние:** в коде заложены переменные окружения и заглушки; полноценные пайплайны нужно дорабатывать.
 
-- **vLLM для чата и эмбеддингов:** при `docker compose --profile vllm up -d` поднимаются два контейнера: **vllm** (чат, Qwen) и **vllm-embed** (эмбеддинги, BAAI/bge-m3). На **одной видеокарте** оба используют одну GPU с ограничением VRAM (vllm 0.55, vllm-embed 0.35), чтобы не было ошибки «Free memory on device... less than desired GPU memory utilization». Если у вас **две видеокарты**, задайте в `.env`: `NVIDIA_VISIBLE_DEVICES=0` и `NVIDIA_VISIBLE_DEVICES_EMBED=1`, чтобы чат шёл на первой GPU, эмбеддинги на второй.
+- **vLLM для чата и эмбеддингов:** при `docker compose --profile vllm up -d` поднимаются **vllm** (чат) и **vllm-embed** (BAAI/bge-m3). По умолчанию в compose оба на **GPU 0** (одна карта); при **двух** картах вынесите эмбеддинги и реранк на вторую через `docker-compose.override.yml` (`device_ids: ['1']`, `NVIDIA_VISIBLE_DEVICES_EMBED=1`, `NVIDIA_VISIBLE_DEVICES_RERANK=1`).
+- **extract-tool:** образ `python` + **torch CPU**; CUDA не используется. Для экспериментов с GPU — свой Dockerfile с torch CUDA и переменная **`EXTRACT_USE_CUDA=1`**.
 - **Реранк:** задайте `RERANK_API_URL` на сервис с `POST /rerank` (тело: `query`, `documents`, `model`; ответ: `results[]` с `index` и `relevance_score` или `scores[]`). Реранкер (например FlagEmbedding) — отдельный сервис, не входит в образ vLLM.
 - **OCR и ASR:** задайте `OCR_SERVICE_URL` и `ASR_SERVICE_URL` на сервисы с `POST /ocr` и `POST /asr` (multipart file → JSON `{"text": "..."}`). attachment-worker вызывает их для картинок/PDF и аудио. Реализации (PaddleOCR, Whisper) — отдельные контейнеры, не vLLM.
 - **Реранк:** mcp-read читает `RERANK_MODEL`, но реранк по ответам Qdrant **не вызывается** — нужно добавить вызов модели реранка после поиска по чанкам.
