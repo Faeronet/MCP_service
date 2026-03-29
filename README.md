@@ -27,7 +27,7 @@ docker compose up -d
 # 2) На хосте (обход Error 803): см. раздел «Вариант: vLLM на хосте» ниже; в .env задайте VLLM_OPENAI_BASE=http://host.docker.internal:8000/v1
 docker compose up -d
 ```
-**Важно:** без работающего vLLM (в контейнере с `--profile vllm` или на хосте с указанным `VLLM_OPENAI_BASE`) tg-bot и mcp-read/mcp-write не смогут вызывать LLM. При 803 в Docker запустите vLLM на хосте и укажите URL в `.env`.
+**Важно:** без сервиса эмбеддингов (контейнер **vllm-embed** с профилем `vllm` или свой `EMBED_API_URL`) **mcp-write** не сможет строить векторы при инжесте. Без чат-модели (**vllm** / `VLLM_OPENAI_BASE`) **tg-bot**, **mcp-read** и **mcp-proxy** не смогут вызывать LLM. При 803 в Docker запустите vLLM на хосте и укажите URL в `.env`.
 
 Одна команда поднятия всей инфраструктуры и приложений:
 
@@ -234,7 +234,7 @@ MINIO_SERVER_URL=http://IP_СЕРВЕРА:9001
 ├── admin-web-ui/          # React/TS (Vite): Docs, Jobs, Logs, Grafana (iframe)
 ├── tg-bot/           # Go: Telegram polling, worker pool, mcp-read, LLM, rate limit
 ├── mcp-read/               # Go: build_context (embed → qdrant → rerank → context), cache
-├── mcp-write/              # Python: ingest_document (chunk/embed/upsert), deterministic IDs
+├── mcp-write/              # Python: ingest_document (система B: метки → Qdrant + Postgres)
 ├── ingestion-worker/      # Python: consumer ingestion_jobs → mcp-write
 ├── attachment-worker/     # Python: consumer attachment_jobs, sandbox, allowlist
 ├── log-indexer/           # Go: Loki → obs.logs_index

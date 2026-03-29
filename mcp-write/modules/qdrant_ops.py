@@ -47,30 +47,29 @@ def ensure_all_payload_indexes() -> None:
     ensure_payload_index_text(config.COLLECTION, "situacii_problemy")
     ensure_payload_index_text(config.COLLECTION, "proyavlenie")
     ensure_payload_index_text(config.COLLECTION, "gospodstvo")
-    if config.INGESTION_SYSTEM == "B":
-        # obitanie: obitanie + names_text (список имён одной строкой для поиска)
-        ensure_payload_index_text(config.COLLECTION_OBITANIE, "obitanie")
-        ensure_payload_index_text(config.COLLECTION_OBITANIE, "names_text")
-        # znak_zodiaka: znak_zodiaka + names_text
-        ensure_payload_index_text(config.COLLECTION_ZNAK_ZODIAKA, "znak_zodiaka")
-        ensure_payload_index_text(config.COLLECTION_ZNAK_ZODIAKA, "names_text")
-        # specificnost, kachestva_energii, iskazheniya_energii: основное поле + name
-        ensure_payload_index_text(config.COLLECTION_SPECIFICNOST, "specificnost")
-        ensure_payload_index_text(config.COLLECTION_SPECIFICNOST, "name")
-        ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "kachestva_energii")
-        ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "name")
-        ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "iskazheniya_energii")
-        ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "name")
-        # emocionalnoe, intellektualnye, astralnyi_duh: основное поле + name
-        ensure_payload_index_text(config.COLLECTION_EMOCIONALNOE, "emocionalnoe")
-        ensure_payload_index_text(config.COLLECTION_EMOCIONALNOE, "name")
-        ensure_payload_index_text(config.COLLECTION_INTELLEKTUALNYE, "intellektualnye")
-        ensure_payload_index_text(config.COLLECTION_INTELLEKTUALNYE, "name")
-        ensure_payload_index_text(config.COLLECTION_ASTRALNYI_DUH, "astralnyi_duh")
-        ensure_payload_index_text(config.COLLECTION_ASTRALNYI_DUH, "name")
-        # other: context + name
-        ensure_payload_index_text(config.COLLECTION_OTHER, "context")
-        ensure_payload_index_text(config.COLLECTION_OTHER, "name")
+    # obitanie: obitanie + names_text (список имён одной строкой для поиска)
+    ensure_payload_index_text(config.COLLECTION_OBITANIE, "obitanie")
+    ensure_payload_index_text(config.COLLECTION_OBITANIE, "names_text")
+    # znak_zodiaka: znak_zodiaka + names_text
+    ensure_payload_index_text(config.COLLECTION_ZNAK_ZODIAKA, "znak_zodiaka")
+    ensure_payload_index_text(config.COLLECTION_ZNAK_ZODIAKA, "names_text")
+    # specificnost, kachestva_energii, iskazheniya_energii: основное поле + name
+    ensure_payload_index_text(config.COLLECTION_SPECIFICNOST, "specificnost")
+    ensure_payload_index_text(config.COLLECTION_SPECIFICNOST, "name")
+    ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "kachestva_energii")
+    ensure_payload_index_text(config.COLLECTION_KACHESTVA_ENERGII, "name")
+    ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "iskazheniya_energii")
+    ensure_payload_index_text(config.COLLECTION_ISKAZHENIYA, "name")
+    # emocionalnoe, intellektualnye, astralnyi_duh: основное поле + name
+    ensure_payload_index_text(config.COLLECTION_EMOCIONALNOE, "emocionalnoe")
+    ensure_payload_index_text(config.COLLECTION_EMOCIONALNOE, "name")
+    ensure_payload_index_text(config.COLLECTION_INTELLEKTUALNYE, "intellektualnye")
+    ensure_payload_index_text(config.COLLECTION_INTELLEKTUALNYE, "name")
+    ensure_payload_index_text(config.COLLECTION_ASTRALNYI_DUH, "astralnyi_duh")
+    ensure_payload_index_text(config.COLLECTION_ASTRALNYI_DUH, "name")
+    # other: context + name
+    ensure_payload_index_text(config.COLLECTION_OTHER, "context")
+    ensure_payload_index_text(config.COLLECTION_OTHER, "name")
 
 
 def ensure_collection(name: str | None = None) -> None:

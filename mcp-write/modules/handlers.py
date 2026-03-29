@@ -12,7 +12,6 @@ from . import state
 from .models import IngestDocumentRequest
 from . import extract
 from . import ids
-from . import ingest_system_a
 from . import ingest_system_b
 from . import qdrant_ops
 from . import postgres_ops
@@ -56,9 +55,7 @@ def ingest_document(req: IngestDocumentRequest) -> dict[str, Any]:
     if not raw or not raw.strip():
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
 
-    if config.INGESTION_SYSTEM == "B":
-        return ingest_system_b.ingest_document_system_b(req, raw)
-    return ingest_system_a.ingest_document_system_a(req, raw)
+    return ingest_system_b.ingest_document_system_b(req, raw)
 
 
 def list_doc_ids_in_qdrant() -> dict[str, Any]:

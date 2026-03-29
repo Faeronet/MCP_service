@@ -1,9 +1,5 @@
 """
-MCP Write: ingestion tool. chunk/embed/rerank quality/build_links/upsert.
-Deterministic chunk_id, edge_id; upsert-only to Qdrant.
-
-Система A (INGESTION_SYSTEM=A): чанки по параграфам/LLM, полный text в payload, name = первое слово.
-Система B (INGESTION_SYSTEM=B): по меткам — chunks, obitanie, znak_zodiaka, specificnost, postgres.
+MCP Write: инжест по системе B — метки в тексте, несколько коллекций Qdrant, Postgres (document_context, angel_*).
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -41,26 +37,25 @@ async def lifespan(app: FastAPI):
     except UnexpectedResponse as e:
         if e.status_code != 409:
             raise
-    if config.INGESTION_SYSTEM == "B":
-        for coll in (
-            config.COLLECTION_OBITANIE,
-            config.COLLECTION_ZNAK_ZODIAKA,
-            config.COLLECTION_SPECIFICNOST,
-            config.COLLECTION_KACHESTVA_ENERGII,
-            config.COLLECTION_ISKAZHENIYA,
-            config.COLLECTION_EMOCIONALNOE,
-            config.COLLECTION_INTELLEKTUALNYE,
-            config.COLLECTION_ASTRALNYI_DUH,
-            config.COLLECTION_OTHER,
-        ):
-            try:
-                state.qdrant.create_collection(
-                    coll,
-                    vectors_config=VectorParams(size=config.VECTOR_SIZE, distance=Distance.COSINE),
-                )
-            except UnexpectedResponse as e:
-                if e.status_code != 409:
-                    raise
+    for coll in (
+        config.COLLECTION_OBITANIE,
+        config.COLLECTION_ZNAK_ZODIAKA,
+        config.COLLECTION_SPECIFICNOST,
+        config.COLLECTION_KACHESTVA_ENERGII,
+        config.COLLECTION_ISKAZHENIYA,
+        config.COLLECTION_EMOCIONALNOE,
+        config.COLLECTION_INTELLEKTUALNYE,
+        config.COLLECTION_ASTRALNYI_DUH,
+        config.COLLECTION_OTHER,
+    ):
+        try:
+            state.qdrant.create_collection(
+                coll,
+                vectors_config=VectorParams(size=config.VECTOR_SIZE, distance=Distance.COSINE),
+            )
+        except UnexpectedResponse as e:
+            if e.status_code != 409:
+                raise
     qdrant_ops.ensure_all_payload_indexes()
     yield
     state.qdrant.close()
