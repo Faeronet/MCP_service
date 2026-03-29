@@ -14,9 +14,7 @@ KEYS_UNTIL_FIRST_PERIOD = frozenset({
 })
 
 # Ключи, которые не включаются в полный контекст при сохранении в Postgres (core.document_context)
-KEYS_EXCLUDED_FROM_FULL_CONTEXT = frozenset(
-    {"emocionalnoe", "intellektualnye", "astralnyi_duh", "fizicheskoe"}
-)
+KEYS_EXCLUDED_FROM_FULL_CONTEXT = frozenset({"emocionalnoe", "intellektualnye", "astralnyi_duh"})
 
 
 def _truncate_at_first_period(text: str) -> tuple[str, int]:
@@ -178,7 +176,8 @@ def get_rest_context(raw: str, keys: dict[str, str]) -> str:
 
 
 def full_context_for_postgres(raw: str, keys: dict[str, str]) -> str:
-    """Полный контекст для сохранения в Postgres без секций Эмоциональное, Интеллектуальные, Астральный дух."""
+    """Полный контекст для Postgres: из raw убираются только Эмоциональное / Интеллектуальные / Астральный дух
+    (в т.ч. fizicheskoe остаётся в тексте)."""
     raw = (raw or "").strip()
     if not raw:
         return raw

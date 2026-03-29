@@ -175,7 +175,7 @@ func (c *QdrantClient) GetFullContextFromChunksForIDs(ctx context.Context, chunk
 // fullTextSearchFields по коллекции: в каких полях payload искать (System B).
 // Для chunks — отдельные поля (без дублирующего content).
 var fullTextSearchFields = map[string][]string{
-	CollectionChunks:             {"name", "situacii_problemy", "proyavlenie", "gospodstvo"},
+	CollectionChunks:             {"name", "situacii_problemy", "proyavlenie", "gospodstvo", "fizicheskoe"},
 	CollectionObitanie:           {"obitanie", "names_text"},
 	CollectionZnakZodiaka:        {"znak_zodiaka", "names_text"},
 	CollectionSpecificnost:      {"specificnost", "name"},

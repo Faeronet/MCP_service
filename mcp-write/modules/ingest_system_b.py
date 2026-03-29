@@ -24,7 +24,13 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
         log.info("ingest_document system_b: no keys extracted for doc_id=%s", req.doc_id)
         return {"status": "ok", "chunks_upserted": 0, "doc_id": req.doc_id, "version_id": req.version_id}
     name = keys.get("name", "")
-    main_payload_keys = {"name", "situacii_problemy", "proyavlenie", "gospodstvo"}
+    main_payload_keys = {
+        "name",
+        "situacii_problemy",
+        "proyavlenie",
+        "gospodstvo",
+        "fizicheskoe",
+    }
     main_keys = {k: v for k, v in keys.items() if k in main_payload_keys and v}
     if not main_keys:
         log.info("ingest_document system_b: no main keys for doc_id=%s", req.doc_id)

@@ -47,6 +47,7 @@ def ensure_all_payload_indexes() -> None:
     ensure_payload_index_text(config.COLLECTION, "situacii_problemy")
     ensure_payload_index_text(config.COLLECTION, "proyavlenie")
     ensure_payload_index_text(config.COLLECTION, "gospodstvo")
+    ensure_payload_index_text(config.COLLECTION, "fizicheskoe")
     # obitanie: obitanie + names_text (список имён одной строкой для поиска)
     ensure_payload_index_text(config.COLLECTION_OBITANIE, "obitanie")
     ensure_payload_index_text(config.COLLECTION_OBITANIE, "names_text")
