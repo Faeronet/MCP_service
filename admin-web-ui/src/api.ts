@@ -178,6 +178,33 @@ export async function getChatMessages(sessionId: string): Promise<{ messages: Ch
   return r.json()
 }
 
+export interface SendChatMessageResult {
+  reply_text: string
+  debug_message?: string
+  telegram_message_id?: number
+}
+
+/** Тестовый чат с LLM через admin-backend → mcp-proxy (сессия admin в БД). */
+export async function sendChatMessage(
+  messageText: string,
+  replyToTelegramMessageId?: number
+): Promise<SendChatMessageResult> {
+  const r = await fetch(`${API_URL}/api/chat/llm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({
+      message_text: messageText,
+      reply_to_telegram_message_id: replyToTelegramMessageId ?? 0,
+    }),
+  })
+  checkAuth(r)
+  if (!r.ok) {
+    const t = await r.text()
+    throw new Error(t || `chat ${r.status}`)
+  }
+  return r.json()
+}
+
 export function grafanaUrl(): string {
   const base = `${API_URL}/api/grafana/`
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''

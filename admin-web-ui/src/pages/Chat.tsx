@@ -68,10 +68,11 @@ export function Chat() {
   }
 
   const handleReply = (msg: Message) => {
-    if (msg.role === 'assistant' && msg.telegram_message_id != null && msg.telegram_message_id > 0) {
-      setReplyingTo({ telegram_message_id: msg.telegram_message_id, content: msg.content })
+    const tid = msg.telegram_message_id
+    if (msg.role === 'assistant' && tid != null && tid !== 0) {
+      setReplyingTo({ telegram_message_id: tid, content: msg.content })
     } else {
-      setReplyingTo({ telegram_message_id: 0, content: msg.content })
+      setReplyingTo(null)
     }
   }
 

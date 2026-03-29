@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
-import { FileText, Briefcase, ScrollText, MessageCircle, BarChart3, Gauge, LogOut, Bell } from 'lucide-react'
+import { FileText, Briefcase, ScrollText, MessageCircle, Bot, BarChart3, Gauge, LogOut, Bell } from 'lucide-react'
 
 export function Layout() {
   const navigate = useNavigate()
@@ -16,6 +16,7 @@ export function Layout() {
     { to: '/jobs', label: 'Jobs', icon: Briefcase },
     { to: '/logs', label: 'Logs', icon: ScrollText },
     { to: '/chat-log', label: 'Chat Log', icon: MessageCircle },
+    { to: '/chat', label: 'LLM Chat', icon: Bot },
     { to: '/reminders', label: 'Reminders', icon: Bell },
     { to: '/monitor', label: 'Monitor', icon: Gauge },
     { to: '/grafana', label: 'Grafana', icon: BarChart3 },

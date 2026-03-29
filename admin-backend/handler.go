@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -34,6 +35,7 @@ type HandlerDeps struct {
 	AdminUser             string
 	AdminPass             string
 	MCPWriteURL           string
+	MCPProxyURL           string // POST /chat (тестовый чат из админки)
 	LokiURL               string
 	ReminderSuperAdminSub string // совпадение с логином → UI симуляции времени (например admin)
 }
@@ -962,4 +964,114 @@ func (h *Handler) RemindersDebugClock(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+// Сессия админского тестового чата: не пересекается с реальными telegram_id.
+const adminLLMTelegramID int64 = 0
+const adminLLMChatID int64 = 0
+
+type chatLLMRequestBody struct {
+	MessageText               string `json:"message_text"`
+	ReplyToTelegramMessageID  int    `json:"reply_to_telegram_message_id"`
+}
+
+type mcpProxyChatResponse struct {
+	ReplyText         string `json:"reply_text"`
+	DebugMessage      string `json:"debug_message,omitempty"`
+	MessageID         string `json:"message_id,omitempty"`
+	ReminderExtraText string `json:"reminder_extra_text,omitempty"`
+}
+
+func (h *Handler) ensureAdminLLMSession(ctx context.Context) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := h.Pool.QueryRow(ctx, `
+		INSERT INTO chat.sessions (telegram_id, chat_id, last_active)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (telegram_id, chat_id) DO UPDATE SET last_active = NOW()
+		RETURNING id
+	`, adminLLMTelegramID, adminLLMChatID).Scan(&id)
+	return id, err
+}
+
+// ChatLLM POST /api/chat/llm — прокси на mcp-proxy /chat; выставляет синтетические отрицательные telegram_message_id для ответов «Ответить по контексту».
+func (h *Handler) ChatLLM(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.TrimSpace(h.MCPProxyURL) == "" {
+		http.Error(w, `{"error":"MCP_PROXY_URL not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+	var body chatLLMRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.MessageText) == "" {
+		http.Error(w, `{"error":"message_text required"}`, http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	sessionID, err := h.ensureAdminLLMSession(ctx)
+	if err != nil {
+		http.Error(w, `{"error":"session"}`, http.StatusInternalServerError)
+		return
+	}
+	reqID := uuid.New().String()
+	proxyPayload := map[string]interface{}{
+		"session_id":                    sessionID.String(),
+		"chat_id":                       adminLLMChatID,
+		"user_id":                       adminLLMTelegramID,
+		"username":                      "admin",
+		"message_text":                  body.MessageText,
+		"reply_to_telegram_message_id": body.ReplyToTelegramMessageID,
+		"request_id":                    reqID,
+	}
+	raw, _ := json.Marshal(proxyPayload)
+	proxyURL := h.MCPProxyURL + "/chat"
+	preq, err := http.NewRequestWithContext(ctx, http.MethodPost, proxyURL, bytes.NewReader(raw))
+	if err != nil {
+		http.Error(w, `{"error":"proxy request"}`, http.StatusInternalServerError)
+		return
+	}
+	preq.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 120 * time.Second}
+	presp, err := client.Do(preq)
+	if err != nil {
+		http.Error(w, `{"error":"proxy unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer presp.Body.Close()
+	pbody, _ := io.ReadAll(presp.Body)
+	if presp.StatusCode != http.StatusOK {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(presp.StatusCode)
+		_, _ = w.Write(pbody)
+		return
+	}
+	var out mcpProxyChatResponse
+	if err := json.Unmarshal(pbody, &out); err != nil {
+		http.Error(w, `{"error":"bad proxy response"}`, http.StatusBadGateway)
+		return
+	}
+	var telegramID int64
+	if out.MessageID != "" {
+		msgUUID, perr := uuid.Parse(out.MessageID)
+		if perr == nil {
+			_ = h.Pool.QueryRow(ctx, `
+				SELECT COALESCE((SELECT MIN(telegram_message_id) - 1 FROM chat.messages WHERE session_id = $1 AND telegram_message_id < 0), -1)
+			`, sessionID).Scan(&telegramID)
+			_, _ = h.Pool.Exec(ctx, `
+				UPDATE chat.messages SET telegram_message_id = $1 WHERE id = $2 AND session_id = $3
+			`, telegramID, msgUUID, sessionID)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"reply_text":            out.ReplyText,
+		"debug_message":         out.DebugMessage,
+		"telegram_message_id":   telegramID,
+		"reminder_extra_text":   out.ReminderExtraText,
+	})
 }

@@ -254,6 +254,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       REMINDER_SUPERADMIN_SUB: ${REMINDER_SUPERADMIN_SUB:-admin}
       MCP_WRITE_URL: http://mcp-write:8001
+      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://mcp-proxy:8083}
       LOKI_URL: http://loki:3100
       GRAFANA_URL: http://grafana:3000
     volumes:

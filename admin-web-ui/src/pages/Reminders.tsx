@@ -36,15 +36,15 @@ export function Reminders() {
       const next = !disabled
       await setRemindersDisabled(next)
       setDisabled(next)
-      show(next ? 'Напоминания отключены глобально' : 'Напоминания включены')
+      success(next ? 'Напоминания отключены глобально' : 'Напоминания включены')
     } catch {
-      show('Ошибка сохранения')
+      showError('Ошибка сохранения')
     }
   }
 
   const applySim = async () => {
     if (!isoInput.trim()) {
-      error('Укажите дату/время в RFC3339, например 2026-03-29T09:30:00+03:00')
+      showError('Укажите дату/время в RFC3339, например 2026-03-29T09:30:00+03:00')
       return
     }
     try {
@@ -63,8 +63,8 @@ export function Reminders() {
       success('Симуляция сброшена')
       load()
     } catch (e) {
-      if (e instanceof Error && e.message === 'FORBIDDEN') error('Доступ только для супер-админа')
-      else error('Ошибка')
+      if (e instanceof Error && e.message === 'FORBIDDEN') showError('Доступ только для супер-админа')
+      else showError('Ошибка')
     }
   }
 

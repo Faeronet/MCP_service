@@ -85,6 +85,7 @@ func main() {
 		AdminUser:             config.LoadString("ADMIN_USER", "admin"),
 		AdminPass:             config.LoadString("ADMIN_PASSWORD", "admin"),
 		MCPWriteURL:           config.LoadString("MCP_WRITE_URL", "http://mcp-write:8001"),
+		MCPProxyURL:           strings.TrimSuffix(config.LoadString("MCP_PROXY_URL", "http://mcp-proxy:8083"), "/"),
 		LokiURL:               config.LoadString("LOKI_URL", "http://loki:3100"),
 		ReminderSuperAdminSub: config.LoadString("REMINDER_SUPERADMIN_SUB", "admin"),
 	})
@@ -106,6 +107,7 @@ func main() {
 	mux.Handle("/api/reminders/config", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersConfig)))
 	mux.Handle("/api/reminders/toggle", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersToggle)))
 	mux.Handle("/api/reminders/debug-clock", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersDebugClock)))
+	mux.Handle("/api/chat/llm", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ChatLLM)))
 	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

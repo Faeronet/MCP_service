@@ -9,6 +9,7 @@ import { Docs } from './pages/Docs'
 import { Jobs } from './pages/Jobs'
 import { Logs } from './pages/Logs'
 import { ChatLog } from './pages/ChatLog'
+import { Chat } from './pages/Chat'
 import { Monitor } from './pages/Monitor'
 import { Grafana } from './pages/Grafana'
 import { Reminders } from './pages/Reminders'
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="jobs" element={<Jobs />} />
           <Route path="logs" element={<Logs />} />
           <Route path="chat-log" element={<ChatLog />} />
+          <Route path="chat" element={<Chat />} />
           <Route path="reminders" element={<Reminders />} />
           <Route path="monitor" element={<Monitor />} />
           <Route path="grafana" element={<Grafana />} />
