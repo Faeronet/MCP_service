@@ -9,7 +9,9 @@ KEYS_UNTIL_FIRST_PERIOD = frozenset({
 })
 
 # Ключи, которые не включаются в полный контекст при сохранении в Postgres (core.document_context)
-KEYS_EXCLUDED_FROM_FULL_CONTEXT = frozenset({"emocionalnoe", "intellektualnye", "astralnyi_duh"})
+KEYS_EXCLUDED_FROM_FULL_CONTEXT = frozenset(
+    {"emocionalnoe", "intellektualnye", "astralnyi_duh", "fizicheskoe"}
+)
 
 
 def _truncate_at_first_period(text: str) -> tuple[str, int]:
@@ -46,9 +48,19 @@ def _all_label_positions(raw: str) -> list[tuple[int, str, str]]:
                     break
                 entries.append((pos, label, key_name))
                 idx = pos + 1
-    # Сначала позиция в тексте, затем более длинная метка (чтобы «Физическое:» побеждало «Физическое»).
+    # Сначала позиция в тексте, затем более длинная метка (чтобы «Физическая дата:» была раньше «Физическая:»).
     entries.sort(key=lambda x: (x[0], -len(x[1])))
-    return entries
+    # На одной позиции для одного key_name несколько вариантов меток (префиксы) давали бы next_start == pos
+    # и пустой сегмент raw[label_end:next_start]. Оставляем одну запись — самую длинную метку.
+    seen_pos_key: set[tuple[int, str]] = set()
+    deduped: list[tuple[int, str, str]] = []
+    for pos, label, key_name in entries:
+        pk = (pos, key_name)
+        if pk in seen_pos_key:
+            continue
+        seen_pos_key.add(pk)
+        deduped.append((pos, label, key_name))
+    return deduped
 
 
 def _segment_after_label(raw: str, label_end: int, next_label_start: int | None) -> str:
