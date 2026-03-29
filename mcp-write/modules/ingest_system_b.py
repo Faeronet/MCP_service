@@ -181,6 +181,13 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     phys_val = (keys.get("fizicheskoe") or "").strip()
     if phys_val:
         ddmm = physical_dates.parse_fizicheskie_daty_ddmm(phys_val)
+        if not ddmm:
+            log.warning(
+                "ingest_document system_b: Физическое заполнено, но даты не распознаны doc_id=%s chunk_id=%s snippet=%r",
+                req.doc_id,
+                main_chunk_id,
+                phys_val[:200],
+            )
         postgres_ops.save_angel_physical_dates_postgres(main_chunk_id, req.doc_id, name or "", ddmm)
     else:
         postgres_ops.save_angel_physical_dates_postgres(main_chunk_id, req.doc_id, name or "", [])
