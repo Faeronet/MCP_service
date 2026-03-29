@@ -60,4 +60,5 @@ SYSTEM_B_LABELS: list[tuple[str, str | list[str] | None]] = [
     ("astralnyi_duh", ["Астральный дух:", "Астральный дух: "]),
     ("adept", "Адепт:"),
     ("pomogaet", "Помогает:"),
+    ("fizicheskoe", "Физическое:"),
 ]

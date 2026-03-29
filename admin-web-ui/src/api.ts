@@ -17,7 +17,12 @@ function checkAuth(r: Response): void {
   }
 }
 
-export async function login(username: string, password: string): Promise<{ token: string }> {
+export interface LoginResult {
+  token: string
+  reminder_debug?: boolean
+}
+
+export async function login(username: string, password: string): Promise<LoginResult> {
   let r: Response
   try {
     r = await fetch(`${API_URL}/api/login`, {
@@ -32,7 +37,40 @@ export async function login(username: string, password: string): Promise<{ token
   if (!r.ok) throw new Error(`SERVER_ERROR:${r.status}`)
   const data = await r.json()
   if (!data || typeof data.token !== 'string') throw new Error('INVALID_RESPONSE')
+  if (data.reminder_debug === true) {
+    localStorage.setItem('reminder_debug', '1')
+  } else {
+    localStorage.removeItem('reminder_debug')
+  }
   return data
+}
+
+export async function getRemindersConfig(): Promise<{ disabled: boolean; simulated_at: string | null }> {
+  const r = await fetch(`${API_URL}/api/reminders/config`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load reminders config')
+  return r.json()
+}
+
+export async function setRemindersDisabled(disabled: boolean): Promise<void> {
+  const r = await fetch(`${API_URL}/api/reminders/toggle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ disabled }),
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to toggle reminders')
+}
+
+export async function setRemindersDebugClock(body: { simulated_iso?: string; clear?: boolean }): Promise<void> {
+  const r = await fetch(`${API_URL}/api/reminders/debug-clock`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(body),
+  })
+  checkAuth(r)
+  if (r.status === 403) throw new Error('FORBIDDEN')
+  if (!r.ok) throw new Error('Failed to set debug clock')
 }
 
 export async function uploadFile(file: File, name?: string): Promise<{ job_id: string; doc_id: string; status: string }> {
@@ -137,38 +175,6 @@ export async function getChatMessages(sessionId: string): Promise<{ messages: Ch
   })
   checkAuth(r)
   if (!r.ok) throw new Error('Failed to load messages')
-  return r.json()
-}
-
-/** Admin chat with LLM (POST /api/chat, proxied to mcp-proxy). */
-export async function sendChatMessage(
-  message_text: string,
-  reply_to_telegram_message_id?: number
-): Promise<{ reply_text: string; debug_message?: string; telegram_message_id?: number }> {
-  const token = getToken()
-  if (!token) throw new Error('NOT_LOGGED_IN')
-  const body: { message_text: string; reply_to_telegram_message_id?: number } = {
-    message_text: message_text.trim(),
-  }
-  if (reply_to_telegram_message_id != null && reply_to_telegram_message_id > 0) {
-    body.reply_to_telegram_message_id = reply_to_telegram_message_id
-  }
-  const r = await fetch(`${API_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  })
-  checkAuth(r)
-  if (!r.ok) {
-    const text = await r.text()
-    try {
-      const data = JSON.parse(text) as { error?: string }
-      if (data?.error) throw new Error(data.error)
-    } catch (e) {
-      if (e instanceof Error) throw e
-    }
-    throw new Error(text || 'Chat request failed')
-  }
   return r.json()
 }
 

@@ -50,6 +50,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var savedContextRef string
 	var useStoredReplyContext bool // вопрос по ответу бота: в LLM — тот же CONTEXT, что был у того ответа (full или чанк)
 	var debugMessage string
+	var reminderExtraText string
 	var reply string
 	var replyErr error
 	var nameAllHandled bool
@@ -146,6 +147,15 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 			if userOk && modelOk && (userDay != modelDay || userMon != modelMon) {
 				searchQuery = userDateStr
 			}
+		}
+
+		if hh, mm, ok := ParseReminderLine(searchQuery); ok {
+			if err := s.UpsertReminderSubscriber(ctx, req.UserID, req.ChatID, hh, mm); err != nil {
+				logHandler.Warn(ctx, "reminder_subscribe", logging.KV{"error", err})
+			} else {
+				reminderExtraText = s.BuildTodayAngelReminderText(ctx, requestID)
+			}
+			searchQuery = s.FallbackSearchQueryAfterReminder(req.MessageText)
 		}
 
 		day, month, hasDate := ParseDayMonthFromQuery(searchQuery)
@@ -255,7 +265,27 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 	_ = s.SaveAnswerContext(ctx, req.SessionID, msgID, contextText, savedContextRef)
 
-	resp := ChatResponse{ReplyText: reply, MessageID: msgID.String(), DebugMessage: debugMessage}
+	resp := ChatResponse{ReplyText: reply, MessageID: msgID.String(), DebugMessage: debugMessage, ReminderExtraText: reminderExtraText}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// HandleRemindersTick POST /reminders/tick — подготовка джобов и список уведомлений на текущую минуту (tg-bot рассылает).
+func (s *Server) HandleRemindersTick(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	items, err := s.TickReminders(ctx)
+	if err != nil {
+		logHandler.Warn(ctx, "reminders_tick", logging.KV{"error", err})
+		http.Error(w, `{"error":"tick"}`, http.StatusInternalServerError)
+		return
+	}
+	if items == nil {
+		items = []ReminderNotify{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"notifications": items})
 }

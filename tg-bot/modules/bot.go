@@ -21,4 +21,5 @@ type Bot struct {
 	ChatMu           map[int64]chan struct{}
 	ChatMuGuard      *sync.Mutex
 	PerChatLimiter   *ratelimit.PerKey
+	DebugMode        int // 1 = отладка Qdrant и симуляция времени напоминаний (совпадает с BOT_DEBUG mcp-proxy)
 }

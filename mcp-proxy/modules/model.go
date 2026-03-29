@@ -18,4 +18,5 @@ type ChatResponse struct {
 	ReplyText    string `json:"reply_text"`
 	DebugMessage string `json:"debug_message,omitempty"`
 	MessageID    string `json:"message_id,omitempty"` // UUID of assistant message for bot to set telegram_message_id
+	ReminderExtraText string `json:"reminder_extra_text,omitempty"`
 }

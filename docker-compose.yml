@@ -19,16 +19,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  adminer:
-    image: adminer:latest
-    environment:
-      ADMINER_DEFAULT_SERVER: postgres
-    ports:
-      - "8084:8080"
-    depends_on:
-      postgres: { condition: service_healthy }
-    restart: unless-stopped
-
   migrate:
     image: postgres:16-alpine
     environment:
@@ -158,34 +148,11 @@ services:
       - loki
 
   # vLLM (чат). Для 24 ГБ используйте AWQ-модель (~10 ГБ VRAM); полная Qwen3-14B в bf16 не помещается.
-  # Порядок запуска AI: vllm (GPU) + embed-cpu (CPU) → rerank (CPU), extract-tool (CPU).
-  # KV-cache: --max-model-len и --max-num-seqs (меньше = меньше VRAM).
-  # Должно совпадать с LLM_CONTEXT_LENGTH у mcp-proxy (или быть больше).
-  # GPU: без проброса GPU контейнер не видит CUDA → «No CUDA runtime», «Failed to infer device type».
-  # Нужны драйвер NVIDIA + nvidia-container-toolkit. Проверка: docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
   vllm:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    gpus: all
-    shm_size: "2gb"
-    command:
-      - "--model"
-      - "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}"
-      - "--quantization"
-      - "${VLLM_QUANTIZATION:-awq}"
-      - "--port"
-      - "8000"
-      - "--gpu-memory-utilization"
-      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
-      - "--max-model-len"
-      - "${VLLM_MAX_MODEL_LEN:-2048}"
-      - "--max-num-seqs"
-      - "${VLLM_MAX_NUM_SEQS:-1}"
-      # Фиксированный размер KV-cache на GPU (байты). 1.3 GiB = 1395864371.
-      # В vLLM при заданном kv-cache-memory расчёт KV из --gpu-memory-utilization для кэша не используется (см. CacheConfig).
-      #- "--kv-cache-memory"
-      #- "${VLLM_KV_CACHE_MEMORY_BYTES:-1395864371}"
+    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}", "--port", "8000", "--gpu-memory-utilization", "0.9"]
     deploy:
       resources:
         limits:
@@ -193,64 +160,49 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ['0']
               capabilities: [gpu]
     volumes:
       - ./models:/models
     environment:
-      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-0}
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
-      # PyTorch 2+: предпочтительно PYTORCH_ALLOC_CONF; старое имя оставлено для совместимости
-      PYTORCH_ALLOC_CONF: expandable_segments:True
-      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     ports:
       - "8000:8000"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 60
-      start_period: 300s
     restart: unless-stopped
 
-  # Эмбеддинги на CPU (sentence-transformers BAAI/bge-m3). OpenAI-совместимый /v1/embeddings.
-  embed-cpu:
+  # vLLM для эмбеддингов. При одной видеокарте — та же GPU 0: задаём --gpu-memory-utilization 0.35, чтобы поместиться рядом с vllm (чат).
+  # При двух GPU: device_ids: ['1'] и NVIDIA_VISIBLE_DEVICES=1 — эмбеддинги на GPU 1.
+  vllm-embed:
     profiles:
       - vllm
-    build:
-      context: ./embed-cpu
-      dockerfile: Dockerfile
-    environment:
-      PORT: "8000"
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
-      HF_HOME: /tmp/hf_cache
-    volumes:
-      - ./models:/tmp/hf_cache
+    image: vllm/vllm-openai:v0.16.0
+    command: ["--model", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.30"]
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: 8g
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    volumes:
+      - ./models:/models
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+      LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
+      HF_HOME: /models
+      VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8002:8000"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 60
-      start_period: 180s
     restart: unless-stopped
 
-  # Опционально: vLLM для эмбеддингов на GPU (при двух видеокартах). По умолчанию используется embed-cpu.
-  # vllm-embed:
-  #   profiles:
-  #     - vllm
-  #   image: vllm/vllm-openai:v0.16.0
-  #   ...
-
-  # Реранкер (BAAI/bge-reranker-v2-m3) на CPU.
+  # Реранкер (BAAI/bge-reranker-v2-m3) — та же GPU 1, что и vllm-embed. API: POST /api/v1/rerank.
   rerank:
     profiles:
       - vllm
@@ -261,15 +213,20 @@ services:
       PORT: "8787"
       MAX_LENGTH: "512"
       MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
-      DEVICE: cpu
+      DEVICE: cuda
+      NVIDIA_VISIBLE_DEVICES: "1"
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
     deploy:
       resources:
         limits:
           memory: 4g
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
     ports:
       - "8787:8787"
-    depends_on:
-      embed-cpu: { condition: service_healthy }
     restart: unless-stopped
 
   # --- Application services ---
@@ -277,6 +234,13 @@ services:
     build:
       context: .
       dockerfile: admin-backend/Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']
+              capabilities: [gpu]
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
       MINIO_ENDPOINT: minio:9000
@@ -288,9 +252,8 @@ services:
       JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-168}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      REMINDER_SUPERADMIN_SUB: ${REMINDER_SUPERADMIN_SUB:-admin}
       MCP_WRITE_URL: http://mcp-write:8001
-      # Внутри compose надёжнее http://mcp-proxy:8083 (host.docker.internal:8083 на Linux часто connection refused).
-      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://mcp-proxy:8083}
       LOKI_URL: http://loki:3100
       GRAFANA_URL: http://grafana:3000
     volumes:
@@ -302,7 +265,6 @@ services:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      mcp-proxy: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
       interval: 10s
@@ -321,10 +283,10 @@ services:
     depends_on:
       - admin-backend
 
-  tg-bot:
+  bot-service:
     build:
       context: .
-      dockerfile: tg-bot/Dockerfile
+      dockerfile: bot-service/Dockerfile
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       BOT_DEBUG: ${BOT_DEBUG:-0}
@@ -334,10 +296,14 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_ATTACHMENTS_BUCKET: ${MINIO_ATTACHMENTS_BUCKET:-attachments}
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672/
-      MCP_PROXY_URL: ${MCP_PROXY_URL:-http://mcp-proxy:8083}
+      MCP_READ_URL: http://mcp-read:8082
       OCR_SERVICE_URL: ${OCR_SERVICE_URL:-http://extract-tool:8004}
-      EXTRACT_TOOL_URL: ${EXTRACT_TOOL_URL:-http://extract-tool:8004}
+      # По умолчанию — контейнер vllm (запускайте стек с профилем: docker compose --profile vllm up -d)
+      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
+      # Имя модели в запросах — должно совпадать с загруженной в vLLM (по умолчанию Qwen3-14B-AWQ).
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       WORKER_CONCURRENCY: ${BOT_WORKER_CONCURRENCY:-64}
+      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
       PER_CHAT_DEBOUNCE_MS: ${PER_CHAT_DEBOUNCE_MS:-500}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -346,47 +312,10 @@ services:
       migrate: { condition: service_completed_successfully }
       minio: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      mcp-proxy: { condition: service_healthy }
+      mcp-read: { condition: service_started }
       extract-tool: { condition: service_started }
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
-
-  mcp-proxy:
-    build:
-      context: .
-      dockerfile: mcp-proxy/Dockerfile
-    environment:
-      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
-      MCP_READ_URL: http://mcp-read:8082
-      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://vllm:8000/v1}
-      VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
-      LLM_MODEL: ${LLM_MODEL:-${LLM_CODE_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}}}
-      # Совпадайте с VLLM_MAX_MODEL_LEN в .env.
-      LLM_CONTEXT_LENGTH: ${LLM_CONTEXT_LENGTH:-8192}
-      # Запас под промпт (RAG): max_tokens + input ≤ max_model_len
-      # Для ускорения генерации ограничиваем output max_tokens.
-      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-256}
-      # Ускорение: no_date = не вызывать промпт A, если в сообщении есть дата; never = всегда без A; always = как раньше
-      LLM_QUERY_EXTRACT: ${LLM_QUERY_EXTRACT:-no_date}
-      # Короткий max_tokens только для промпта A (извлечение ключа поиска)
-      LLM_EXTRACT_MAX_TOKENS: ${LLM_EXTRACT_MAX_TOKENS:-128}
-      MAX_INFLIGHT_LLM: ${MAX_INFLIGHT_LLM:-32}
-      BOT_DEBUG: ${BOT_DEBUG:-0}
-    ports:
-      - "8083:8083"
-    # vllm в profiles: [vllm] — нельзя depends_on: vllm без профиля (compose: undefined service).
-    # Поднимайте LLM: docker compose --profile vllm up -d (vllm стартует рядом; прокси переждёт по retry).
-    depends_on:
-      postgres: { condition: service_healthy }
-      migrate: { condition: service_completed_successfully }
-      mcp-read: { condition: service_started }
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8083/healthz"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -399,9 +328,9 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      # Эмбеддинги на CPU: embed-cpu (BAAI/bge-m3)
-      EMBED_API_URL: ${EMBED_API_URL:-http://embed-cpu:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      # Эмбеддинги: при профиле vllm используется vllm-embed (BAAI/bge-m3)
+      EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
       RERANK_BINDING_HOST: ${RERANK_BINDING_HOST:-http://rerank:8787/api/v1}
       RERANK_API_URL: ${RERANK_API_URL:-http://rerank:8787/api/v1}
@@ -437,14 +366,13 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-documents}
-      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://vllm:8000/v1}
       VLLM_OPENAI_BASE: ${VLLM_OPENAI_BASE:-http://vllm:8000/v1}
-      LLM_MODEL: ${LLM_MODEL:-${LLM_CODE_MODEL:-${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}}}
+      LLM_MODEL: ${LLM_MODEL:-Qwen/Qwen3-14B-AWQ}
       USE_LLM_CHUNKING: ${USE_LLM_CHUNKING:-}
       USE_LLM_RERANK_QUERY: ${USE_LLM_RERANK_QUERY:-}
-      INGESTION_SYSTEM: ${INGESTION_SYSTEM:-B}
-      EMBED_API_URL: ${EMBED_API_URL:-http://embed-cpu:8000/v1}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      INGESTION_SYSTEM: ${INGESTION_SYSTEM:-A}
+      EMBED_API_URL: ${EMBED_API_URL:-http://vllm-embed:8000/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-large}
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
       RERANK_BINDING_HOST: ${RERANK_BINDING_HOST:-http://rerank:8787/api/v1}
       RERANK_API_URL: ${RERANK_API_URL:-http://rerank:8787/api/v1}
@@ -453,7 +381,6 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "8001:8001"
-    # см. mcp-proxy: без depends_on vllm (профиль vllm).
     depends_on:
       postgres: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
@@ -481,13 +408,14 @@ services:
       mcp-write: { condition: service_started }
     restart: unless-stopped
 
-  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы) на CPU.
+  # extract-tool: извлечение текста (OCR, ASR, текст, PDF, архивы zip/tar.gz/tar.xz). POST /extract, /ocr, /asr.
   extract-tool:
     build:
       context: ./extract-tool
       dockerfile: Dockerfile
     environment:
       PORT: "8004"
+      NVIDIA_VISIBLE_DEVICES: "1"
       HF_TOKEN: ${HF_TOKEN:-}
       HF_HOME: /tmp/hf_cache
       ASR_MODEL: ${ASR_MODEL:-openai/whisper-large-v3}
@@ -496,8 +424,11 @@ services:
       OCR_LANGUAGES: ${OCR_LANGUAGES:-ru,en}
     deploy:
       resources:
-        limits:
-          memory: 4g
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
     ports:
       - "8004:8004"
     restart: unless-stopped

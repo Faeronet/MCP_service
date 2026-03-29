@@ -22,6 +22,7 @@ type Server struct {
 	PerChatLimiter *ratelimit.PerKey
 	PromptA   string
 	PromptB   string
+	PromptC   string
 	DebugMode int
 	// QueryExtractMode: always | never | no_date (по умолчанию no_date — без LLM-этапа A, если в тексте есть дата).
 	QueryExtractMode string
@@ -29,7 +30,7 @@ type Server struct {
 	LlmExtractMaxTokens int
 }
 
-func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
+func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 	mcpReadURL := config.LoadString("MCP_READ_URL", "http://mcp-read:8082")
 	// OpenAI-compatible /v1 (vLLM в Docker или хост): LLM_BINDING_HOST либо VLLM_OPENAI_BASE.
 	llmBase := strings.TrimSpace(config.LoadString("LLM_BINDING_HOST", ""))
@@ -93,6 +94,7 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB string) *Server {
 		PerChatLimiter:   perChatLimiter,
 		PromptA:   promptA,
 		PromptB:   promptB,
+		PromptC:   promptC,
 		DebugMode: debugMode,
 		QueryExtractMode:      queryExtractMode,
 		LlmExtractMaxTokens: extractMax,

@@ -176,6 +176,15 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     postgres_ops.save_document_context_postgres(main_chunk_id, req.doc_id, context_for_postgres)
     postgres_ops.save_angel_name_postgres(main_chunk_id, req.doc_id, name)
 
+    from . import physical_dates
+
+    phys_val = (keys.get("fizicheskoe") or "").strip()
+    if phys_val:
+        ddmm = physical_dates.parse_fizicheskie_daty_ddmm(phys_val)
+        postgres_ops.save_angel_physical_dates_postgres(main_chunk_id, req.doc_id, name or "", ddmm)
+    else:
+        postgres_ops.save_angel_physical_dates_postgres(main_chunk_id, req.doc_id, name or "", [])
+
     log.info(
         "ingest_document system_b: doc_id=%s main_chunk_id=%s obitanie=%s znak=%s spec=%s kach=%s isk=%s em=%s int=%s ast=%s other=1",
         req.doc_id, main_chunk_id, bool(obitanie_val), bool(znak_val), bool(specificnost_val), bool(kachestva_val), bool(iskazheniya_val),
