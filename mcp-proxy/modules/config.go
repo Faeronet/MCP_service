@@ -51,7 +51,11 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 	if llmMaxTokens > 32768 {
 		llmMaxTokens = 32768
 	}
-	llmContextLength := config.LoadInt("LLM_CONTEXT_LENGTH", 8192)
+	// Совпадайте с --max-model-len у vLLM (или задайте VLLM_MAX_MODEL_LEN в .env и передайте в mcp-proxy).
+	llmContextLength := config.LoadInt("LLM_CONTEXT_LENGTH", 0)
+	if llmContextLength < 512 {
+		llmContextLength = config.LoadInt("VLLM_MAX_MODEL_LEN", 8192)
+	}
 	if llmContextLength < 512 {
 		llmContextLength = 8192
 	}

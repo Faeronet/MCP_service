@@ -23,6 +23,7 @@ func truncateUTF8(s string, maxBytes int) string {
 }
 
 // llmCharBudget: maxOutCap 0 = LlmMaxTokens; иначе верхняя граница max_tokens (для короткого ответа промпта A).
+// Оценка символов → токенов занижена (кириллица, Qwen): иначе vLLM 400 при max-model-len 2048–8192.
 func (s *Server) llmCharBudget(userQueryLen int, maxOutCap int) (maxOut int, systemMaxChars int) {
 	maxOut = s.LlmMaxTokens
 	if maxOutCap > 0 && maxOutCap < maxOut {
@@ -34,16 +35,26 @@ func (s *Server) llmCharBudget(userQueryLen int, maxOutCap int) (maxOut int, sys
 			maxOut = 128
 		}
 	}
-	maxInputTokens := s.LlmContextLength - maxOut
-	if maxInputTokens <= 0 {
-		maxInputTokens = 512
+	// Запас под служебные токены чата/шаблона и расхождение с токенайзером vLLM.
+	const slackTokens = 128
+	maxInputTokens := s.LlmContextLength - maxOut - slackTokens
+	if maxInputTokens < 256 {
+		maxInputTokens = 256
 	}
-	// Консервативнее 4 символа/токен — кириллица и спецсимволы; иначе vLLM отклоняет запрос, этап A «молча» падает в fallback.
-	maxInputChars := maxInputTokens * 3
-	margin := 512
-	systemMaxChars = maxInputChars - userQueryLen - margin
-	if systemMaxChars < 500 {
-		systemMaxChars = 500
+	// Пользовательское сообщение: консервативно ~1 токен на 2 байта UTF-8 (RU часто хуже).
+	userTokEst := userQueryLen / 2
+	if userTokEst < 8 {
+		userTokEst = 8
+	}
+	systemTokBudget := maxInputTokens - userTokEst
+	if systemTokBudget < 96 {
+		systemTokBudget = 96
+	}
+	// Верхняя граница символов system: не более ~1.5 символа на токен для длинных русских промптов.
+	const approxCharsPerToken = 1.5
+	systemMaxChars = int(float64(systemTokBudget) * approxCharsPerToken)
+	if systemMaxChars < 400 {
+		systemMaxChars = 400
 	}
 	return maxOut, systemMaxChars
 }
