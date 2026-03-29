@@ -114,6 +114,18 @@ docker compose --profile vllm down
 **Без GPU:** чтобы поднять весь стек без видеокарты, не используйте профиль `vllm` и GPU-override:  
 `docker compose up -d` — тогда vLLM не запускается, остальные сервисы работают. LLM в этом случае можно запустить на хосте и указать `VLLM_OPENAI_BASE` в `.env`.
 
+### vLLM: «model's context length is only 2048» / 400 на `/v1/chat/completions`
+
+По умолчанию **mcp-proxy** считает контекст **8192** токенов (`LLM_CONTEXT_LENGTH`). Если в команде запуска vLLM **нет** `--max-model-len`, сервер часто ограничивает модель **2048** токенами — промпт не помещается, в логах vLLM `VLLMValidationError`, в UI «модель недоступна».
+
+**Что сделать:** в `docker-compose.yml` для сервиса `vllm` задано `--max-model-len` (по умолчанию **8192**, переменная `VLLM_MAX_MODEL_LEN`). После изменения пересоздайте контейнер:
+
+```bash
+docker compose --profile vllm up -d --force-recreate vllm
+```
+
+Убедитесь, что `VLLM_MAX_MODEL_LEN` ≥ `LLM_CONTEXT_LENGTH` в окружении **mcp-proxy**. При нехватке VRAM уменьните оба до **4096** согласованно.
+
 ### vLLM: Error 803 (unsupported display driver / cuda driver combination)
 
 Ошибка означает несовместимость **драйвера на хосте** и **CUDA в контейнере**. Сначала проверьте, что контейнеры видят GPU:

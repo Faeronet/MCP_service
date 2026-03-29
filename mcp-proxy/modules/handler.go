@@ -13,7 +13,25 @@ import (
 
 var logHandler = logging.New("mcp-proxy")
 
-	// HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
+// llmFailureUserHint — текст для пользователя при сбое OpenAI-compatible API (vLLM).
+func llmFailureUserHint(s *Server, err error) string {
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	detail := errStr
+	if len(detail) > 300 {
+		detail = detail[:300] + "…"
+	}
+	base := fmt.Sprintf("URL=%s, LLM_MODEL=%s. Поднимите vLLM: docker compose --profile vllm up -d. В .env: VLLM_OPENAI_BASE (или LLM_BINDING_HOST с подчёркиваниями), имя модели как в vLLM.",
+		s.VllmBase, s.LlmModel)
+	if detail == "" {
+		return "Модель недоступна. " + base
+	}
+	return "Ошибка LLM: " + detail + " | " + base
+}
+
+// HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
 func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -251,11 +269,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if replyErr != nil {
-		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr})
-		hint := "Модель недоступна. Проверьте vLLM (docker compose --profile vllm) и LLM_BINDING_HOST / VLLM_OPENAI_BASE (по умолчанию http://vllm:8000/v1)."
-		if errStr := replyErr.Error(); len(errStr) < 120 {
-			hint = "Ошибка LLM: " + errStr
-		}
+		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr}, logging.KV{"vllm_base", s.VllmBase}, logging.KV{"llm_model", s.LlmModel})
+		hint := llmFailureUserHint(s, replyErr)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: hint})
 		return

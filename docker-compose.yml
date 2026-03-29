@@ -152,7 +152,16 @@ services:
     profiles:
       - vllm
     image: vllm/vllm-openai:v0.16.0
-    command: ["--model", "${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}", "--port", "8000", "--gpu-memory-utilization", "0.9"]
+    # Без --max-model-len vLLM часто даёт 2048 токенов → 400 при промпте длиннее (mcp-proxy ждёт LLM_CONTEXT_LENGTH).
+    command:
+      - --model
+      - ${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}
+      - --port
+      - "8000"
+      - --gpu-memory-utilization
+      - "0.9"
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-8192}"
     deploy:
       resources:
         limits:
@@ -172,6 +181,12 @@ services:
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)\""]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 120s
     restart: unless-stopped
 
   # vLLM для эмбеддингов. По умолчанию GPU 0 (одна карта). Две карты — override: device_ids ['1'], NVIDIA_VISIBLE_DEVICES_EMBED=1.

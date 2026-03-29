@@ -41,7 +41,8 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 		llmBase = "http://vllm:8000/v1"
 	}
 	llmBase = strings.TrimSuffix(llmBase, "/")
-	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-0.6B")
+	// Совпадает с VLLM_MODEL_NAME / LLM_MODEL в docker-compose (vLLM отклонит запрос, если имя не совпало).
+	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-14B-AWQ")
 	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")
 	llmMaxTokens := config.LoadInt("LLM_MAX_TOKENS", 1024)
 	if llmMaxTokens < 256 {
