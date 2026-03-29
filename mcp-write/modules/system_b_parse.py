@@ -1,11 +1,16 @@
 """Система B: парсинг документа по меткам. Значение = текст от метки до следующей метки (или до конца).
-Для proyavlenie и gospodstvo — только до первой точки, остальное уходит в other."""
+Для proyavlenie, gospodstvo и fizicheskoe — значение только до первой точки (как в исходных чанках):
+метки «Физическое:» и «Физическая:» (и синонимы из config) — один ключ fizicheskoe, вырезание до «.»."""
 from . import config
 
 # Ключи, у которых значение обрезается по первой точке (не тянем до следующей метки)
 KEYS_UNTIL_FIRST_PERIOD = frozenset({
-    "proyavlenie", "gospodstvo",
-    "emocionalnoe", "intellektualnye", "astralnyi_duh",
+    "proyavlenie",
+    "gospodstvo",
+    "emocionalnoe",
+    "intellektualnye",
+    "astralnyi_duh",
+    "fizicheskoe",
 })
 
 # Ключи, которые не включаются в полный контекст при сохранении в Postgres (core.document_context)
@@ -71,7 +76,7 @@ def _segment_after_label(raw: str, label_end: int, next_label_start: int | None)
 
 
 def _segment_end_for_rest(raw: str, label_end: int, next_start: int | None, key_name: str) -> int:
-    """Конец сегмента в raw для get_rest_context: для proyavlenie/gospodstvo — до первой точки, иначе до next_start."""
+    """Конец сегмента в raw для get_rest_context: для KEYS_UNTIL_FIRST_PERIOD — до первой точки, иначе до next_start."""
     end = next_start if next_start is not None else len(raw)
     if key_name not in KEYS_UNTIL_FIRST_PERIOD:
         return end
