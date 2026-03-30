@@ -239,10 +239,37 @@ func (s *Server) TickReminders(ctx context.Context) ([]ReminderNotify, error) {
 		SELECT skipped_duplicate, message_text
 		FROM chat.reminder_jobs WHERE delivery_date_msk = $1::date
 	`, today).Scan(&skipped, &msgText)
-	if err != nil || skipped || !msgText.Valid || strings.TrimSpace(msgText.String) == "" {
-		return nil, nil
+	text := ""
+	if err == nil && !skipped && msgText.Valid {
+		text = strings.TrimSpace(msgText.String)
 	}
-	text := strings.TrimSpace(msgText.String)
+	// Fail-safe: даже если job на сегодня пустой/marked skipped/не найден,
+	// формируем текст напрямую по календарю, чтобы пользователь не оставался без уведомления в своё время.
+	if text == "" {
+		ch, name, ok := s.angelForDeliveryDate(ctx, today)
+		if !ok {
+			return nil, nil
+		}
+		name = strings.TrimSpace(name)
+		text = "Напоминание на сегодня."
+		if name != "" {
+			text = "Напоминание на сегодня: ангел " + name + "."
+		}
+		if ctxText, e := s.fullContextByChunkID(ctx, ch); e == nil && strings.TrimSpace(ctxText) != "" {
+			if llmText, e2 := s.composeReminderLLM(ctx, uuid.New().String(), name, ctxText); e2 == nil && strings.TrimSpace(llmText) != "" {
+				text = strings.TrimSpace(llmText)
+			}
+		}
+		_, _ = s.Pool.Exec(ctx, `
+			INSERT INTO chat.reminder_jobs (delivery_date_msk, angel_chunk_id, message_text, skipped_duplicate, prepared_at, prod_complete)
+			VALUES ($1::date, $2, $3, false, NOW(), false)
+			ON CONFLICT (delivery_date_msk) DO UPDATE SET
+				angel_chunk_id = EXCLUDED.angel_chunk_id,
+				message_text = EXCLUDED.message_text,
+				skipped_duplicate = false,
+				prepared_at = NOW()
+		`, today, ch, text)
+	}
 	debug := s.DebugMode == 1
 
 	rows, err := s.Pool.Query(ctx, `
