@@ -1,0 +1,5 @@
+# context: . для сборки angels-web — не добавляйте сюда правило, игнорирующее angels-web/
+.git
+models
+angels-web/node_modules
+angels-web/.next

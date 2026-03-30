@@ -5,6 +5,7 @@
 # Зависимости Node.js
 node_modules/
 angels-web/node_modules/
+angels-web/.next/
 
 # Сборка / бинарники сервисов
 scheduler/scheduler
