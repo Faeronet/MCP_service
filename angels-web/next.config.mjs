@@ -6,10 +6,9 @@ const withPWA = withPWAInit({
 });
 
 export default withPWA({
- 
-    // reactStrictMode: true,
-output:"export",
-    images: {
-      unoptimized: true,
-    }
+  // reactStrictMode: true,
+  // Без output: "export": нужен обычный Next-сервер (server.js + Route Handlers вроде /api/schedule).
+  images: {
+    unoptimized: true,
+  },
 });
