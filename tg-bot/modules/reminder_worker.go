@@ -25,41 +25,10 @@ type reminderTickResponse struct {
 	} `json:"notifications"`
 }
 
-// TickRemindersDispatch вызывает mcp-proxy POST /reminders/tick и рассылает уведомления в Telegram.
+// TickRemindersDispatch — заглушка: напоминания по календарю перенесены в сервис scheduler.
 func (b *Bot) TickRemindersDispatch(ctx context.Context) {
-	if b == nil || strings.TrimSpace(b.ProxyURL) == "" {
-		return
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.ProxyURL+"/reminders/tick", bytes.NewReader([]byte("{}")))
-	if err != nil {
-		logReminders.Warn(ctx, "reminders tick request", logging.KV{"error", err})
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: reminderTickHTTPTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		logReminders.Warn(ctx, "reminders tick http", logging.KV{"error", err})
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		logReminders.Warn(ctx, "reminders tick status", logging.KV{"code", resp.StatusCode}, logging.KV{"body", truncateForLog(string(body))})
-		return
-	}
-	var out reminderTickResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		logReminders.Warn(ctx, "reminders tick json", logging.KV{"error", err})
-		return
-	}
-	for _, n := range out.Notifications {
-		t := strings.TrimSpace(n.Text)
-		if t == "" || b.Bot == nil {
-			continue
-		}
-		b.SendLongReply(ctx, n.ChatID, 0, t)
-	}
+	_ = ctx
+	_ = b
 }
 
 func truncateForLog(s string) string {

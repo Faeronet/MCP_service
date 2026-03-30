@@ -53,7 +53,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/chat", srv.HandleChat)
-	mux.HandleFunc("/reminders/tick", srv.HandleRemindersTick)
+	mux.HandleFunc("/scheduler/compose", srv.HandleSchedulerCompose)
+	mux.HandleFunc("/scheduler/deliver", srv.HandleSchedulerDeliver)
 
 	go func() {
 		log.Info(ctx, "mcp-proxy listening on :8083")

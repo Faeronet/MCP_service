@@ -96,10 +96,6 @@ func main() {
 	app.Bot = bot
 	log.Info(ctx, "bot authorized", logging.KV{"username", bot.Self.UserName})
 
-	workerCtx, workerCancel := context.WithCancel(context.Background())
-	defer workerCancel()
-	go app.StartReminderWorker(workerCtx)
-
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	updates := bot.GetUpdatesChan(u)

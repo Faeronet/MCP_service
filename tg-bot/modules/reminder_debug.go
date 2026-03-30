@@ -45,11 +45,6 @@ func (b *Bot) TryHandleReminderDebugCommand(ctx context.Context, chatID int64, u
 		return true
 	}
 	_, _ = b.Pool.Exec(ctx, `UPDATE chat.reminder_debug_clock SET simulated_at = $1, updated_at = NOW(), source = 'bot' WHERE id = 0`, parsed)
-	b.SendReply(ctx, chatID, fmt.Sprintf("Симуляция времени установлена: %s МСК. Запускаю проверку напоминаний.", parsed.Format("02.01.2006 15:04")))
-	go func() {
-		c, cancel := context.WithTimeout(context.Background(), reminderTickHTTPTimeout+15*time.Second)
-		defer cancel()
-		b.TickRemindersDispatch(c)
-	}()
+	b.SendReply(ctx, chatID, fmt.Sprintf("Симуляция времени установлена: %s МСК (для админки). Рассылки по календарю — через сервис scheduler.", parsed.Format("02.01.2006 15:04")))
 	return true
 }

@@ -28,6 +28,7 @@ type Server struct {
 	QueryExtractMode string
 	// LlmExtractMaxTokens — max_tokens только для промпта A (короткая строка); меньше = быстрее декодирование.
 	LlmExtractMaxTokens int
+	TelegramBotToken string
 }
 
 func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
@@ -103,5 +104,6 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 		DebugMode: debugMode,
 		QueryExtractMode:      queryExtractMode,
 		LlmExtractMaxTokens: extractMax,
+		TelegramBotToken: strings.TrimSpace(config.LoadString("TELEGRAM_BOT_TOKEN", "")),
 	}
 }

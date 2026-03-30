@@ -299,6 +299,8 @@ services:
       dockerfile: mcp-proxy/Dockerfile
     environment:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      SCHEDULER_INTERNAL_SECRET: ${SCHEDULER_INTERNAL_SECRET:-}
       MCP_READ_URL: http://mcp-read:8082
       BOT_DEBUG: ${BOT_DEBUG:-0}
       LLM_QUERY_EXTRACT: ${LLM_QUERY_EXTRACT:-no_date}
@@ -353,6 +355,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    environment:
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-assistant}?sslmode=disable
+      MCP_PROXY_URL: http://mcp-proxy:8083
+      SCHEDULER_LISTEN: :8090
+      SCHEDULER_INTERNAL_SECRET: ${SCHEDULER_INTERNAL_SECRET:-}
+      SCHEDULER_POLL_INTERVAL: ${SCHEDULER_POLL_INTERVAL:-10m}
+      SCHEDULER_DISPATCH_INTERVAL: ${SCHEDULER_DISPATCH_INTERVAL:-30s}
+    ports:
+      - "8090:8090"
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+      mcp-proxy: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8090/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  angels-web:
+    build:
+      context: .
+      dockerfile: angels-web/Dockerfile
+    environment:
+      SCHEDULER_INTERNAL_URL: http://scheduler:8090
+    ports:
+      - "3000:3000"
+    depends_on:
+      scheduler: { condition: service_healthy }
     restart: unless-stopped
 
   mcp-read:
