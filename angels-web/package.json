@@ -4,7 +4,7 @@
   "main": "index.html",
   "bin": "server.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "NODE_ENV=production node server.js",
     "start-cron": "node scripts/sendNotifications.js"

@@ -38,10 +38,12 @@ app.prepare().then(() => {
   });
   
 
-  const port = process.env.PORT || 3000;
-  server.listen(port, (err) => {
+  const port = Number(process.env.PORT) || 3000;
+  // 0.0.0.0 — чтобы был доступ с других устройств в LAN и из Docker (не только localhost).
+  const host = process.env.HOST || '0.0.0.0';
+  server.listen(port, host, (err) => {
     if (err) throw err;
-    console.log(`> Ready on http://localhost:${port}`);
+    console.log(`> Ready on http://${host}:${port}`);
   });
 });
 
