@@ -151,12 +151,6 @@ func (s *Server) FallbackSearchQueryAfterReminder(userMsg string) string {
 
 func (s *Server) ensureJobPreparedForDeliveryDate(ctx context.Context, deliveryDate time.Time) {
 	d0 := dateInMSK(deliveryDate)
-	var exists bool
-	_ = s.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM chat.reminder_jobs WHERE delivery_date_msk = $1::date)`, d0).Scan(&exists)
-	if exists {
-		return
-	}
 	prev := d0.AddDate(0, 0, -1)
 	chPrev, _, okPrev := s.angelForDeliveryDate(ctx, prev)
 	chDay, nameDay, okDay := s.angelForDeliveryDate(ctx, d0)
@@ -164,7 +158,12 @@ func (s *Server) ensureJobPreparedForDeliveryDate(ctx context.Context, deliveryD
 		_, _ = s.Pool.Exec(ctx, `
 			INSERT INTO chat.reminder_jobs (delivery_date_msk, angel_chunk_id, message_text, skipped_duplicate, prepared_at, prod_complete)
 			VALUES ($1::date, NULL, NULL, true, NOW(), false)
-			ON CONFLICT (delivery_date_msk) DO NOTHING
+			ON CONFLICT (delivery_date_msk) DO UPDATE SET
+				angel_chunk_id = EXCLUDED.angel_chunk_id,
+				message_text = EXCLUDED.message_text,
+				skipped_duplicate = EXCLUDED.skipped_duplicate,
+				prepared_at = NOW(),
+				prod_complete = false
 		`, d0)
 		return
 	}
@@ -172,32 +171,47 @@ func (s *Server) ensureJobPreparedForDeliveryDate(ctx context.Context, deliveryD
 		_, _ = s.Pool.Exec(ctx, `
 			INSERT INTO chat.reminder_jobs (delivery_date_msk, angel_chunk_id, message_text, skipped_duplicate, prepared_at, prod_complete)
 			VALUES ($1::date, $2, NULL, true, NOW(), false)
-			ON CONFLICT (delivery_date_msk) DO NOTHING
+			ON CONFLICT (delivery_date_msk) DO UPDATE SET
+				angel_chunk_id = EXCLUDED.angel_chunk_id,
+				message_text = EXCLUDED.message_text,
+				skipped_duplicate = EXCLUDED.skipped_duplicate,
+				prepared_at = NOW(),
+				prod_complete = false
 		`, d0, chDay)
 		return
+	}
+	nameDay = strings.TrimSpace(nameDay)
+	fallbackText := "Напоминание на сегодня."
+	if nameDay != "" {
+		fallbackText = "Напоминание на сегодня: ангел " + nameDay + "."
 	}
 	ctxText, err := s.fullContextByChunkID(ctx, chDay)
 	if err != nil || strings.TrimSpace(ctxText) == "" {
 		_, _ = s.Pool.Exec(ctx, `
 			INSERT INTO chat.reminder_jobs (delivery_date_msk, angel_chunk_id, message_text, skipped_duplicate, prepared_at, prod_complete)
-			VALUES ($1::date, $2, NULL, true, NOW(), false)
-			ON CONFLICT (delivery_date_msk) DO NOTHING
-		`, d0, chDay)
+			VALUES ($1::date, $2, $3, false, NOW(), false)
+			ON CONFLICT (delivery_date_msk) DO UPDATE SET
+				angel_chunk_id = EXCLUDED.angel_chunk_id,
+				message_text = EXCLUDED.message_text,
+				skipped_duplicate = EXCLUDED.skipped_duplicate,
+				prepared_at = NOW(),
+				prod_complete = false
+		`, d0, chDay, fallbackText)
 		return
 	}
 	text, err := s.composeReminderLLM(ctx, uuid.New().String(), nameDay, ctxText)
 	if err != nil || text == "" {
-		_, _ = s.Pool.Exec(ctx, `
-			INSERT INTO chat.reminder_jobs (delivery_date_msk, angel_chunk_id, message_text, skipped_duplicate, prepared_at, prod_complete)
-			VALUES ($1::date, $2, NULL, true, NOW(), false)
-			ON CONFLICT (delivery_date_msk) DO NOTHING
-		`, d0, chDay)
-		return
+		text = fallbackText
 	}
 	_, _ = s.Pool.Exec(ctx, `
 		INSERT INTO chat.reminder_jobs (delivery_date_msk, angel_chunk_id, message_text, skipped_duplicate, prepared_at, prod_complete)
 		VALUES ($1::date, $2, $3, false, NOW(), false)
-		ON CONFLICT (delivery_date_msk) DO NOTHING
+		ON CONFLICT (delivery_date_msk) DO UPDATE SET
+			angel_chunk_id = EXCLUDED.angel_chunk_id,
+			message_text = EXCLUDED.message_text,
+			skipped_duplicate = EXCLUDED.skipped_duplicate,
+			prepared_at = NOW(),
+			prod_complete = false
 	`, d0, chDay, text)
 }
 
