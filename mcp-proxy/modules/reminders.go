@@ -242,10 +242,11 @@ func (s *Server) TickReminders(ctx context.Context) ([]ReminderNotify, error) {
 
 	var skipped bool
 	var msgText sql.NullString
+	var todayAngelChunk sql.NullString
 	err := s.Pool.QueryRow(ctx, `
-		SELECT skipped_duplicate, message_text
+		SELECT skipped_duplicate, message_text, angel_chunk_id
 		FROM chat.reminder_jobs WHERE delivery_date_msk = $1::date
-	`, today).Scan(&skipped, &msgText)
+	`, today).Scan(&skipped, &msgText, &todayAngelChunk)
 	text := ""
 	if err == nil && !skipped && msgText.Valid {
 		text = strings.TrimSpace(msgText.String)
@@ -257,6 +258,7 @@ func (s *Server) TickReminders(ctx context.Context) ([]ReminderNotify, error) {
 		if !ok {
 			return nil, nil
 		}
+		todayAngelChunk = sql.NullString{String: strings.TrimSpace(ch), Valid: strings.TrimSpace(ch) != ""}
 		name = strings.TrimSpace(name)
 		text = "Напоминание на сегодня."
 		if name != "" {
@@ -307,6 +309,23 @@ func (s *Server) TickReminders(ctx context.Context) ([]ReminderNotify, error) {
 		`, tg, chat, today, debug).Scan(&already)
 		if already {
 			continue
+		}
+		// Дедуп по пользователю: если последний уже отправленный ангел совпадает с сегодняшним,
+		// повторно не напоминаем до смены ангела.
+		if todayAngelChunk.Valid && strings.TrimSpace(todayAngelChunk.String) != "" {
+			var lastChunk sql.NullString
+			_ = s.Pool.QueryRow(ctx, `
+				SELECT j.angel_chunk_id
+				FROM chat.reminder_sent rs
+				JOIN chat.reminder_jobs j ON j.delivery_date_msk = rs.delivery_date_msk
+				WHERE rs.telegram_id = $1 AND rs.chat_id = $2 AND rs.debug_mode = $3
+				  AND j.angel_chunk_id IS NOT NULL AND j.angel_chunk_id <> ''
+				ORDER BY rs.delivery_date_msk DESC
+				LIMIT 1
+			`, tg, chat, debug).Scan(&lastChunk)
+			if lastChunk.Valid && strings.TrimSpace(lastChunk.String) == strings.TrimSpace(todayAngelChunk.String) {
+				continue
+			}
 		}
 		out = append(out, ReminderNotify{TelegramID: tg, ChatID: chat, Text: text})
 		_, _ = s.Pool.Exec(ctx, `

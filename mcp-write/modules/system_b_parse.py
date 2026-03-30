@@ -13,9 +13,6 @@ KEYS_UNTIL_FIRST_PERIOD = frozenset({
     "fizicheskoe",
 })
 
-# Ключи, которые не включаются в полный контекст при сохранении в Postgres (core.document_context)
-KEYS_EXCLUDED_FROM_FULL_CONTEXT = frozenset({"emocionalnoe", "intellektualnye", "astralnyi_duh"})
-
 
 def _truncate_at_first_period(text: str) -> tuple[str, int]:
     """Возвращает (значение до первой точки, число символов с начала). Точка после многоточия не считается концом."""
@@ -176,39 +173,5 @@ def get_rest_context(raw: str, keys: dict[str, str]) -> str:
 
 
 def full_context_for_postgres(raw: str, keys: dict[str, str]) -> str:
-    """Полный контекст для Postgres: из raw убираются только Эмоциональное / Интеллектуальные / Астральный дух
-    (в т.ч. fizicheskoe остаётся в тексте)."""
-    raw = (raw or "").strip()
-    if not raw:
-        return raw
-    positions = _all_label_positions(raw)
-    exclude_ranges: list[tuple[int, int]] = []
-    for i, (pos, label, key_name) in enumerate(positions):
-        if key_name not in KEYS_EXCLUDED_FROM_FULL_CONTEXT:
-            continue
-        label_end = pos + len(label)
-        next_start = positions[i + 1][0] if i + 1 < len(positions) else len(raw)
-        segment_end = _segment_end_for_rest(raw, label_end, next_start, key_name)
-        exclude_ranges.append((pos, segment_end))
-    if not exclude_ranges:
-        return raw
-    exclude_ranges.sort(key=lambda x: x[0])
-    merged: list[tuple[int, int]] = []
-    for s, e in exclude_ranges:
-        if merged and s <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-        else:
-            merged.append((s, e))
-    parts: list[str] = []
-    prev = 0
-    for s, e in merged:
-        if s > prev:
-            chunk = raw[prev:s].rstrip()
-            if chunk:
-                parts.append(chunk)
-        prev = e
-    if prev < len(raw):
-        chunk = raw[prev:].lstrip()
-        if chunk:
-            parts.append(chunk)
-    return "\n\n".join(p for p in parts if p.strip()).strip()
+    """Полный контекст для Postgres без вырезаний: сохраняем исходный raw целиком."""
+    return (raw or "").strip()
