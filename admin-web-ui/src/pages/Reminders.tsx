@@ -38,12 +38,17 @@ export function Reminders() {
   }
 
   const applySim = async () => {
-    if (!isoInput.trim()) {
-      showError('Укажите дату/время в RFC3339, например 2026-03-29T09:30:00+03:00')
+    const normalized = isoInput.trim().replace('T', ' ')
+    if (!normalized) {
+      showError('Укажите дату/время в формате YYYY-MM-DD HH:MM, например 2026-03-30 15:09')
+      return
+    }
+    if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(normalized)) {
+      showError('Неверный формат. Используйте YYYY-MM-DD HH:MM')
       return
     }
     try {
-      await setRemindersDebugClock({ simulated_iso: isoInput.trim() })
+      await setRemindersDebugClock({ simulated_iso: normalized })
       success('Симуляция времени установлена')
       load()
     } catch {
@@ -93,14 +98,14 @@ export function Reminders() {
           <p className="reminders-sim-line">
             Текущее значение в БД: <code>{simulatedAt ?? '— не задано'}</code>
           </p>
-          <label htmlFor="rem-iso">RFC3339 (МСК через +03:00)</label>
+          <label htmlFor="rem-iso">Формат: YYYY-MM-DD HH:MM (МСК)</label>
           <input
             id="rem-iso"
             className="reminders-input"
             type="text"
             value={isoInput}
             onChange={e => setIsoInput(e.target.value)}
-            placeholder="2026-03-29T09:30:00+03:00"
+            placeholder="2026-03-30 15:09"
           />
           <div className="reminders-actions">
             <button type="button" className="btn-primary" onClick={applySim}>

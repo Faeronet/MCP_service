@@ -920,6 +920,28 @@ type remindersDebugClockBody struct {
 	Clear        bool    `json:"clear"`
 }
 
+func parseAdminSimulatedTime(raw string) (time.Time, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty")
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	// Новый дефолт для админки: "YYYY-MM-DD HH:MM" (МСК).
+	msk := time.FixedZone("MSK", 3*60*60)
+	for _, layout := range []string{"2006-01-02 15:04", "2006-01-02 15:04:05"} {
+		if t, err := time.ParseInLocation(layout, s, msk); err == nil {
+			return t, nil
+		}
+	}
+	// Допустим и "YYYY-MM-DDTHH:MM".
+	if t, err := time.ParseInLocation("2006-01-02T15:04", s, msk); err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("bad time format")
+}
+
 // RemindersDebugClock POST /api/reminders/debug-clock
 func (h *Handler) RemindersDebugClock(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -936,9 +958,9 @@ func (h *Handler) RemindersDebugClock(w http.ResponseWriter, r *http.Request) {
 	if body.Clear {
 		_, err = h.Pool.Exec(ctx, `UPDATE chat.reminder_debug_clock SET simulated_at = NULL, updated_at = NOW(), source = 'admin' WHERE id = 0`)
 	} else if body.SimulatedISO != nil && *body.SimulatedISO != "" {
-		t, perr := time.Parse(time.RFC3339, *body.SimulatedISO)
+		t, perr := parseAdminSimulatedTime(*body.SimulatedISO)
 		if perr != nil {
-			http.Error(w, `{"error":"bad time, use RFC3339"}`, http.StatusBadRequest)
+			http.Error(w, `{"error":"bad time, use YYYY-MM-DD HH:MM"}`, http.StatusBadRequest)
 			return
 		}
 		_, err = h.Pool.Exec(ctx, `UPDATE chat.reminder_debug_clock SET simulated_at = $1, updated_at = NOW(), source = 'admin' WHERE id = 0`, t)
