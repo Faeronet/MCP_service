@@ -94,6 +94,13 @@ func (s *Server) UpsertReminderSubscriber(ctx context.Context, telegramID, chatI
 		VALUES (0, false, NOW())
 		ON CONFLICT (id) DO UPDATE SET disabled = false, updated_at = NOW()
 	`)
+	// Если ранее по этому пользователю/чату осталась метка "уже отправлено" за сегодня,
+	// новая активация/смена времени должна позволить отправку в текущие сутки.
+	today := dateInMSK(time.Now())
+	_, _ = s.Pool.Exec(ctx, `
+		DELETE FROM chat.reminder_sent
+		WHERE telegram_id = $1 AND chat_id = $2 AND delivery_date_msk = $3::date
+	`, telegramID, chatID, today)
 	return nil
 }
 
