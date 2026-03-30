@@ -24,7 +24,7 @@ func init() {
 }
 
 // Только ЧЧ:ММ (двоеточие). Опционально секунды :СС — игнорируем, в БД пишем часы и минуты.
-var reReminderLine = regexp.MustCompile(`(?i)^\[reminder\]\s*([01]?\d|2[0-3])\s*:\s*([0-5]\d)(?:\s*:\s*[0-5]\d)?\s*$`)
+var reReminderLine = regexp.MustCompile(`(?i)^\[напоминание\]\s*([01]?\d|2[0-3])\s*:\s*([0-5]\d)(?:\s*:\s*[0-5]\d)?\s*$`)
 
 func formatDDMMMSK(t time.Time) string {
 	x := t.In(mskLoc)
@@ -58,7 +58,7 @@ func (s *Server) remindersGloballyDisabled(ctx context.Context) bool {
 	return err == nil && d
 }
 
-// ParseReminderLine распознаёт ответ промпта A: "[reminder] HH:MM" (МСК), например [reminder] 12:00
+// ParseReminderLine распознаёт ответ промпта A: "[напоминание] HH:MM" (МСК), например [напоминание] 12:00
 func ParseReminderLine(line string) (hh, mm int, ok bool) {
 	line = strings.TrimSpace(StripThink(line))
 	m := reReminderLine.FindStringSubmatch(line)
