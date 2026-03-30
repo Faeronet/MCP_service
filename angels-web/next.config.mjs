@@ -1,4 +1,15 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {};
+import withPWAInit from "@ducanh2912/next-pwa";
 
-export default nextConfig;
+const withPWA = withPWAInit({
+  dest: "public",
+  swSrc: 'service-worker.js',
+});
+
+export default withPWA({
+ 
+    // reactStrictMode: true,
+output:"export",
+    images: {
+      unoptimized: true,
+    }
+});

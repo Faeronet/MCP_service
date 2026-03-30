@@ -1,0 +1,40 @@
+@use '@carbon/react/scss/colors';
+
+// Custom styles for the header and side navigation bar
+.cds--header,
+.cds--side-nav {
+  background-color: #ADD8E6; // Light blue background color
+ // background-color: #000000;
+}
+
+.cds--header__global .action-icons {
+  color: #000000; // Set icon color to black
+}
+
+.cds--header__global .action-icons:hover,
+.cds--header__global .action-icons:focus {
+  color: #000000; // Ensure the icon stays black on hover and focus
+}
+
+
+// Custom styles for the TreeView component within the SideNav
+.cds--side-nav__item {
+  background-color: #ADD8E6; // Light blue background for side nav items
+  color: #000000; // Black text color for contrast
+}
+
+.cds--side-nav__item--active {
+  background-color: #87CEEB; // Slightly darker blue for active items
+  color: #000000; // Black text color for active items
+}
+
+.cds--side-nav__item:hover,
+.cds--side-nav__item:focus {
+  background-color: #87CEEB; // Slightly darker blue for hover and focus states
+  color: #000000; // Black text color for contrast
+}
+
+.cds--side-nav__submenu {
+  background-color: #ADD8E6; // Light blue background for submenus
+  color: #000000; // Black text color for submenus
+}

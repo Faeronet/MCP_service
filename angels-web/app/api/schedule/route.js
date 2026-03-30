@@ -19,7 +19,7 @@ export async function POST(request) {
       status: r.status,
       headers: { 'Content-Type': 'application/json' },
     });
-  } catch (e) {
+  } catch {
     return Response.json(
       {
         accepted: false,

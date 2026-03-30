@@ -1,0 +1,65 @@
+.backgroundContainer {
+    position: relative;
+    height: 400px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  
+  .textOverlay {
+    position: relative;
+    z-index: 2;
+    padding: 20px;
+    color: black;
+    /*background-color: rgba(0, 0, 0, 0.5); // Optional for text contrast  */
+  
+    h1 {
+      font-size: 2rem;
+    }
+  
+    p {
+      font-size: 1rem;
+    }
+  }
+  
+  .middleImage {
+    margin: 20px 0;
+    text-align: center;
+  
+    img {
+      width: 100%;
+      max-width: 400px;
+      height: auto;
+      border-radius: 8px;
+    }
+  }
+  
+  /* Media query for smaller screen sizes (mobile) */
+  @media (max-width: 768px) {
+    .backgroundContainer {
+      height: 300px;
+    }
+  
+    .textOverlay {
+      padding: 15px;
+  
+      h1 {
+        font-size: 1.5rem;
+      }
+  
+      p {
+        font-size: 0.9rem;
+      }
+    }
+  
+    .middleImage {
+      margin: 15px 0;
+  
+      img {
+        width: 80%;  /* Reduce image size for mobile */
+        max-width: 300px;
+        height: 10%;
+      }
+    }
+  }
+  

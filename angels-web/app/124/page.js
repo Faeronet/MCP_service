@@ -1,0 +1,130 @@
+"use client"
+
+
+import { Content,Grid,Column } from "@carbon/react";
+import TimeToggle from "@/components/TimeToggle/TimeToggle";
+
+import cx from 'classnames';
+import Image from 'next/image'
+
+
+import Pic51 from '../../public/pictures/pic51.jpg'
+import Pic68 from '../../public/pictures/pic68.jpg'
+import Pic23 from '../../public/pictures/pic23.jpg'
+
+
+
+import styles from '../../app/case.module.css'
+const StoryContent = ({
+  useResponsiveOffset = true
+}) => {
+  const classNameFirstColumn = cx({
+    'cds--col-lg-13': true,
+    'cds--offset-lg-3': useResponsiveOffset
+  });
+  const content = <Grid>
+     <Column sm={{
+    span: 4,
+    offset: 0
+  }} md={{
+    span: 8,
+    offset: 0
+  }} lg={{
+    span: 12,
+    offset: 4
+  }} >
+    <div>
+
+    <h2 style={{
+          margin: '0 0 30px'
+        }}>Melahel (Мелахель), 07:20 - 07:39</h2>
+       <div>
+      <Image
+        src={Pic23}
+        alt="Example Image"
+        className={styles.responsiveImage}
+      />
+    </div>
+
+    <h2 style={{
+          margin: '0 0 30px'
+        }}></h2>
+
+                             
+    <TimeToggle pageName="Исцеление Тела, Другие ситуации и искажения" keyName="07:20 - 07:39" validationName="Melahel" messageName="Простуда" />
+   
+
+
+          <h2 style={{
+          margin: '0 0 30px'
+        }}>Hahasiah (Хахасиах), 16:40 - 16:59</h2>
+
+
+
+        
+       <div>
+      <Image
+        src={Pic51}
+        alt="Example Image"
+        className={styles.responsiveImage}
+      />
+    </div>
+    <h2 style={{
+          margin: '0 0 30px'
+        }}></h2>
+
+                                 
+    <TimeToggle pageName="Исцеление Тела, Другие ситуации и искажения" keyName="16:40 - 16:59" validationName="Hahasiah" messageName="Простуда" />
+   
+
+
+
+
+ <h2 style={{
+          margin: '0 0 30px'
+        }}>Habuhiah (Хабюиах), 22:20 - 22:39</h2>
+       <div>
+      <Image
+        src={Pic68}
+        alt="Example Image"
+        className={styles.responsiveImage}
+      />
+    </div>
+    <h2 style={{
+          margin: '0 0 30px'
+        }}></h2>
+
+        
+                                 
+    <TimeToggle pageName="Исцеление Тела, Другие ситуации и искажения" keyName=" 22:20 - 22:39" validationName="Habuhiah" messageName="Простуда" />
+   
+
+
+
+
+ 
+
+   
+      </div>
+      </Column>
+      </Grid>;
+  const style = {
+    height: '100%'
+  };
+  if (useResponsiveOffset) {
+    style.margin = '0';
+    style.width = '100%';
+  }
+
+ return <div>
+	{content}
+	</div>;
+
+
+};
+
+export default function RepoPage() {
+  return(<div>
+    <StoryContent/>
+  </div>);
+}
