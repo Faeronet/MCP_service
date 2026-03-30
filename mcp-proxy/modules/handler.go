@@ -170,19 +170,28 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		if hh, mm, ok := ParseReminderLine(searchQuery); ok {
 			if err := s.UpsertReminderSubscriber(ctx, req.UserID, req.ChatID, hh, mm); err != nil {
 				logHandler.Warn(ctx, "reminder_subscribe", logging.KV{"error", err})
+				reply = "Не удалось активировать напоминание. Попробуйте ещё раз."
+				nameAllHandled = true
 			} else {
 				reminderExtraText = s.BuildTodayAngelReminderText(ctx, requestID)
+				reply = fmt.Sprintf("Напоминания активированы на %02d:%02d (МСК).", hh, mm)
+				if strings.TrimSpace(reminderExtraText) != "" {
+					reply += "\n\n" + strings.TrimSpace(reminderExtraText)
+				}
+				nameAllHandled = true
 			}
-			searchQuery = s.FallbackSearchQueryAfterReminder(req.MessageText)
+			// Для сценария активации напоминаний не выполняем обычный RAG-поиск.
+			searchQuery = ""
 		}
 
-		day, month, hasDate := ParseDayMonthFromQuery(searchQuery)
-		if hasDate && (day < 1 || day > MaxDaysInMonth(month)) {
-			contextText = "date not found"
-		} else if IsMetaQuestionAboutBot(req.MessageText) {
-			// Мета-вопрос смотрим по исходному сообщению; searchQuery от промпта A даёт ложные срабатывания («что ты знаешь…»).
-			contextText = ""
-		} else {
+		if !nameAllHandled {
+			day, month, hasDate := ParseDayMonthFromQuery(searchQuery)
+			if hasDate && (day < 1 || day > MaxDaysInMonth(month)) {
+				contextText = "date not found"
+			} else if IsMetaQuestionAboutBot(req.MessageText) {
+				// Мета-вопрос смотрим по исходному сообщению; searchQuery от промпта A даёт ложные срабатывания («что ты знаешь…»).
+				contextText = ""
+			} else {
 			attachmentsText := s.GetAttachmentsText(ctx, req.SessionID)
 			var err error
 			var buildChunkIDs []string
@@ -252,9 +261,10 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 					debugMessage += "\n\nChunk ID: " + strings.Join(buildChunkIDs, ", ")
 				}
 			}
-			// savedContextRef для одного чанка уже выставлен выше; здесь — случаи full от mcp-read при нескольких чанках / без раннего ref.
-			if savedContextRef == "" && buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
-				savedContextRef = buildCollection + ":" + buildContextRef
+				// savedContextRef для одного чанка уже выставлен выше; здесь — случаи full от mcp-read при нескольких чанках / без раннего ref.
+				if savedContextRef == "" && buildContextKind == "full" && buildContextRef != "" && buildCollection != "" {
+					savedContextRef = buildCollection + ":" + buildContextRef
+				}
 			}
 		}
 	} else if !nameAllHandled && useStoredReplyContext && s.DebugMode == 1 {
