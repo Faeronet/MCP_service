@@ -931,7 +931,7 @@ type reminderSubscriberRow struct {
 }
 
 type remindersResetUserBody struct {
-	TelegramID int64 `json:"telegram_id"`
+	TelegramID *int64 `json:"telegram_id"`
 }
 
 func parseAdminSimulatedTime(raw string) (time.Time, error) {
@@ -1033,19 +1033,20 @@ func (h *Handler) RemindersResetUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 		return
 	}
-	if body.TelegramID == 0 {
+	if body.TelegramID == nil {
 		http.Error(w, `{"error":"telegram_id required"}`, http.StatusBadRequest)
 		return
 	}
+	telegramID := *body.TelegramID
 	ctx := r.Context()
-	_, err := h.Pool.Exec(ctx, `UPDATE chat.reminder_subscribers SET enabled = false, updated_at = NOW() WHERE telegram_id = $1`, body.TelegramID)
+	_, err := h.Pool.Exec(ctx, `UPDATE chat.reminder_subscribers SET enabled = false, updated_at = NOW() WHERE telegram_id = $1`, telegramID)
 	if err != nil {
 		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
 		return
 	}
-	_, _ = h.Pool.Exec(ctx, `DELETE FROM chat.reminder_sent WHERE telegram_id = $1`, body.TelegramID)
+	_, _ = h.Pool.Exec(ctx, `DELETE FROM chat.reminder_sent WHERE telegram_id = $1`, telegramID)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "telegram_id": body.TelegramID})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "telegram_id": telegramID})
 }
 
 // Сессия админского тестового чата: не пересекается с реальными telegram_id.
@@ -1065,6 +1066,11 @@ type mcpProxyChatResponse struct {
 }
 
 func (h *Handler) ensureAdminLLMSession(ctx context.Context) (uuid.UUID, error) {
+	// Для отображения в Chat Log не прочерком, а как "admin".
+	_, _ = h.Pool.Exec(ctx, `
+		INSERT INTO core.users (telegram_id, username) VALUES ($1, $2)
+		ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username
+	`, adminLLMTelegramID, "admin")
 	var id uuid.UUID
 	err := h.Pool.QueryRow(ctx, `
 		INSERT INTO chat.sessions (telegram_id, chat_id, last_active)
