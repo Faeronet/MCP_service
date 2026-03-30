@@ -39,9 +39,6 @@ func dateInMSK(t time.Time) time.Time {
 }
 
 func (s *Server) effectiveReminderNow(ctx context.Context) time.Time {
-	if s.DebugMode != 1 {
-		return time.Now().In(mskLoc)
-	}
 	var sim sql.NullTime
 	err := s.Pool.QueryRow(ctx, `SELECT simulated_at FROM chat.reminder_debug_clock WHERE id = 0`).Scan(&sim)
 	if err == nil && sim.Valid {
@@ -88,7 +85,16 @@ func (s *Server) UpsertReminderSubscriber(ctx context.Context, telegramID, chatI
 			enabled = true,
 			updated_at = NOW()
 	`, telegramID, chatID, hh, mm)
-	return err
+	if err != nil {
+		return err
+	}
+	// При новой активации пользователем по умолчанию включаем глобальные напоминания.
+	_, _ = s.Pool.Exec(ctx, `
+		INSERT INTO chat.reminder_global_config (id, disabled, updated_at)
+		VALUES (0, false, NOW())
+		ON CONFLICT (id) DO UPDATE SET disabled = false, updated_at = NOW()
+	`)
+	return nil
 }
 
 func (s *Server) angelForDeliveryDate(ctx context.Context, deliveryDate time.Time) (chunkID, name string, ok bool) {
@@ -241,15 +247,8 @@ func (s *Server) TickReminders(ctx context.Context) ([]ReminderNotify, error) {
 			continue
 		}
 		slotPast := (eff.Hour() > hh) || (eff.Hour() == hh && eff.Minute() >= mm)
-		atSlot := eff.Hour() == hh && eff.Minute() == mm
-		if debug {
-			if !atSlot {
-				continue
-			}
-		} else {
-			if !atSlot && !slotPast {
-				continue
-			}
+		if !slotPast {
+			continue
 		}
 		var already bool
 		_ = s.Pool.QueryRow(ctx, `

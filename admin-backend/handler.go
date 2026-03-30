@@ -79,8 +79,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if ttl <= 0 {
 		ttl = 168 * time.Hour // по умолчанию 7 дней
 	}
-	sup := strings.TrimSpace(h.ReminderSuperAdminSub)
-	reminderDebug := user == "0" || (sup != "" && user == sup)
+	reminderDebug := true
 	claims := jwt.MapClaims{
 		"sub":             user,
 		"exp":             time.Now().Add(ttl).Unix(),
@@ -878,15 +877,12 @@ func (h *Handler) RemindersConfig(w http.ResponseWriter, r *http.Request) {
 	_ = h.Pool.QueryRow(ctx, `SELECT COALESCE(disabled, false) FROM chat.reminder_global_config WHERE id = 0`).Scan(&disabled)
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]interface{}{"disabled": disabled}
-	claims, err := h.parseJWTClaims(r)
-	if err == nil && jwtClaimBool(claims, "reminder_debug") {
-		var sim sql.NullTime
-		_ = h.Pool.QueryRow(ctx, `SELECT simulated_at FROM chat.reminder_debug_clock WHERE id = 0`).Scan(&sim)
-		if sim.Valid {
-			out["simulated_at"] = sim.Time.Format(time.RFC3339)
-		} else {
-			out["simulated_at"] = nil
-		}
+	var sim sql.NullTime
+	_ = h.Pool.QueryRow(ctx, `SELECT simulated_at FROM chat.reminder_debug_clock WHERE id = 0`).Scan(&sim)
+	if sim.Valid {
+		out["simulated_at"] = sim.Time.Format(time.RFC3339)
+	} else {
+		out["simulated_at"] = nil
 	}
 	_ = json.NewEncoder(w).Encode(out)
 }
@@ -930,21 +926,13 @@ func (h *Handler) RemindersDebugClock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	claims, err := h.parseJWTClaims(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-		return
-	}
-	if !jwtClaimBool(claims, "reminder_debug") {
-		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-		return
-	}
 	var body remindersDebugClockBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 		return
 	}
 	ctx := r.Context()
+	var err error
 	if body.Clear {
 		_, err = h.Pool.Exec(ctx, `UPDATE chat.reminder_debug_clock SET simulated_at = NULL, updated_at = NOW(), source = 'admin' WHERE id = 0`)
 	} else if body.SimulatedISO != nil && *body.SimulatedISO != "" {

@@ -2,17 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { getRemindersConfig, setRemindersDebugClock, setRemindersDisabled } from '../api'
 import { useToast } from '../context/ToastContext'
 
-function reminderDebugFromStorage(): boolean {
-  return localStorage.getItem('reminder_debug') === '1'
-}
-
 export function Reminders() {
   const { success, error: showError } = useToast()
   const [disabled, setDisabled] = useState(false)
   const [simulatedAt, setSimulatedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [isoInput, setIsoInput] = useState('')
-  const canDebug = reminderDebugFromStorage()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -49,11 +44,10 @@ export function Reminders() {
     }
     try {
       await setRemindersDebugClock({ simulated_iso: isoInput.trim() })
-      success('Симуляция времени установлена (бот увидит при BOT_DEBUG=1)')
+      success('Симуляция времени установлена')
       load()
-    } catch (e) {
-      if (e instanceof Error && e.message === 'FORBIDDEN') showError('Доступ только для супер-админа (REMINDER_SUPERADMIN_SUB)')
-      else showError('Ошибка установки времени')
+    } catch {
+      showError('Ошибка установки времени')
     }
   }
 
@@ -62,9 +56,8 @@ export function Reminders() {
       await setRemindersDebugClock({ clear: true })
       success('Симуляция сброшена')
       load()
-    } catch (e) {
-      if (e instanceof Error && e.message === 'FORBIDDEN') showError('Доступ только для супер-админа')
-      else showError('Ошибка')
+    } catch {
+      showError('Ошибка')
     }
   }
 
@@ -73,53 +66,61 @@ export function Reminders() {
   }
 
   return (
-    <div className="reminders-page">
-      <h1>Напоминания (бот)</h1>
-      <p className="muted">
-        Глобальный выключатель и симуляция времени в Postgres. Бот читает <code>chat.reminder_global_config</code> и{' '}
-        <code>reminder_debug_clock</code>; симулированное время учитывается только при <code>BOT_DEBUG=1</code>.
-      </p>
-
-      <section className="card-block">
-        <h2>Статус</h2>
-        <p>
-          Напоминания сейчас: <strong>{disabled ? 'выключены' : 'включены'}</strong>
+    <div className="page-layout reminders-page">
+      <div className="page-header">
+        <h1 className="page-title">Напоминания</h1>
+        <p className="text-muted reminders-lead">
+          Глобальный выключатель и симуляция времени в Postgres. Бот читает{' '}
+          <code>chat.reminder_global_config</code> и <code>chat.reminder_debug_clock</code>.
         </p>
-        <button type="button" className="btn-primary" onClick={toggle}>
-          {disabled ? 'Включить напоминания' : 'Отключить напоминания'}
-        </button>
-      </section>
+      </div>
+      <div className="content-panel reminders-grid">
+        <section className="content-card reminders-card">
+          <h2 className="reminders-card-title">Статус</h2>
+          <p className="reminders-status-line">
+            Напоминания сейчас:{' '}
+            <strong className={disabled ? 'reminders-state reminders-state--off' : 'reminders-state reminders-state--on'}>
+              {disabled ? 'выключены' : 'включены'}
+            </strong>
+          </p>
+          <button type="button" className="btn-primary" onClick={toggle}>
+            {disabled ? 'Включить напоминания' : 'Отключить напоминания'}
+          </button>
+        </section>
 
-      <section className="card-block">
-        <h2>Симуляция времени (админ)</h2>
-        {!canDebug ? (
-          <p className="muted">Доступно только при входе под логином из <code>REMINDER_SUPERADMIN_SUB</code> (по умолчанию <code>admin</code>).</p>
-        ) : (
-          <>
-            <p>
-              Текущее значение в БД:{' '}
-              <code>{simulatedAt ?? '— не задано'}</code>
-            </p>
-            <label htmlFor="rem-iso">RFC3339 (МСК можно через +03:00)</label>
-            <input
-              id="rem-iso"
-              type="text"
-              value={isoInput}
-              onChange={e => setIsoInput(e.target.value)}
-              placeholder="2026-03-29T09:30:00+03:00"
-              style={{ width: '100%', maxWidth: '28rem', display: 'block', marginBottom: '0.5rem' }}
-            />
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <button type="button" className="btn-primary" onClick={applySim}>
-                Применить
-              </button>
-              <button type="button" className="btn-secondary" onClick={clearSim}>
-                Сбросить
-              </button>
-            </div>
-          </>
-        )}
-      </section>
+        <section className="content-card reminders-card">
+          <h2 className="reminders-card-title">Симуляция времени</h2>
+          <p className="reminders-sim-line">
+            Текущее значение в БД: <code>{simulatedAt ?? '— не задано'}</code>
+          </p>
+          <label htmlFor="rem-iso">RFC3339 (МСК через +03:00)</label>
+          <input
+            id="rem-iso"
+            className="reminders-input"
+            type="text"
+            value={isoInput}
+            onChange={e => setIsoInput(e.target.value)}
+            placeholder="2026-03-29T09:30:00+03:00"
+          />
+          <div className="reminders-actions">
+            <button type="button" className="btn-primary" onClick={applySim}>
+              Применить
+            </button>
+            <button type="button" className="btn-secondary" onClick={clearSim}>
+              Сбросить
+            </button>
+          </div>
+        </section>
+
+        <section className="content-card reminders-card reminders-card--full">
+          <h2 className="reminders-card-title">Как это работает</h2>
+          <ul className="reminders-hints">
+            <li>В чате используйте формат: <code>[напоминание] HH:MM</code> (МСК).</li>
+            <li>Уведомление отправляется один раз в день, когда текущее время достигает заданного.</li>
+            <li>Если напоминание не приходит — проверьте глобальный выключатель и доступность сервиса бота.</li>
+          </ul>
+        </section>
+      </div>
     </div>
   )
 }

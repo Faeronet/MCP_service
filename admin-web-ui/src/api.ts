@@ -69,7 +69,6 @@ export async function setRemindersDebugClock(body: { simulated_iso?: string; cle
     body: JSON.stringify(body),
   })
   checkAuth(r)
-  if (r.status === 403) throw new Error('FORBIDDEN')
   if (!r.ok) throw new Error('Failed to set debug clock')
 }
 

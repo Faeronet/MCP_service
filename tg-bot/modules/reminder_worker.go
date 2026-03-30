@@ -14,7 +14,7 @@ import (
 
 var logReminders = logging.New("tg-bot.reminders")
 
-const reminderTickInterval = 45 * time.Second
+const reminderTickInterval = 20 * time.Second
 const reminderTickHTTPTimeout = 60 * time.Second
 
 type reminderTickResponse struct {
@@ -71,6 +71,8 @@ func truncateForLog(s string) string {
 
 // StartReminderWorker периодически опрашивает mcp-proxy на предмет напоминаний (пока жив контекст ctx).
 func (b *Bot) StartReminderWorker(ctx context.Context) {
+	// Первый тик сразу после старта, чтобы не ждать интервал.
+	b.TickRemindersDispatch(ctx)
 	t := time.NewTicker(reminderTickInterval)
 	defer t.Stop()
 	for {
