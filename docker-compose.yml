@@ -383,8 +383,8 @@ services:
 
   angels-web:
     build:
-      context: .
-      dockerfile: angels-web/Dockerfile
+      context: ./angels-web
+      dockerfile: Dockerfile
     environment:
       SCHEDULER_INTERNAL_URL: http://scheduler:8090
     ports:
