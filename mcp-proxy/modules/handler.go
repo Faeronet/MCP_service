@@ -173,11 +173,8 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				reply = "Не удалось активировать напоминание. Попробуйте ещё раз."
 				nameAllHandled = true
 			} else {
-				reminderExtraText = s.BuildTodayAngelReminderText(ctx, requestID)
-				reply = fmt.Sprintf("Напоминания активированы на %02d:%02d (МСК).", hh, mm)
-				if strings.TrimSpace(reminderExtraText) != "" {
-					reply += "\n\n" + strings.TrimSpace(reminderExtraText)
-				}
+				reply = fmt.Sprintf("Напоминания активированы на %02d:%02d (МСК). Следующее уведомление придёт в указанное время.", hh, mm)
+				reminderExtraText = ""
 				nameAllHandled = true
 			}
 			// Для сценария активации напоминаний не выполняем обычный RAG-поиск.

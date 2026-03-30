@@ -129,9 +129,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 			_ = b.UpdateMessageTelegramID(ctx, msgID, firstMsgID)
 		}
 	}
-	if strings.TrimSpace(reminderExtra) != "" {
-		b.SendReply(ctx, chatID, reminderExtra)
-	}
+	_ = reminderExtra
 }
 
 func (b *Bot) handleStart(ctx context.Context, chatID, userID int64, username string) {
@@ -264,7 +262,5 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			_ = b.UpdateMessageTelegramID(ctx, msgID, firstMsgID)
 		}
 	}
-	if strings.TrimSpace(reminderExtra) != "" {
-		b.SendReply(ctx, chatID, reminderExtra)
-	}
+	_ = reminderExtra
 }
