@@ -19,3 +19,17 @@ coverage/
 *.test
 .vite/
 .cache/
+
+# Python: кэш байткода и окружения
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+venv/
+.venv/
