@@ -107,6 +107,8 @@ func main() {
 	mux.Handle("/api/reminders/config", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersConfig)))
 	mux.Handle("/api/reminders/toggle", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersToggle)))
 	mux.Handle("/api/reminders/debug-clock", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersDebugClock)))
+	mux.Handle("/api/reminders/subscribers", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersSubscribers)))
+	mux.Handle("/api/reminders/reset-user", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersResetUser)))
 	mux.Handle("/api/chat/llm", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ChatLLM)))
 	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 

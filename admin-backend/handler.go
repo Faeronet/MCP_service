@@ -920,6 +920,20 @@ type remindersDebugClockBody struct {
 	Clear        bool    `json:"clear"`
 }
 
+type reminderSubscriberRow struct {
+	TelegramID int64     `json:"telegram_id"`
+	ChatID     int64     `json:"chat_id"`
+	Username   string    `json:"username"`
+	ReminderHH int       `json:"reminder_hh"`
+	ReminderMM int       `json:"reminder_mm"`
+	Enabled    bool      `json:"enabled"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type remindersResetUserBody struct {
+	TelegramID int64 `json:"telegram_id"`
+}
+
 func parseAdminSimulatedTime(raw string) (time.Time, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -974,6 +988,64 @@ func (h *Handler) RemindersDebugClock(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+// RemindersSubscribers GET /api/reminders/subscribers
+func (h *Handler) RemindersSubscribers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	rows, err := h.Pool.Query(ctx, `
+		SELECT rs.telegram_id, rs.chat_id, COALESCE(u.username, '') AS username,
+		       rs.reminder_hh, rs.reminder_mm, rs.enabled, rs.updated_at
+		FROM chat.reminder_subscribers rs
+		LEFT JOIN core.users u ON u.telegram_id = rs.telegram_id
+		WHERE rs.enabled = true
+		ORDER BY rs.updated_at DESC
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"query"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var list []reminderSubscriberRow
+	for rows.Next() {
+		var x reminderSubscriberRow
+		if err := rows.Scan(&x.TelegramID, &x.ChatID, &x.Username, &x.ReminderHH, &x.ReminderMM, &x.Enabled, &x.UpdatedAt); err != nil {
+			continue
+		}
+		list = append(list, x)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"subscribers": list})
+}
+
+// RemindersResetUser POST /api/reminders/reset-user
+func (h *Handler) RemindersResetUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body remindersResetUserBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	if body.TelegramID == 0 {
+		http.Error(w, `{"error":"telegram_id required"}`, http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	_, err := h.Pool.Exec(ctx, `UPDATE chat.reminder_subscribers SET enabled = false, updated_at = NOW() WHERE telegram_id = $1`, body.TelegramID)
+	if err != nil {
+		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+		return
+	}
+	_, _ = h.Pool.Exec(ctx, `DELETE FROM chat.reminder_sent WHERE telegram_id = $1`, body.TelegramID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "telegram_id": body.TelegramID})
 }
 
 // Сессия админского тестового чата: не пересекается с реальными telegram_id.

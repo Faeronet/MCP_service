@@ -1323,6 +1323,31 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   margin: 0 0 10px 0;
   line-height: 1.45;
 }
+.reminders-subs-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.reminders-subs-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+.reminders-subs-table th,
+.reminders-subs-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.28);
+  text-align: left;
+  vertical-align: middle;
+}
+.reminders-subs-table th {
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.reminders-subs-table tbody tr:hover {
+  background: rgba(15, 23, 42, 0.32);
+}
 @media (max-width: 980px) {
   .reminders-grid {
     grid-template-columns: 1fr;

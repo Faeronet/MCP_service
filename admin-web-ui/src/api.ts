@@ -72,6 +72,35 @@ export async function setRemindersDebugClock(body: { simulated_iso?: string; cle
   if (!r.ok) throw new Error('Failed to set debug clock')
 }
 
+export interface ReminderSubscriber {
+  telegram_id: number
+  chat_id: number
+  username: string
+  reminder_hh: number
+  reminder_mm: number
+  enabled: boolean
+  updated_at: string
+}
+
+export async function getRemindersSubscribers(): Promise<{ subscribers: ReminderSubscriber[] }> {
+  const r = await fetch(`${API_URL}/api/reminders/subscribers`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load reminders subscribers')
+  return r.json()
+}
+
+export async function resetRemindersForUser(telegramId: number): Promise<void> {
+  const r = await fetch(`${API_URL}/api/reminders/reset-user`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ telegram_id: telegramId }),
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to reset reminders for user')
+}
+
 export async function uploadFile(file: File, name?: string): Promise<{ job_id: string; doc_id: string; status: string }> {
   const token = getToken()
   if (!token) throw new Error('NOT_LOGGED_IN')

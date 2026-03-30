@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getRemindersConfig, setRemindersDebugClock, setRemindersDisabled } from '../api'
+import {
+  getRemindersConfig,
+  getRemindersSubscribers,
+  resetRemindersForUser,
+  setRemindersDebugClock,
+  setRemindersDisabled,
+  type ReminderSubscriber,
+} from '../api'
 import { useToast } from '../context/ToastContext'
 
 export function Reminders() {
@@ -8,13 +15,16 @@ export function Reminders() {
   const [simulatedAt, setSimulatedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [isoInput, setIsoInput] = useState('')
+  const [subscribers, setSubscribers] = useState<ReminderSubscriber[]>([])
+  const [resettingUser, setResettingUser] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const c = await getRemindersConfig()
+      const [c, s] = await Promise.all([getRemindersConfig(), getRemindersSubscribers()])
       setDisabled(!!c.disabled)
       setSimulatedAt(c.simulated_at ?? null)
+      setSubscribers(Array.isArray(s.subscribers) ? s.subscribers : [])
     } catch {
       showError('Не удалось загрузить настройки напоминаний')
     } finally {
@@ -63,6 +73,19 @@ export function Reminders() {
       load()
     } catch {
       showError('Ошибка')
+    }
+  }
+
+  const resetUser = async (telegramId: number) => {
+    try {
+      setResettingUser(telegramId)
+      await resetRemindersForUser(telegramId)
+      success(`Уведомления пользователя ${telegramId} сброшены`)
+      load()
+    } catch {
+      showError('Ошибка сброса уведомлений пользователя')
+    } finally {
+      setResettingUser(null)
     }
   }
 
@@ -124,6 +147,53 @@ export function Reminders() {
             <li>Уведомление отправляется один раз в день, когда текущее время достигает заданного.</li>
             <li>Если напоминание не приходит — проверьте глобальный выключатель и доступность сервиса бота.</li>
           </ul>
+        </section>
+
+        <section className="content-card reminders-card reminders-card--full">
+          <h2 className="reminders-card-title">Пользователи с активными уведомлениями</h2>
+          {subscribers.length === 0 ? (
+            <p className="text-muted">Активных подписок пока нет.</p>
+          ) : (
+            <div className="reminders-subs-table-wrap">
+              <table className="reminders-subs-table">
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>Telegram ID</th>
+                    <th>Chat ID</th>
+                    <th>Время (МСК)</th>
+                    <th>Обновлено</th>
+                    <th>Действие</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subscribers.map((s) => {
+                    const hh = String(s.reminder_hh).padStart(2, '0')
+                    const mm = String(s.reminder_mm).padStart(2, '0')
+                    return (
+                      <tr key={`${s.telegram_id}:${s.chat_id}`}>
+                        <td>{s.username || '—'}</td>
+                        <td className="mono">{s.telegram_id}</td>
+                        <td className="mono">{s.chat_id}</td>
+                        <td><code>{hh}:{mm}</code></td>
+                        <td>{new Date(s.updated_at).toLocaleString()}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={resettingUser === s.telegram_id}
+                            onClick={() => resetUser(s.telegram_id)}
+                          >
+                            {resettingUser === s.telegram_id ? 'Сброс…' : 'Сбросить у пользователя'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
     </div>
