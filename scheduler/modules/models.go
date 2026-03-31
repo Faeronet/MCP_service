@@ -11,6 +11,7 @@ type FromNoteItem struct {
 // FromNoteRequest is POST /schedule/from-note body.
 type FromNoteRequest struct {
 	TelegramUsername string         `json:"telegram_username"`
+	TelegramID       int64          `json:"telegram_id,omitempty"`
 	Items            []FromNoteItem `json:"items"`
 }
 

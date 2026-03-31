@@ -193,46 +193,52 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 		VALUES ($1, $2::jsonb)
 		RETURNING id::text
 	`, req.TelegramUsername, payloadJSON).Scan(&requestID)
-	if req.TelegramUsername == "" {
+	if req.TelegramUsername == "" && req.TelegramID == 0 {
 		res.Accepted = false
-		res.Errors = append(res.Errors, "telegram_username required")
+		res.Errors = append(res.Errors, "telegram_username or telegram_id required")
 		if requestID != "" {
 			_, _ = pool.Exec(ctx, `
 			UPDATE chat.scheduler_note_requests
 			SET accepted = false, errors_json = $2::jsonb
 			WHERE id::text = $1
-		`, requestID, `["telegram_username required"]`)
+		`, requestID, `["telegram_username or telegram_id required"]`)
 		}
 		return res
 	}
-	norm := normalizeTelegramUsername(req.TelegramUsername)
-	if norm == "" {
-		res.Accepted = false
-		res.Errors = append(res.Errors, "telegram_username required")
-		if requestID != "" {
-			_, _ = pool.Exec(ctx, `
-			UPDATE chat.scheduler_note_requests
-			SET accepted = false, errors_json = $2::jsonb
-			WHERE id::text = $1
-		`, requestID, `["telegram_username required"]`)
+	var tgID int64
+	if req.TelegramID != 0 {
+		tgID = req.TelegramID
+	} else {
+		norm := normalizeTelegramUsername(req.TelegramUsername)
+		if norm == "" {
+			res.Accepted = false
+			res.Errors = append(res.Errors, "telegram_username required")
+			if requestID != "" {
+				_, _ = pool.Exec(ctx, `
+				UPDATE chat.scheduler_note_requests
+				SET accepted = false, errors_json = $2::jsonb
+				WHERE id::text = $1
+			`, requestID, `["telegram_username required"]`)
+			}
+			return res
 		}
-		return res
-	}
-	tgID, err := lookupUserTelegramID(ctx, pool, norm)
-	if err != nil {
-		res.Accepted = false
-		res.Errors = append(res.Errors, err.Error())
-		if requestID != "" {
-			var errList []string
-			errList = append(errList, err.Error())
-			b, _ := json.Marshal(errList)
-			_, _ = pool.Exec(ctx, `
-			UPDATE chat.scheduler_note_requests
-			SET accepted = false, errors_json = $2::jsonb
-			WHERE id::text = $1
-		`, requestID, string(b))
+		tgResolved, err := lookupUserTelegramID(ctx, pool, norm)
+		if err != nil {
+			res.Accepted = false
+			res.Errors = append(res.Errors, err.Error())
+			if requestID != "" {
+				var errList []string
+				errList = append(errList, err.Error())
+				b, _ := json.Marshal(errList)
+				_, _ = pool.Exec(ctx, `
+				UPDATE chat.scheduler_note_requests
+				SET accepted = false, errors_json = $2::jsonb
+				WHERE id::text = $1
+			`, requestID, string(b))
+			}
+			return res
 		}
-		return res
+		tgID = tgResolved
 	}
 	chatID := tgID
 

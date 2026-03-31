@@ -20,6 +20,7 @@ import { TrashCan } from '@carbon/icons-react'; // Importing the delete icon
 import { angelNameToRu, timeDataWithRussianNames } from './angelNamesMap';
 
 const TG_USERNAME_STORAGE_KEY = 'schedulerTelegramUsername';
+const NOTE_SCHEDULE_BRIDGE_KEY = '__mcp_schedule_from_note__';
 
 const TimeTable = () => {
   const [timeData, setTimeData] = useState([]);
@@ -94,7 +95,11 @@ const TimeTable = () => {
 
   const downloadJson = () => {
     const data = timeDataWithRussianNames(loadTimeDataFromLocalStorage());
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const payload = {
+      ...data,
+      [NOTE_SCHEDULE_BRIDGE_KEY]: true,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -341,9 +346,6 @@ const TimeTable = () => {
       ) : (
         <div style={{ textAlign: 'center', marginTop: '20px' }}>
           <p>No data found</p>
-          <Button onClick={openScheduleModal} style={{ marginTop: '1rem' }}>
-            Уведомлять в Telegram
-          </Button>
         </div>
       )}
     </div>

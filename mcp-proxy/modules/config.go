@@ -13,6 +13,7 @@ import (
 type Server struct {
 	Pool           *pgxpool.Pool
 	McpReadURL     string
+	SchedulerURL   string
 	VllmBase       string
 	LlmModel         string
 	LlmAPIKey        string
@@ -91,6 +92,7 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 	return &Server{
 		Pool:             pool,
 		McpReadURL:       mcpReadURL,
+		SchedulerURL:     strings.TrimSuffix(config.LoadString("SCHEDULER_INTERNAL_URL", "http://scheduler:8090"), "/"),
 		VllmBase:         llmBase, // Backward-compatible field name.
 		LlmModel:         llmModel,
 		LlmAPIKey:        llmAPIKey,

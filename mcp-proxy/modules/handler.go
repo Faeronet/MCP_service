@@ -48,6 +48,29 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.New().String()
 	}
 
+	// Спец-ветка: JSON из note (скачан и отправлен в TG-бот) -> scheduler.
+	if bridgeReq, matched, err := maybeExtractBridgePayload(req.MessageText); matched {
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: "Неверный JSON для планировщика: " + err.Error()})
+			return
+		}
+		if len(bridgeReq.Items) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: "JSON распознан, но нет валидных строк (нужны validation и time)."})
+			return
+		}
+		resp, fwdErr := s.forwardBridgeToScheduler(ctx, req.UserID, bridgeReq)
+		if fwdErr != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: "Ошибка связи со scheduler: " + fwdErr.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	key := fmt.Sprintf("user:%d", req.UserID)
 	if !s.PerChatLimiter.Allow(key) {
 		logHandler.Warn(ctx, "per-user rate limit", logging.KV{"user_id", req.UserID})
