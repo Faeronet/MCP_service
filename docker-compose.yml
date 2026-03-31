@@ -178,7 +178,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
-      HF_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN:
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8000:8000"
@@ -212,7 +212,6 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
-      HF_TOKEN: ${HF_TOKEN:-}
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
       - "8002:8000"
