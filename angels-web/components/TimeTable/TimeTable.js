@@ -120,11 +120,13 @@ const TimeTable = () => {
     for (const entry of rows) {
       const ru = angelNameToRu(entry.validation);
       const time = String(entry.value || '').trim();
+      const part = String(entry.pageName || '').trim();
       if (!ru || !time) continue;
       items.push({
         validation: ru,
         name: ru,
         time,
+        part,
         message: String(entry.message || '').trim(),
       });
     }

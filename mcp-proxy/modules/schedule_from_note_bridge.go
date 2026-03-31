@@ -16,6 +16,7 @@ type bridgeFromNoteItem struct {
 	Validation string `json:"validation"`
 	Name       string `json:"name"`
 	Time       string `json:"time"`
+	Part       string `json:"part,omitempty"`
 	Message    string `json:"message,omitempty"`
 }
 
@@ -75,6 +76,8 @@ func maybeExtractBridgePayload(rawText string) (bridgeFromNoteRequest, bool, err
 			Value      string `json:"value"`
 			Validation string `json:"validation"`
 			Name       string `json:"name"`
+			PageName   string `json:"pageName"`
+			Part       string `json:"часть"`
 			Message    string `json:"message"`
 			Goal       string `json:"цель"`
 			Show       bool   `json:"show"`
@@ -90,6 +93,7 @@ func maybeExtractBridgePayload(rawText string) (bridgeFromNoteRequest, bool, err
 			Validation: strings.TrimSpace(row.Validation),
 			Name:       strings.TrimSpace(firstNonEmpty(row.Name, row.Validation)),
 			Time:       strings.TrimSpace(row.Value),
+			Part:       strings.TrimSpace(firstNonEmpty(row.Part, row.PageName)),
 			Message:    strings.TrimSpace(firstNonEmpty(row.Goal, row.Message)),
 		})
 	}
@@ -103,6 +107,7 @@ func normalizeBridgeItems(items []bridgeFromNoteItem) []bridgeFromNoteItem {
 		it.Validation = strings.TrimSpace(it.Validation)
 		it.Name = strings.TrimSpace(firstNonEmpty(it.Name, it.Validation))
 		it.Time = strings.TrimSpace(it.Time)
+		it.Part = strings.TrimSpace(it.Part)
 		it.Message = strings.TrimSpace(it.Message)
 		if it.Validation == "" || it.Time == "" {
 			continue

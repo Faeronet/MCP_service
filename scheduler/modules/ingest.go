@@ -163,14 +163,18 @@ func groupItems(items []FromNoteItem) []groupedAngel {
 				Valid:   strings.TrimSpace(it.Validation),
 				TimeHH:  hh,
 				TimeMM:  mm,
+				Part:    strings.TrimSpace(it.Part),
 				Message: strings.TrimSpace(it.Message),
 			}
 		} else {
 			g := seen[key]
+			if g.Part == "" && strings.TrimSpace(it.Part) != "" {
+				g.Part = strings.TrimSpace(it.Part)
+			}
 			if g.Message == "" && strings.TrimSpace(it.Message) != "" {
 				g.Message = strings.TrimSpace(it.Message)
-				seen[key] = g
 			}
+			seen[key] = g
 		}
 	}
 	out := make([]groupedAngel, 0, len(order))
@@ -178,6 +182,28 @@ func groupItems(items []FromNoteItem) []groupedAngel {
 		out = append(out, seen[k])
 	}
 	return out
+}
+
+func applyGoalPartToReminderText(text, goal, part string) string {
+	out := strings.TrimSpace(text)
+	goal = strings.TrimSpace(goal)
+	part = strings.TrimSpace(part)
+
+	// Подстановка маркеров из промпта C.
+	out = strings.ReplaceAll(out, "[цель]", goal)
+	out = strings.ReplaceAll(out, "[часть]", part)
+	out = strings.ReplaceAll(out, "[Цель]", goal)
+	out = strings.ReplaceAll(out, "[Часть]", part)
+
+	// Иногда LLM дописывает "часть" последней строкой — срезаем этот хвост.
+	if part != "" {
+		t := strings.TrimSpace(out)
+		if strings.HasSuffix(t, part) {
+			t = strings.TrimSpace(strings.TrimSuffix(t, part))
+		}
+		out = t
+	}
+	return strings.TrimSpace(out)
 }
 
 // ProcessFromNote validates user, composes text via bot-service, inserts scheduler_notifications.
@@ -291,9 +317,7 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			  (telegram_id, angel_chunk_id, angel_name, reminder_text, request_id)
 			VALUES ($1,$2,$3,$4,$5)
 		`, tgID, ch, displayName, text, reqID)
-		if g.Message != "" {
-			text = strings.TrimSpace(text) + "\n\n" + g.Message
-		}
+		text = applyGoalPartToReminderText(text, g.Message, g.Part)
 		ddmms, errD := loadPhysicalDDMMs(ctx, pool, ch)
 		if errD != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("physical dates: %s: %v", displayName, errD))

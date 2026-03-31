@@ -5,6 +5,7 @@ type FromNoteItem struct {
 	Validation string `json:"validation"`
 	Name       string `json:"name"`
 	Time       string `json:"time"`
+	Part       string `json:"part,omitempty"`
 	Message    string `json:"message,omitempty"`
 }
 
@@ -29,5 +30,6 @@ type groupedAngel struct {
 	Valid   string
 	TimeHH  int
 	TimeMM  int
+	Part    string
 	Message string
 }

@@ -249,7 +249,8 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		b.SendReply(ctx, chatID, debugMessage)
 	}
 	replyToUser := replyText
-	if len(extracted) > 0 {
+	isScheduleBridgeJSON := strings.Contains(extracted, `"__mcp_schedule_from_note__"`)
+	if len(extracted) > 0 && !isScheduleBridgeJSON {
 		preview := extracted
 		if len(preview) > previewLen {
 			preview = preview[:previewLen] + "..."
