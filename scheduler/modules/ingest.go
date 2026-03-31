@@ -251,6 +251,8 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 
 	now := time.Now().In(mskLoc)
 	total := 0
+	// Один ангел на один chunk_id в рамках запроса (дубли в items с разными строками ключа → один проход).
+	seenChunk := make(map[string]struct{})
 
 	for _, g := range groups {
 		nameRU := g.NameRU
@@ -262,6 +264,11 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			res.Errors = append(res.Errors, fmt.Sprintf("angel not in DB: %s", nameRU))
 			continue
 		}
+		if _, dup := seenChunk[ch]; dup {
+			continue
+		}
+		seenChunk[ch] = struct{}{}
+
 		ctxText, errC := loadDocumentContext(ctx, pool, ch)
 		if errC != nil || strings.TrimSpace(ctxText) == "" {
 			res.Errors = append(res.Errors, fmt.Sprintf("no document context for %s", displayName))
@@ -291,7 +298,7 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, mskLoc)
 			nextDay := today.AddDate(0, 0, 1)
 			tSend := time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), g.TimeHH, g.TimeMM, 0, 0, mskLoc)
-			_, errI := pool.Exec(ctx, `
+			ct, errI := pool.Exec(ctx, `
 				INSERT INTO chat.scheduler_notifications
 				  (telegram_id, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
 				VALUES ($1,$2,$3,$4,$5,$6,'pending')
@@ -301,7 +308,9 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 				res.Errors = append(res.Errors, fmt.Sprintf("insert: %v", errI))
 				continue
 			}
-			total++
+			if ct.RowsAffected() > 0 {
+				total++
+			}
 			continue
 		}
 		// Одно уведомление на ангела: ближайшая по времени физическая дата, а не по строке на каждую DD.MM в таблице.
@@ -327,7 +336,7 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			res.Errors = append(res.Errors, fmt.Sprintf("no valid physical dates for %s", displayName))
 			continue
 		}
-		_, errI := pool.Exec(ctx, `
+		ct, errI := pool.Exec(ctx, `
 			INSERT INTO chat.scheduler_notifications
 			  (telegram_id, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
 			VALUES ($1,$2,$3,$4,$5,$6,'pending')
@@ -337,7 +346,9 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			res.Errors = append(res.Errors, fmt.Sprintf("insert: %v", errI))
 			continue
 		}
-		total++
+		if ct.RowsAffected() > 0 {
+			total++
+		}
 	}
 
 	res.ScheduledCount = total
