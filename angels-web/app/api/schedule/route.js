@@ -1,7 +1,7 @@
 const BOT_URL = 'https://t.me/tet_mcp_bot';
 
 export async function POST(request) {
-  const base = (process.env.SCHEDULER_INTERNAL_URL || 'http://127.0.0.1:8083').replace(/\/$/, '');
+  const base = (process.env.SCHEDULER_INTERNAL_URL || 'http://127.0.0.1:8090').replace(/\/$/, '');
   let body;
   try {
     body = await request.text();

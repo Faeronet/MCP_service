@@ -61,7 +61,7 @@ const TimeTable = () => {
           pageName,      // Use saved pageName
           timeKey: keyName,  // Use saved keyName
           value,
-          validation,
+          validation: angelNameToRu(validation),
           message,
           actions: 'delete'
         });
@@ -86,7 +86,7 @@ const TimeTable = () => {
   };
 
   const downloadJson = () => {
-    const data = loadTimeDataFromLocalStorage();
+    const data = timeDataWithRussianNames(loadTimeDataFromLocalStorage());
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -99,12 +99,18 @@ const TimeTable = () => {
   };
 
   const buildSchedulePayloadFromRows = (rows) => {
-    const items = rows.map((entry) => ({
-      validation: String(entry.validation || '').trim(),
-      name: '',
-      time: String(entry.value || '').trim(),
-      message: String(entry.message || '').trim(),
-    })).filter((it) => it.validation && it.time);
+    const items = [];
+    for (const entry of rows) {
+      const ru = angelNameToRu(entry.validation);
+      const time = String(entry.value || '').trim();
+      if (!ru || !time) continue;
+      items.push({
+        validation: ru,
+        name: ru,
+        time,
+        message: String(entry.message || '').trim(),
+      });
+    }
     return items;
   };
 
@@ -216,11 +222,26 @@ const TimeTable = () => {
       )}
       <ComposedModal
         open={scheduleModalOpen}
-        onClose={() => !scheduleSubmitting && setScheduleModalOpen(false)}
+        onClose={() => {
+          if (scheduleSubmitting) return;
+          setScheduleModalOpen(false);
+          setScheduleModalError('');
+        }}
         preventCloseOnClickOutside={scheduleSubmitting}
       >
         <ModalHeader title="Уведомления в Telegram" />
         <ModalBody>
+          {scheduleModalError ? (
+            <div style={{ marginBottom: '1rem' }}>
+              <InlineNotification
+                kind="error"
+                title="Ошибка"
+                subtitle={scheduleModalError}
+                lowContrast
+                onClose={() => setScheduleModalError('')}
+              />
+            </div>
+          ) : null}
           <p style={{ marginBottom: '1rem' }}>
             Укажите тот же username, что и в боте (без @). Должен быть выполнен /start у бота.
           </p>
@@ -307,16 +328,14 @@ const TimeTable = () => {
           </DataTable>
           <div style={{ marginTop: '20px', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <Button onClick={downloadJson}>Download JSON</Button>
-            <Button kind="tertiary" onClick={openScheduleModal}>
-              Отправить в планировщик (Telegram)
-            </Button>
+            <Button onClick={openScheduleModal}>Уведомлять в Telegram</Button>
           </div>
         </TableContainer>
       ) : (
         <div style={{ textAlign: 'center', marginTop: '20px' }}>
           <p>No data found</p>
-          <Button kind="tertiary" onClick={openScheduleModal} style={{ marginTop: '1rem' }}>
-            Отправить в планировщик (Telegram)
+          <Button onClick={openScheduleModal} style={{ marginTop: '1rem' }}>
+            Уведомлять в Telegram
           </Button>
         </div>
       )}
