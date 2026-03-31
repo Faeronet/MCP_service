@@ -21,6 +21,15 @@ func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *Bot
 	var mu sync.Mutex
 
 	plan := func() {
+		// Одноразовые уведомления: через час после отправки удаляем из БД,
+		// чтобы они исчезали и из админ-списков.
+		_, _ = pool.Exec(ctx, `
+			DELETE FROM chat.scheduler_notifications
+			WHERE status = 'sent'
+			  AND sent_at IS NOT NULL
+			  AND sent_at <= (now() - $1::interval)
+		`, "1 hour")
+
 		rows, err := pool.Query(ctx, `
 			SELECT id, telegram_id, chat_id, message_text, send_at
 			FROM chat.scheduler_notifications
