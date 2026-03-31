@@ -62,7 +62,12 @@ const TimeTable = () => {
     // Iterate through each hashed key in localStorage
     Object.entries(data).forEach(([hashedKey, row]) => {
       if (!row || typeof row !== 'object') return;
-      const { pageName, keyName, value, validation, message, show } = row;
+      const pageName = row['часть'] ?? row.pageName ?? '';
+      const keyName = row.keyName ?? '';
+      const value = row.value ?? '';
+      const validation = row.validation ?? '';
+      const message = row['цель'] ?? row.message ?? '';
+      const show = row.show;
       if (show) {
         formattedData.push({
           id: hashedKey,
@@ -186,11 +191,11 @@ const TimeTable = () => {
   };
 
   const headers = [
-    { key: 'pageName', header: 'Страница' },
+    { key: 'pageName', header: 'Часть' },
     { key: 'timeKey', header: 'Время ангела' },
     { key: 'value', header: 'Время уведомления' },
     { key: 'validation', header: 'Имя Ангела' },
-    { key: 'message', header: 'Ситуация' },
+    { key: 'message', header: 'Цель' },
     { key: 'actions', header: 'Удалить' }, // New column for delete action
   ];
 

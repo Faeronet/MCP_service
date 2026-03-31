@@ -76,6 +76,7 @@ func maybeExtractBridgePayload(rawText string) (bridgeFromNoteRequest, bool, err
 			Validation string `json:"validation"`
 			Name       string `json:"name"`
 			Message    string `json:"message"`
+			Goal       string `json:"цель"`
 			Show       bool   `json:"show"`
 		}
 		if err := json.Unmarshal(raw, &row); err != nil {
@@ -89,7 +90,7 @@ func maybeExtractBridgePayload(rawText string) (bridgeFromNoteRequest, bool, err
 			Validation: strings.TrimSpace(row.Validation),
 			Name:       strings.TrimSpace(firstNonEmpty(row.Name, row.Validation)),
 			Time:       strings.TrimSpace(row.Value),
-			Message:    strings.TrimSpace(row.Message),
+			Message:    strings.TrimSpace(firstNonEmpty(row.Goal, row.Message)),
 		})
 	}
 	out.Items = normalizeBridgeItems(items)

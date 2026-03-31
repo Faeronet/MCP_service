@@ -96,10 +96,16 @@ export function angelNameToRu(latin) {
 export function timeDataWithRussianNames(stored) {
   const out = {};
   for (const [id, row] of Object.entries(stored || {})) {
+    const part = row?.['часть'] ?? row?.pageName ?? '';
+    const goal = row?.['цель'] ?? row?.message ?? '';
     out[id] = {
       ...row,
+      часть: part,
+      цель: goal,
       validation: angelNameToRu(row.validation),
     };
+    delete out[id].pageName;
+    delete out[id].message;
   }
   return out;
 }

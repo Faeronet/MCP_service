@@ -35,7 +35,7 @@ const TimeToggle = ({ pageName, keyName, validationName, messageName }) => {
       savedData[storageKey] = {
         ...savedData[storageKey],
         ...data,
-        pageName,  // Save pageName
+        часть: pageName,
         keyName,   // Save keyName
       };
 
@@ -90,13 +90,13 @@ const TimeToggle = ({ pageName, keyName, validationName, messageName }) => {
     }
 
     const validation = validationName;
-    const message = messageName;
+    const цель = messageName;
 
     const data = {
       show: showTime,
       value: timeValue,
       validation,
-      message,
+      цель,
     };
 
     saveToLocalStorage(data);
