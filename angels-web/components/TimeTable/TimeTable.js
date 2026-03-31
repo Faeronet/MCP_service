@@ -17,6 +17,7 @@ import {
   InlineNotification,
 } from '@carbon/react';
 import { TrashCan } from '@carbon/icons-react'; // Importing the delete icon
+import { angelNameToRu, timeDataWithRussianNames } from './angelNamesMap';
 
 const TG_USERNAME_STORAGE_KEY = 'schedulerTelegramUsername';
 
@@ -46,20 +47,26 @@ const TimeTable = () => {
   }, []);
 
   const loadTimeDataFromLocalStorage = () => {
-    const data = localStorage.getItem('timeData');
-    return data ? JSON.parse(data) : {};
+    try {
+      const data = localStorage.getItem('timeData');
+      return data ? JSON.parse(data) : {};
+    } catch {
+      return {};
+    }
   };
 
   const formatDataForTable = (data) => {
     const formattedData = [];
 
     // Iterate through each hashed key in localStorage
-    Object.entries(data).forEach(([hashedKey, { pageName, keyName, value, validation, message, show }]) => {
-      if (show) { // Only include entries with show = true
+    Object.entries(data).forEach(([hashedKey, row]) => {
+      if (!row || typeof row !== 'object') return;
+      const { pageName, keyName, value, validation, message, show } = row;
+      if (show) {
         formattedData.push({
-          id: hashedKey, // Use hashed key as ID
-          pageName,      // Use saved pageName
-          timeKey: keyName,  // Use saved keyName
+          id: hashedKey,
+          pageName,
+          timeKey: keyName,
           value,
           validation: angelNameToRu(validation),
           message,
@@ -127,7 +134,7 @@ const TimeTable = () => {
   };
 
   const handleScheduleSubmit = async () => {
-    const rows = timeData.filter((entry) => entry.value.includes(filterValue));
+    const rows = timeData.filter((entry) => String(entry.value ?? '').includes(filterValue));
     const items = buildSchedulePayloadFromRows(rows);
     const u = telegramUsername.trim().replace(/^@/, '');
     if (!u) {
@@ -205,7 +212,7 @@ const TimeTable = () => {
 
   // Filter the data based on the filterValue
   const filteredData = timeData.filter((entry) =>
-    entry.value.includes(filterValue)
+    String(entry.value ?? '').includes(filterValue)
   );
 
   return (
