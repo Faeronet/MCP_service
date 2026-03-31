@@ -304,6 +304,11 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			total++
 			continue
 		}
+		// Одно уведомление на ангела: ближайшая по времени физическая дата, а не по строке на каждую DD.MM в таблице.
+		var (
+			bestSend time.Time
+			hasBest  bool
+		)
 		for _, raw := range ddmms {
 			day, month, errP := parseDDMM(raw)
 			if errP != nil {
@@ -311,21 +316,28 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			}
 			tSend, errN := nextOccurrenceMSK(day, month, g.TimeHH, g.TimeMM, now)
 			if errN != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("skip bad date %s for %s", raw, displayName))
 				continue
 			}
-			_, errI := pool.Exec(ctx, `
-				INSERT INTO chat.scheduler_notifications
-				  (telegram_id, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
-				VALUES ($1,$2,$3,$4,$5,$6,'pending')
-				ON CONFLICT DO NOTHING
-			`, tgID, chatID, ch, displayName, text, tSend)
-			if errI != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("insert: %v", errI))
-				continue
+			if !hasBest || tSend.Before(bestSend) {
+				bestSend = tSend
+				hasBest = true
 			}
-			total++
 		}
+		if !hasBest {
+			res.Errors = append(res.Errors, fmt.Sprintf("no valid physical dates for %s", displayName))
+			continue
+		}
+		_, errI := pool.Exec(ctx, `
+			INSERT INTO chat.scheduler_notifications
+			  (telegram_id, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
+			VALUES ($1,$2,$3,$4,$5,$6,'pending')
+			ON CONFLICT DO NOTHING
+		`, tgID, chatID, ch, displayName, text, bestSend)
+		if errI != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("insert: %v", errI))
+			continue
+		}
+		total++
 	}
 
 	res.ScheduledCount = total
