@@ -5,7 +5,11 @@ import {
   resetRemindersForUser,
   setRemindersDebugClock,
   setRemindersDisabled,
+  getSchedulerNotifications,
+  cancelSchedulerNotification,
+  deleteSchedulerNotification,
   type ReminderSubscriber,
+  type SchedulerNotification,
 } from '../api'
 import { useToast } from '../context/ToastContext'
 
@@ -17,14 +21,21 @@ export function Reminders() {
   const [isoInput, setIsoInput] = useState('')
   const [subscribers, setSubscribers] = useState<ReminderSubscriber[]>([])
   const [resettingUser, setResettingUser] = useState<number | null>(null)
+  const [schedulerRows, setSchedulerRows] = useState<SchedulerNotification[]>([])
+  const [schedulerActingId, setSchedulerActingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [c, s] = await Promise.all([getRemindersConfig(), getRemindersSubscribers()])
+      const [c, s, sch] = await Promise.all([
+        getRemindersConfig(),
+        getRemindersSubscribers(),
+        getSchedulerNotifications(200),
+      ])
       setDisabled(!!c.disabled)
       setSimulatedAt(c.simulated_at ?? null)
       setSubscribers(Array.isArray(s.subscribers) ? s.subscribers : [])
+      setSchedulerRows(Array.isArray(sch.notifications) ? sch.notifications : [])
     } catch {
       showError('Не удалось загрузить настройки напоминаний')
     } finally {
@@ -89,6 +100,33 @@ export function Reminders() {
     }
   }
 
+  const deactivateSchedulerRow = async (id: string) => {
+    try {
+      setSchedulerActingId(id)
+      await cancelSchedulerNotification(id)
+      success('Уведомление деактивировано (статус cancelled, отправка не пойдёт)')
+      load()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Не удалось деактивировать')
+    } finally {
+      setSchedulerActingId(null)
+    }
+  }
+
+  const removeSchedulerRow = async (id: string) => {
+    if (!window.confirm('Удалить запись из БД безвозвратно?')) return
+    try {
+      setSchedulerActingId(id)
+      await deleteSchedulerNotification(id)
+      success('Запись удалена')
+      load()
+    } catch (e) {
+      showError(e instanceof Error ? e.message : 'Не удалось удалить запись')
+    } finally {
+      setSchedulerActingId(null)
+    }
+  }
+
   if (loading) {
     return <p className="muted">Загрузка…</p>
   }
@@ -98,8 +136,9 @@ export function Reminders() {
       <div className="page-header">
         <h1 className="page-title">Напоминания</h1>
         <p className="text-muted reminders-lead">
-          Глобальный выключатель и симуляция времени в Postgres. Бот читает{' '}
-          <code>chat.reminder_global_config</code> и <code>chat.reminder_debug_clock</code>.
+          Глобальный выключатель и симуляция времени в Postgres. Ниже — запланированные уведомления из{' '}
+          <code>chat.scheduler_notifications</code> (angels-web → scheduler) и подписчики{' '}
+          <code>chat.reminder_subscribers</code> для бота.
         </p>
       </div>
       <div className="content-panel reminders-grid">
@@ -147,6 +186,70 @@ export function Reminders() {
             <li>Уведомление отправляется один раз в день, когда текущее время достигает заданного.</li>
             <li>Если напоминание не приходит — проверьте глобальный выключатель и доступность сервиса бота.</li>
           </ul>
+        </section>
+
+        <section className="content-card reminders-card reminders-card--full">
+          <h2 className="reminders-card-title">Запланированные уведомления (scheduler)</h2>
+          <p className="text-muted" style={{ marginBottom: '1rem' }}>
+            <strong>Деактивировать</strong> — для статусов pending/sending перевод в cancelled (не отправится).{' '}
+            <strong>Удалить</strong> — полное удаление строки из <code>scheduler_notifications</code>.
+          </p>
+          {schedulerRows.length === 0 ? (
+            <p className="text-muted">Нет записей в scheduler_notifications.</p>
+          ) : (
+            <div className="reminders-subs-table-wrap">
+              <table className="reminders-subs-table">
+                <thead>
+                  <tr>
+                    <th>Статус</th>
+                    <th>Отправка (UTC/ISO)</th>
+                    <th>Ангел</th>
+                    <th>Telegram ID</th>
+                    <th>Текст (начало)</th>
+                    <th>Действия</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {schedulerRows.map(n => {
+                    const busy = schedulerActingId === n.id
+                    const canDeactivate = n.status === 'pending' || n.status === 'sending'
+                    return (
+                      <tr key={n.id}>
+                        <td><code>{n.status}</code></td>
+                        <td className="mono" style={{ whiteSpace: 'nowrap' }}>{new Date(n.send_at).toLocaleString()}</td>
+                        <td>{n.angel_name}</td>
+                        <td className="mono">{n.telegram_id}</td>
+                        <td title={n.message_text.length > 200 ? n.message_text : undefined}>
+                          {n.message_text.length > 120 ? `${n.message_text.slice(0, 120)}…` : n.message_text}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              disabled={!canDeactivate || busy}
+                              onClick={() => deactivateSchedulerRow(n.id)}
+                              title={canDeactivate ? 'Перевести в cancelled' : 'Доступно для pending или sending'}
+                            >
+                              {busy ? '…' : 'Деактивировать'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              disabled={busy}
+                              onClick={() => removeSchedulerRow(n.id)}
+                            >
+                              Удалить
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
         <section className="content-card reminders-card reminders-card--full">

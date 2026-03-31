@@ -109,6 +109,8 @@ func main() {
 	mux.Handle("/api/reminders/debug-clock", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersDebugClock)))
 	mux.Handle("/api/reminders/subscribers", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersSubscribers)))
 	mux.Handle("/api/reminders/reset-user", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersResetUser)))
+	mux.Handle("/api/reminders/scheduler-notifications", authMiddleware(handler.JWTSecret, schedulerNotificationsRouter(handler)))
+	mux.Handle("/api/reminders/scheduler-notifications/", authMiddleware(handler.JWTSecret, schedulerNotificationsRouter(handler)))
 	mux.Handle("/api/chat/llm", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ChatLLM)))
 	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
 
@@ -162,6 +164,30 @@ func chatsRouter(h *Handler) http.Handler {
 		if strings.HasSuffix(path, "/messages") && strings.HasPrefix(path, "/api/chats/") {
 			h.GetChatMessages(w, r)
 			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
+func schedulerNotificationsRouter(h *Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimSuffix(r.URL.Path, "/")
+		switch p {
+		case "/api/reminders/scheduler-notifications":
+			if r.Method == http.MethodGet {
+				h.SchedulerNotificationsList(w, r)
+				return
+			}
+		case "/api/reminders/scheduler-notifications/cancel":
+			if r.Method == http.MethodPost {
+				h.SchedulerNotificationCancel(w, r)
+				return
+			}
+		case "/api/reminders/scheduler-notifications/delete":
+			if r.Method == http.MethodPost {
+				h.SchedulerNotificationDelete(w, r)
+				return
+			}
 		}
 		http.NotFound(w, r)
 	})

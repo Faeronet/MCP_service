@@ -101,6 +101,63 @@ export async function resetRemindersForUser(telegramId: number): Promise<void> {
   if (!r.ok) throw new Error('Failed to reset reminders for user')
 }
 
+export interface SchedulerNotification {
+  id: string
+  telegram_id: number
+  chat_id: number
+  angel_chunk_id: string
+  angel_name: string
+  message_text: string
+  send_at: string
+  status: string
+  created_at: string
+  sent_at?: string
+  last_error?: string
+}
+
+export async function getSchedulerNotifications(limit?: number): Promise<{ notifications: SchedulerNotification[] }> {
+  const u = new URL(`${API_URL}/api/reminders/scheduler-notifications`)
+  if (limit != null && limit > 0) u.searchParams.set('limit', String(limit))
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load scheduler notifications')
+  return r.json()
+}
+
+async function throwIfSchedulerNotOk(r: Response, fallback: string): Promise<void> {
+  if (r.ok) return
+  const text = await r.text()
+  let msg = fallback
+  try {
+    const j = JSON.parse(text) as { error?: string }
+    if (typeof j.error === 'string' && j.error.trim()) msg = j.error.trim()
+    else if (text.trim()) msg = text.trim().slice(0, 200)
+  } catch {
+    if (text.trim()) msg = text.trim().slice(0, 200)
+  }
+  throw new Error(msg)
+}
+
+export async function cancelSchedulerNotification(id: string): Promise<void> {
+  const r = await fetch(`${API_URL}/api/reminders/scheduler-notifications/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ id }),
+  })
+  checkAuth(r)
+  await throwIfSchedulerNotOk(r, `Не удалось деактивировать (${r.status})`)
+}
+
+export async function deleteSchedulerNotification(id: string): Promise<void> {
+  const r = await fetch(`${API_URL}/api/reminders/scheduler-notifications/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify({ id }),
+  })
+  checkAuth(r)
+  await throwIfSchedulerNotOk(r, `Не удалось удалить (${r.status})`)
+}
+
 export async function uploadFile(file: File, name?: string): Promise<{ job_id: string; doc_id: string; status: string }> {
   const token = getToken()
   if (!token) throw new Error('NOT_LOGGED_IN')

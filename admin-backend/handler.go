@@ -1049,6 +1049,144 @@ func (h *Handler) RemindersResetUser(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "telegram_id": telegramID})
 }
 
+type schedulerNotificationRow struct {
+	ID           string     `json:"id"`
+	TelegramID   int64      `json:"telegram_id"`
+	ChatID       int64      `json:"chat_id"`
+	AngelChunkID string     `json:"angel_chunk_id"`
+	AngelName    string     `json:"angel_name"`
+	MessageText  string     `json:"message_text"`
+	SendAt       time.Time  `json:"send_at"`
+	Status       string     `json:"status"`
+	CreatedAt    time.Time  `json:"created_at"`
+	SentAt       *time.Time `json:"sent_at,omitempty"`
+	LastError    *string    `json:"last_error,omitempty"`
+}
+
+type schedulerNotifIDBody struct {
+	ID string `json:"id"`
+}
+
+// SchedulerNotificationsList GET /api/reminders/scheduler-notifications
+func (h *Handler) SchedulerNotificationsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if i, err := strconv.Atoi(l); err == nil && i > 0 && i <= 500 {
+			limit = i
+		}
+	}
+	rows, err := h.Pool.Query(ctx, `
+		SELECT id::text, telegram_id, chat_id, angel_chunk_id, angel_name,
+		       message_text, send_at, status, created_at, sent_at, last_error
+		FROM chat.scheduler_notifications
+		ORDER BY send_at DESC, created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		http.Error(w, `{"error":"query"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var list []schedulerNotificationRow
+	for rows.Next() {
+		var x schedulerNotificationRow
+		var sentAt sql.NullTime
+		var lastErr sql.NullString
+		if err := rows.Scan(&x.ID, &x.TelegramID, &x.ChatID, &x.AngelChunkID, &x.AngelName,
+			&x.MessageText, &x.SendAt, &x.Status, &x.CreatedAt, &sentAt, &lastErr); err != nil {
+			continue
+		}
+		if sentAt.Valid {
+			t := sentAt.Time
+			x.SentAt = &t
+		}
+		if lastErr.Valid && strings.TrimSpace(lastErr.String) != "" {
+			s := lastErr.String
+			x.LastError = &s
+		}
+		list = append(list, x)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"notifications": list})
+}
+
+// SchedulerNotificationCancel POST .../cancel — pending → cancelled (не отправится воркером).
+func (h *Handler) SchedulerNotificationCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body schedulerNotifIDBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	idStr := strings.TrimSpace(body.ID)
+	if idStr == "" {
+		http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+		return
+	}
+	if _, err := uuid.Parse(idStr); err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	ct, err := h.Pool.Exec(ctx, `
+		UPDATE chat.scheduler_notifications
+		SET status = 'cancelled'
+		WHERE id = $1::uuid AND status IN ('pending', 'sending')
+	`, idStr)
+	if err != nil {
+		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		http.Error(w, `{"error":"not found or already completed (sent/failed/cancelled)"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "id": idStr, "status": "cancelled"})
+}
+
+// SchedulerNotificationDelete POST .../delete — полное удаление строки.
+func (h *Handler) SchedulerNotificationDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body schedulerNotifIDBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+		return
+	}
+	idStr := strings.TrimSpace(body.ID)
+	if idStr == "" {
+		http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+		return
+	}
+	if _, err := uuid.Parse(idStr); err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	ct, err := h.Pool.Exec(ctx, `DELETE FROM chat.scheduler_notifications WHERE id = $1::uuid`, idStr)
+	if err != nil {
+		http.Error(w, `{"error":"db"}`, http.StatusInternalServerError)
+		return
+	}
+	if ct.RowsAffected() == 0 {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "id": idStr})
+}
+
 // Сессия админского тестового чата: не пересекается с реальными telegram_id.
 const adminLLMTelegramID int64 = 0
 const adminLLMChatID int64 = 0
