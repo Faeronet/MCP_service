@@ -15,7 +15,7 @@ import (
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
-//go:embed prompts/query_extract.txt prompts/answer.txt prompts/reminder_compose.txt
+//go:embed prompts/query_extract.txt prompts/answer.txt prompts/reminder_compose.txt prompts/reminder_compose_d.txt
 var promptFS embed.FS
 
 var log = logging.New("mcp-proxy")
@@ -29,7 +29,7 @@ func main() {
 	}
 	defer pool.Close()
 
-	var promptA, promptB, promptC string
+	var promptA, promptB, promptC, promptD string
 	if raw, err := promptFS.ReadFile("prompts/query_extract.txt"); err == nil {
 		promptA = strings.TrimSpace(string(raw))
 	}
@@ -38,6 +38,9 @@ func main() {
 	}
 	if raw, err := promptFS.ReadFile("prompts/reminder_compose.txt"); err == nil {
 		promptC = strings.TrimSpace(string(raw))
+	}
+	if raw, err := promptFS.ReadFile("prompts/reminder_compose_d.txt"); err == nil {
+		promptD = strings.TrimSpace(string(raw))
 	}
 	if promptA == "" {
 		promptA = "Сформулируй короткий поисковый запрос по сообщению пользователя для поиска в базе. Только запрос, без пояснений."
@@ -48,7 +51,10 @@ func main() {
 	if promptC == "" {
 		promptC = "Кратко напомни пользователю об ангеле по контексту."
 	}
-	srv := modules.NewServer(pool, promptA, promptB, promptC)
+	if promptD == "" {
+		promptD = promptC
+	}
+	srv := modules.NewServer(pool, promptA, promptB, promptC, promptD)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
