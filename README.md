@@ -1,7 +1,6 @@
 # Telegram AI Assistant — Monorepo 
 
 Система: Telegram AI assistant + ingestion pipeline + Qdrant-only retrieval + MCP read/write + Admin Web UI + Admin Backend + observability. Рассчитана на ~500 одновременных пользователей (concurrent chats/requests).
-
 ## Стек
 
 - **Инфраструктура:** MinIO, Postgres, RabbitMQ, Redis, Qdrant, Loki, Promtail, Grafana, vLLM (OpenAI-compatible).
