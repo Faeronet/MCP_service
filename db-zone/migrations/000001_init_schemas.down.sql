@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS core.job_steps;
+DROP TABLE IF EXISTS core.jobs;
+DROP TABLE IF EXISTS core.uploads;
+DROP TABLE IF EXISTS core.versions;
+DROP TABLE IF EXISTS core.docs;
+DROP TABLE IF EXISTS core.users;
+DROP SCHEMA IF EXISTS core;

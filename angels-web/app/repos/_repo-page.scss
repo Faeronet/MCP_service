@@ -1,0 +1,20 @@
+.text-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%); /* Center horizontally and vertically */
+    color: white;
+    text-align: center;
+  }
+
+
+.backgroundContainer {
+  position: relative;
+  min-height: 100vh;  /* Full viewport height */
+  width: 100vw;       /* Full viewport width */
+  background-image: url('/pictures/background3.jpg');  /* Image from public folder */
+  background-size: cover;              /* Cover the entire background */
+  background-position: center;         /* Center the image */
+  background-repeat: no-repeat;        /* No repeat */
+  background-attachment: fixed;        /* Parallax effect */
+}

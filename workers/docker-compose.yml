@@ -1,0 +1,33 @@
+services:
+  ingestion-worker:
+    env_file: .env
+    build:
+      context: .
+      dockerfile: ingestion-worker/Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  attachment-worker:
+    env_file: .env
+    build:
+      context: .
+      dockerfile: attachment-worker/Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  promtail:
+    env_file: .env
+    image: grafana/promtail:3.0.0
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
+    volumes:
+      - ./promtail.yml:/etc/promtail/config.tpl:ro
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

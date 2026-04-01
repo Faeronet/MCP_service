@@ -1,0 +1,42 @@
+{
+  "name": "next-pwa-demo",
+  "version": "0.1.0",
+  "main": "index.html",
+  "bin": "server.js",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "NODE_ENV=production node server.js",
+    "start-cron": "node scripts/sendNotifications.js"
+  },
+  "dependencies": {
+    "@carbon/react": "^1.33.0",
+    "@carbon/themes": "^11.39.0",
+    "@ducanh2912/next-pwa": "^10.2.7",
+    "carbon-components": "^10.58.12",
+    "carbon-components-react": "^8.59.0",
+    "carbon-icons": "^7.0.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "next": "14.2.4",
+    "node-cron": "^3.0.3",
+    "react": "^18",
+    "react-dom": "^18",
+    "sass": "^1.63.6",
+    "sharp": "^0.33.4",
+    "web-push": "^3.6.7"
+  },
+  "resolutions": {
+    "glob": "^9.0.0"
+  },
+  "devDependencies": {
+    "electron": "^31.2.1",
+    "electron-builder": "^24.13.3",
+    "nw": "^0.90.0-sdk"
+  },
+  "window": {
+    "title": "Next PWA Demo",
+    "width": 800,
+    "height": 600
+  }
+}

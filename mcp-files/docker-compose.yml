@@ -1,0 +1,42 @@
+services:
+  mcp-write:
+    env_file: .env
+    build:
+      context: .
+      dockerfile: mcp-write/Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  extract-tool:
+    env_file: .env
+    build:
+      context: ./extract-tool
+      dockerfile: Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8004:8004"
+    restart: unless-stopped
+
+  promtail:
+    env_file: .env
+    image: grafana/promtail:3.0.0
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
+    volumes:
+      - ./promtail.yml:/etc/promtail/config.tpl:ro
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

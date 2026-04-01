@@ -1,0 +1,42 @@
+
+
+.responsiveImage {
+  width: 100%;
+  height: auto;
+}
+
+/* Media query for small screens */
+@media (max-width: 600px) {
+  .responsiveImage {
+    width: 100%;
+    height: auto;
+  }
+}
+
+/* Media query for medium screens */
+@media (min-width: 601px) and (max-width: 1024px) {
+  .responsiveImage {
+    width: 75%;
+    height: auto;
+  }
+}
+
+/* Media query for large screens */
+@media (min-width: 1025px) {
+  .responsiveImage {
+    width: 50%;
+    height: auto;
+  }
+}
+
+.backgroundContainer {
+  position: relative;
+  min-height: 100vh;  /* Full viewport height */
+  width: 100vw;       /* Full viewport width */
+  background-image: url('/pic1.png');  /* Image from public folder */
+  background-size: cover;              /* Cover the entire background */
+  background-position: center;         /* Center the image */
+  background-repeat: no-repeat;        /* No repeat */
+  background-attachment: fixed;        /* Parallax effect */
+}
+

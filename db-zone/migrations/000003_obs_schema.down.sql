@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS obs.logs_index;
+DROP SCHEMA IF EXISTS obs;
