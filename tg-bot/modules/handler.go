@@ -14,8 +14,9 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-const welcomeMessage = "Здравствуй, добрый друг. Я — Ангел Света. Чем могу быть полезен?\n\nесли вы хотите задать дополнительный вопрос по ответу, задавайте ответом на мой ответ"
-const welcomeReplyHintMessage = "вот так"
+const welcomeMessage = "Здравствуй, добрый друг. Я — Ангел Света. Чем могу быть полезен?\n\nДля дополнительной информации напишите /about\n\nЕсли вы хотите задать дополнительный вопрос по ответу, задавайте ответом на мой ответ"
+const welcomeReplyHintMessage = "Вот так"
+const aboutMessage = "Вы можете зайти на сайт 'путь ангелов' и поставить напоминание о любом из известных мне ангелов или об ангеле, который может помочь с вашей проблемой.\n\nпуть ангелов: сайт"
 const chatAlreadyStartedMessage = "Чат уже запущен."
 const chatResetMessage = "Чат сброшен. Отправьте /start для начала."
 const previewLen = 350
@@ -30,6 +31,11 @@ func isStartCommand(text string) bool {
 func isRestartCommand(text string) bool {
 	t := strings.ToLower(strings.TrimSpace(text))
 	return t == "/restart" || t == "/reset" || strings.HasPrefix(t, "/restart ") || strings.HasPrefix(t, "/reset ")
+}
+
+func isAboutCommand(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	return t == "/about" || strings.HasPrefix(t, "/about ")
 }
 
 // SerializedChat runs fn with per-chat serialization and debounce.
@@ -80,6 +86,10 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	}
 	if isStartCommand(text) {
 		b.handleStart(ctx, chatID, userID, msg.Chat.UserName)
+		return
+	}
+	if isAboutCommand(text) {
+		b.SendReply(ctx, chatID, aboutMessage)
 		return
 	}
 	if b.TryHandleReminderDebugCommand(ctx, chatID, text) {

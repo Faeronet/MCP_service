@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"unicode"
 )
 
 type schedulerComposeReq struct {
@@ -106,32 +107,44 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if msgID == 0 {
-		body, _ := json.Marshal(map[string]interface{}{
-			"chat_id": req.ChatID,
-			"text":    text,
-		})
+		chunks := splitTelegramMessageChunks(text, maxTelegramMessageRunes)
+		if len(chunks) == 0 {
+			chunks = []string{text}
+		}
 		url := "https://api.telegram.org/bot" + s.TelegramBotToken + "/sendMessage"
-		httpReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
-		httpReq.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(httpReq)
-		if err != nil {
-			http.Error(w, `{"error":"telegram send failed"}`, http.StatusBadGateway)
-			return
+		for i, chunk := range chunks {
+			body, _ := json.Marshal(map[string]interface{}{
+				"chat_id": req.ChatID,
+				"text":    chunk,
+			})
+			httpReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
+			httpReq.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(httpReq)
+			if err != nil {
+				http.Error(w, `{"error":"telegram send failed"}`, http.StatusBadGateway)
+				return
+			}
+			bb, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				http.Error(w, `{"error":"telegram read failed"}`, http.StatusBadGateway)
+				return
+			}
+			if resp.StatusCode != http.StatusOK {
+				http.Error(w, fmt.Sprintf(`{"error":"telegram %d: %s"}`, resp.StatusCode, strings.TrimSpace(string(bb))), http.StatusBadGateway)
+				return
+			}
+			var telegramOut struct {
+				OK     bool `json:"ok"`
+				Result struct {
+					MessageID int `json:"message_id"`
+				} `json:"result"`
+			}
+			_ = json.Unmarshal(bb, &telegramOut)
+			if i == 0 {
+				msgID = telegramOut.Result.MessageID
+			}
 		}
-		defer resp.Body.Close()
-		bb, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode != http.StatusOK {
-			http.Error(w, fmt.Sprintf(`{"error":"telegram %d: %s"}`, resp.StatusCode, strings.TrimSpace(string(bb))), http.StatusBadGateway)
-			return
-		}
-		var out struct {
-			OK     bool `json:"ok"`
-			Result struct {
-				MessageID int `json:"message_id"`
-			} `json:"result"`
-		}
-		_ = json.Unmarshal(bb, &out)
-		msgID = out.Result.MessageID
 	}
 	out := struct {
 		OK     bool `json:"ok"`
@@ -153,5 +166,109 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "message_id": out.Result.MessageID})
+}
+
+// Лимит Telegram Bot API на одно текстовое сообщение (символы Unicode).
+const maxTelegramMessageRunes = 4096
+
+func splitTelegramMessageChunks(text string, maxRunes int) []string {
+	if maxRunes < 256 {
+		maxRunes = maxTelegramMessageRunes
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	rs := []rune(text)
+	if len(rs) <= maxRunes {
+		return []string{text}
+	}
+
+	var chunks []string
+	var b strings.Builder
+	b.Grow(min(maxRunes*5, 65536))
+	n := 0
+
+	flush := func() {
+		s := strings.TrimRight(b.String(), " \t")
+		if strings.TrimSpace(s) != "" {
+			chunks = append(chunks, s)
+		}
+		b.Reset()
+		n = 0
+	}
+
+	appendRunes := func(r []rune) {
+		b.WriteString(string(r))
+		n += len(r)
+	}
+
+	emitOversizedWord := func(word []rune) {
+		for len(word) > 0 {
+			if n > 0 {
+				flush()
+			}
+			take := maxRunes
+			if take > len(word) {
+				take = len(word)
+			}
+			chunks = append(chunks, string(word[:take]))
+			word = word[take:]
+		}
+	}
+
+	i := 0
+	for i < len(rs) {
+		wsStart := i
+		for i < len(rs) && unicode.IsSpace(rs[i]) {
+			i++
+		}
+		ws := rs[wsStart:i]
+
+		wordStart := i
+		for i < len(rs) && !unicode.IsSpace(rs[i]) {
+			i++
+		}
+		word := rs[wordStart:i]
+
+		for len(ws) > 0 {
+			if n >= maxRunes {
+				flush()
+			}
+			avail := maxRunes - n
+			if avail == 0 {
+				continue
+			}
+			take := len(ws)
+			if take > avail {
+				take = avail
+			}
+			appendRunes(ws[:take])
+			ws = ws[take:]
+		}
+
+		if len(word) == 0 {
+			continue
+		}
+		wlen := len(word)
+		if wlen > maxRunes {
+			emitOversizedWord(word)
+			continue
+		}
+		if n+wlen <= maxRunes {
+			appendRunes(word)
+			continue
+		}
+		flush()
+		appendRunes(word)
+	}
+
+	if n > 0 {
+		s := strings.TrimRight(b.String(), " \t")
+		if strings.TrimSpace(s) != "" {
+			chunks = append(chunks, s)
+		}
+	}
+	return chunks
 }
 

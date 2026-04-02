@@ -3,6 +3,7 @@ package modules
 import (
 	"context"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/telegram-ai-assistant/root/pkg/logging"
@@ -11,7 +12,8 @@ import (
 
 var logTG = logging.New("tg-bot.telegram")
 
-const maxTelegramMessageLen = 4000
+// Лимит Telegram Bot API на одно текстовое сообщение (символы = Unicode code points).
+const maxTelegramMessageRunes = 4096
 
 // SendReply sends a text message to chat (Markdown, fallback to plain).
 func (b *Bot) SendReply(ctx context.Context, chatID int64, text string) {
@@ -72,7 +74,8 @@ func (b *Bot) DeleteChatMessage(ctx context.Context, chatID int64, messageID int
 	}
 }
 
-// SendLongReply sends text in one or more chunks; if typingMsgID > 0, edits it to first chunk. Returns first message ID.
+// SendLongReply шлёт ответ серией сообщений (лимит Telegram 4096 символов на сообщение), разбивая по границам слов.
+// Без Markdown (иначе _, *, ` ломают разбор сущностей). Слова длиннее лимита (URL и т.п.) режутся по символам.
 func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, text string) int {
 	if b.Bot == nil {
 		return 0
@@ -81,20 +84,20 @@ func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, 
 	if text == "" {
 		text = "Пустой ответ от сервиса. Повторите запрос."
 	}
-	chunks := splitMessageChunks(text, maxTelegramMessageLen)
+	chunks := splitTelegramMessageChunks(text, maxTelegramMessageRunes)
 	if len(chunks) == 0 {
 		return 0
 	}
 	var firstMsgID int
 	for i, ch := range chunks {
 		if i == 0 && typingMsgID > 0 {
-			if b.EditMessageText(ctx, chatID, typingMsgID, ch) {
+			if b.editMessageTextPlain(ctx, chatID, typingMsgID, ch) {
 				firstMsgID = typingMsgID
 			} else {
-				firstMsgID = b.SendReplyWithID(ctx, chatID, ch)
+				firstMsgID = b.sendPlainMessageWithID(ctx, chatID, ch)
 			}
 		} else {
-			id := b.SendReplyWithID(ctx, chatID, ch)
+			id := b.sendPlainMessageWithID(ctx, chatID, ch)
 			if firstMsgID == 0 {
 				firstMsgID = id
 			}
@@ -103,35 +106,137 @@ func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, 
 	return firstMsgID
 }
 
-func splitMessageChunks(text string, maxLen int) []string {
-	if len(text) <= maxLen {
+func (b *Bot) sendPlainMessageWithID(ctx context.Context, chatID int64, text string) int {
+	if b.Bot == nil {
+		return 0
+	}
+	msg := tgbotapi.NewMessage(chatID, text)
+	sent, err := b.Bot.Send(msg)
+	if err != nil {
+		logTG.Warn(ctx, "send plain chunk", logging.KV{"error", err}, logging.KV{"chat_id", chatID}, logging.KV{"len", utf8.RuneCountInString(text)})
+		return 0
+	}
+	return sent.MessageID
+}
+
+func (b *Bot) editMessageTextPlain(ctx context.Context, chatID int64, messageID int, text string) bool {
+	if b.Bot == nil || messageID <= 0 {
+		return false
+	}
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	_, err := b.Bot.Send(edit)
+	if err != nil {
+		logTG.Warn(ctx, "edit message plain", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
+		return false
+	}
+	return true
+}
+
+// splitTelegramMessageChunks режет текст на части ≤ maxRunes (лимит Telegram), по возможности между словами
+// (слово = непрерывный фрагмент без unicode.IsSpace). Переносы строк сохраняются; хвостовые пробел/таб у чанка срезаются.
+// Если одно «слово» длиннее лимита (URL, текст без пробелов) — режется по рунам.
+func splitTelegramMessageChunks(text string, maxRunes int) []string {
+	if maxRunes < 256 {
+		maxRunes = maxTelegramMessageRunes
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	rs := []rune(text)
+	if len(rs) <= maxRunes {
 		return []string{text}
 	}
+
 	var chunks []string
-	for len(text) > 0 {
-		if len(text) <= maxLen {
-			chunks = append(chunks, text)
-			break
+	var b strings.Builder
+	b.Grow(min(maxRunes*5, 65536))
+	n := 0
+
+	flush := func() {
+		s := strings.TrimRight(b.String(), " \t")
+		if strings.TrimSpace(s) != "" {
+			chunks = append(chunks, s)
 		}
-		cut := text[:maxLen]
-		for len(cut) > 0 && !utf8.RuneStart(cut[len(cut)-1]) {
-			cut = cut[:len(cut)-1]
+		b.Reset()
+		n = 0
+	}
+
+	appendRunes := func(r []rune) {
+		b.WriteString(string(r))
+		n += len(r)
+	}
+
+	emitOversizedWord := func(word []rune) {
+		for len(word) > 0 {
+			if n > 0 {
+				flush()
+			}
+			take := maxRunes
+			if take > len(word) {
+				take = len(word)
+			}
+			chunks = append(chunks, string(word[:take]))
+			word = word[take:]
 		}
-		lastNewline := strings.LastIndex(cut, "\n")
-		if lastNewline > maxLen/2 {
-			cut = text[:lastNewline+1]
+	}
+
+	i := 0
+	for i < len(rs) {
+		wsStart := i
+		for i < len(rs) && unicode.IsSpace(rs[i]) {
+			i++
 		}
-		chunks = append(chunks, strings.TrimSpace(cut))
-		text = text[len(cut):]
-		for len(text) > 0 && !utf8.RuneStart(text[0]) {
-			text = text[1:]
+		ws := rs[wsStart:i]
+
+		wordStart := i
+		for i < len(rs) && !unicode.IsSpace(rs[i]) {
+			i++
 		}
-		text = strings.TrimLeft(text, " \n")
+		word := rs[wordStart:i]
+
+		for len(ws) > 0 {
+			if n >= maxRunes {
+				flush()
+			}
+			avail := maxRunes - n
+			if avail == 0 {
+				continue
+			}
+			take := len(ws)
+			if take > avail {
+				take = avail
+			}
+			appendRunes(ws[:take])
+			ws = ws[take:]
+		}
+
+		if len(word) == 0 {
+			continue
+		}
+		wlen := len(word)
+		if wlen > maxRunes {
+			emitOversizedWord(word)
+			continue
+		}
+		if n+wlen <= maxRunes {
+			appendRunes(word)
+			continue
+		}
+		flush()
+		appendRunes(word)
+	}
+
+	if n > 0 {
+		s := strings.TrimRight(b.String(), " \t")
+		if strings.TrimSpace(s) != "" {
+			chunks = append(chunks, s)
+		}
 	}
 	return chunks
 }
 
-// EditMessageText edits an existing message. Returns false on error.
+// EditMessageText edits an existing message (Markdown, fallback plain). Для коротких системных сообщений.
 func (b *Bot) EditMessageText(ctx context.Context, chatID int64, messageID int, text string) bool {
 	if b.Bot == nil || messageID <= 0 {
 		return false
