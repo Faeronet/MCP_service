@@ -94,31 +94,51 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	body, _ := json.Marshal(map[string]interface{}{
-		"chat_id": req.ChatID,
-		"text":    text,
-	})
-	url := "https://api.telegram.org/bot" + s.TelegramBotToken + "/sendMessage"
-	httpReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		http.Error(w, `{"error":"telegram send failed"}`, http.StatusBadGateway)
-		return
+	angelName := strings.TrimSpace(req.AngelName)
+	imgPath := ResolveAngelImagePath("", angelName)
+	var msgID int
+	if imgPath != "" {
+		var photoErr error
+		msgID, photoErr = s.TelegramSendPhoto(r.Context(), req.ChatID, imgPath, text)
+		if photoErr != nil || msgID == 0 {
+			msgID = 0
+		}
 	}
-	defer resp.Body.Close()
-	bb, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, fmt.Sprintf(`{"error":"telegram %d: %s"}`, resp.StatusCode, strings.TrimSpace(string(bb))), http.StatusBadGateway)
-		return
+	if msgID == 0 {
+		body, _ := json.Marshal(map[string]interface{}{
+			"chat_id": req.ChatID,
+			"text":    text,
+		})
+		url := "https://api.telegram.org/bot" + s.TelegramBotToken + "/sendMessage"
+		httpReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			http.Error(w, `{"error":"telegram send failed"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		bb, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			http.Error(w, fmt.Sprintf(`{"error":"telegram %d: %s"}`, resp.StatusCode, strings.TrimSpace(string(bb))), http.StatusBadGateway)
+			return
+		}
+		var out struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				MessageID int `json:"message_id"`
+			} `json:"result"`
+		}
+		_ = json.Unmarshal(bb, &out)
+		msgID = out.Result.MessageID
 	}
-	var out struct {
+	out := struct {
 		OK     bool `json:"ok"`
 		Result struct {
 			MessageID int `json:"message_id"`
 		} `json:"result"`
-	}
-	_ = json.Unmarshal(bb, &out)
+	}{}
+	out.Result.MessageID = msgID
 	if out.Result.MessageID != 0 {
 		// Best-effort: сохраняем напоминание в память чата, чтобы reply-вопрос шёл по его контексту.
 		_ = s.SaveSchedulerReminderMemory(
