@@ -36,9 +36,12 @@ if [[ "${1:-up}" == "down" ]]; then
   zone log-zone down --remove-orphans
   zone file-orchestrator down --remove-orphans
   zone db-zone down --remove-orphans
+  docker network rm mcp_stack 2>/dev/null || true
   echo "Все зоны остановлены."
   exit 0
 fi
+
+docker network create mcp_stack 2>/dev/null || true
 
 zone db-zone up -d postgres redis qdrant
 wait_tcp 127.0.0.1 5432 postgres

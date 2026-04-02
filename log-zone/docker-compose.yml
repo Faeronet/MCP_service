@@ -1,13 +1,20 @@
+networks:
+  mcp_stack:
+    external: true
+
 services:
   loki:
     env_file: .env
     image: grafana/loki:2.9.2
+    container_name: mcp_loki
+    networks:
+      - mcp_stack
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
       - ./loki.yaml:/etc/loki/local-config.yaml
       - loki_data:/loki
     ports:
-      - "3100:3100"
+      - "0.0.0.0:3100:3100"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3100/ready || exit 1"]
       interval: 10s
@@ -18,6 +25,9 @@ services:
   grafana:
     env_file: .env
     image: grafana/grafana:10.2.2
+    container_name: mcp_grafana
+    networks:
+      - mcp_stack
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
@@ -34,20 +44,36 @@ services:
       - grafana_data:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
     ports:
-      - "3001:3000"
+      - "0.0.0.0:3001:3000"
     depends_on:
-      - loki
+      loki:
+        condition: service_healthy
     restart: unless-stopped
+
+  wait-postgres:
+    image: postgres:16-alpine
+    networks:
+      - mcp_stack
+    env_file: .env
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'until pg_isready -h mcp_postgres -U "$${POSTGRES_USER:-postgres}"; do sleep 1; done'
+    restart: "no"
 
   log-indexer:
     env_file: .env
     build:
       context: .
       dockerfile: log-indexer/Dockerfile
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    container_name: mcp_log_indexer
+    networks:
+      - mcp_stack
     depends_on:
-      loki: { condition: service_healthy }
+      wait-postgres:
+        condition: service_completed_successfully
+      loki:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

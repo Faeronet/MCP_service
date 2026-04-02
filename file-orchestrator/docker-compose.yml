@@ -1,7 +1,14 @@
+networks:
+  mcp_stack:
+    external: true
+
 services:
   minio:
     env_file: .env
     image: minio/minio:latest
+    container_name: mcp_minio
+    networks:
+      - mcp_stack
     command: server /data
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -10,8 +17,8 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "0.0.0.0:9000:9000"
+      - "0.0.0.0:9001:9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
@@ -23,12 +30,15 @@ services:
   rabbitmq:
     env_file: .env
     image: rabbitmq:3-management-alpine
+    container_name: mcp_rabbitmq
+    networks:
+      - mcp_stack
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "0.0.0.0:5672:5672"
+      - "0.0.0.0:15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s

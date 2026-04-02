@@ -1,18 +1,25 @@
+networks:
+  mcp_stack:
+    external: true
+
 services:
   angels-web:
     env_file: .env
     build:
       context: .
       dockerfile: Dockerfile
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    container_name: mcp_angels_web
+    networks:
+      - mcp_stack
     ports:
-      - "3000:3000"
+      - "0.0.0.0:3000:3000"
     restart: unless-stopped
 
   promtail:
     env_file: .env
     image: grafana/promtail:3.0.0
+    networks:
+      - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
@@ -21,6 +28,4 @@ services:
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped

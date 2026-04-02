@@ -1,15 +1,34 @@
+networks:
+  mcp_stack:
+    external: true
+
 services:
+  wait-postgres:
+    image: postgres:16-alpine
+    networks:
+      - mcp_stack
+    env_file: .env
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'until pg_isready -h mcp_postgres -U "$${POSTGRES_USER:-postgres}"; do sleep 1; done'
+    restart: "no"
+
   admin-backend:
     env_file: .env
     build:
       context: .
       dockerfile: admin-backend/Dockerfile
+    container_name: mcp_admin_backend
+    networks:
+      - mcp_stack
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
-      - "8080:8080"
+      - "0.0.0.0:8080:8080"
+    depends_on:
+      wait-postgres:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
       interval: 10s
@@ -25,8 +44,10 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
         VITE_MONITOR_POLL_MS: ${VITE_MONITOR_POLL_MS:-30000}
+    networks:
+      - mcp_stack
     ports:
-      - "5173:80"
+      - "0.0.0.0:5173:80"
     depends_on:
       - admin-backend
     restart: unless-stopped
@@ -34,17 +55,23 @@ services:
   adminer:
     env_file: .env
     image: adminer:4
+    container_name: mcp_adminer
+    networks:
+      - mcp_stack
     environment:
-      ADMINER_DEFAULT_SERVER: ${POSTGRES_HOST:-host.docker.internal}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      ADMINER_DEFAULT_SERVER: ${POSTGRES_HOST:-mcp_postgres}
+    depends_on:
+      wait-postgres:
+        condition: service_completed_successfully
     ports:
-      - "8089:8080"
+      - "0.0.0.0:8089:8080"
     restart: unless-stopped
 
   promtail:
     env_file: .env
     image: grafana/promtail:3.0.0
+    networks:
+      - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
@@ -53,6 +80,4 @@ services:
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped

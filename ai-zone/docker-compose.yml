@@ -1,8 +1,15 @@
+networks:
+  mcp_stack:
+    external: true
+
 services:
   vllm:
     profiles: [vllm]
     env_file: .env
     image: vllm/vllm-openai:v0.16.0
+    container_name: mcp_vllm
+    networks:
+      - mcp_stack
     command:
       - --model
       - ${VLLM_MODEL_NAME:-Qwen/Qwen3-14B-AWQ}
@@ -30,10 +37,8 @@ services:
       HF_HOME: /models
       HF_TOKEN: ${HF_TOKEN:-}
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "0.0.0.0:8000:8000"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)\""]
       interval: 15s
@@ -46,6 +51,9 @@ services:
     profiles: [vllm]
     env_file: .env
     image: vllm/vllm-openai:v0.16.0
+    container_name: mcp_vllm_embed
+    networks:
+      - mcp_stack
     command: ["--model", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.30"]
     deploy:
       resources:
@@ -64,10 +72,8 @@ services:
       LD_LIBRARY_PATH: "/usr/lib/x86_64-linux-gnu:/usr/local/lib"
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
-      - "8002:8000"
+      - "0.0.0.0:8002:8000"
     restart: unless-stopped
 
   rerank:
@@ -76,6 +82,9 @@ services:
     build:
       context: ./reranker
       dockerfile: Dockerfile
+    container_name: mcp_rerank
+    networks:
+      - mcp_stack
     environment:
       PORT: "8787"
       MAX_LENGTH: "512"
@@ -92,15 +101,15 @@ services:
             - driver: nvidia
               device_ids: ['0']
               capabilities: [gpu]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
-      - "8787:8787"
+      - "0.0.0.0:8787:8787"
     restart: unless-stopped
 
   promtail:
     env_file: .env
     image: grafana/promtail:3.0.0
+    networks:
+      - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
@@ -109,6 +118,4 @@ services:
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped

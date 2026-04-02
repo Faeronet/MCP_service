@@ -1,13 +1,32 @@
+networks:
+  mcp_stack:
+    external: true
+
 services:
+  wait-postgres:
+    image: postgres:16-alpine
+    networks:
+      - mcp_stack
+    env_file: .env
+    entrypoint:
+      - /bin/sh
+      - -c
+      - 'until pg_isready -h mcp_postgres -U "$${POSTGRES_USER:-postgres}"; do sleep 1; done'
+    restart: "no"
+
   mcp-read:
     env_file: .env
     build:
       context: .
       dockerfile: mcp-read/Dockerfile
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    container_name: mcp_read
+    networks:
+      - mcp_stack
     ports:
-      - "8082:8082"
+      - "0.0.0.0:8082:8082"
+    depends_on:
+      wait-postgres:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8082/healthz"]
       interval: 10s
@@ -20,17 +39,21 @@ services:
     build:
       context: .
       dockerfile: mcp-proxy/Dockerfile
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    container_name: mcp_proxy
+    networks:
+      - mcp_stack
     ports:
-      - "8083:8083"
+      - "0.0.0.0:8083:8083"
     depends_on:
-      mcp-read: { condition: service_started }
+      mcp-read:
+        condition: service_started
     restart: unless-stopped
 
   promtail:
     env_file: .env
     image: grafana/promtail:3.0.0
+    networks:
+      - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
@@ -39,6 +62,4 @@ services:
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     restart: unless-stopped

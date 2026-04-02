@@ -1,7 +1,16 @@
+# Общая сеть mcp_stack создаётся в ./stack-up.sh (docker network create).
+# Снаружи — 0.0.0.0:порт; между контейнерами — имена mcp_postgres, mcp_redis, mcp_qdrant.
+networks:
+  mcp_stack:
+    external: true
+
 services:
   postgres:
     env_file: .env
     image: postgres:16-alpine
+    container_name: mcp_postgres
+    networks:
+      - mcp_stack
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -9,9 +18,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "0.0.0.0:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-postgres}\""]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -20,24 +29,34 @@ services:
   migrate:
     env_file: .env
     image: postgres:16-alpine
+    container_name: mcp_migrate
+    networks:
+      - mcp_stack
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      PGHOST: postgres
+      PGHOST: mcp_postgres
       PGUSER: ${POSTGRES_USER:-postgres}
       PGDATABASE: ${POSTGRES_DB:-assistant}
     volumes:
-      - ./migrations:/migrations:ro
+      - type: bind
+        source: ./migrations
+        target: /migrations
+        read_only: true
     command: >
       sh -c "for f in /migrations/*.up.sql; do [ -f \"$$f\" ] || continue; echo Applying $$f...; psql -f \"$$f\" || true; done"
     depends_on:
-      postgres: { condition: service_healthy }
+      postgres:
+        condition: service_healthy
     restart: "no"
 
   redis:
     env_file: .env
     image: redis:7-alpine
+    container_name: mcp_redis
+    networks:
+      - mcp_stack
     ports:
-      - "6379:6379"
+      - "0.0.0.0:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -48,10 +67,13 @@ services:
   qdrant:
     env_file: .env
     image: qdrant/qdrant:latest
+    container_name: mcp_qdrant
+    networks:
+      - mcp_stack
     volumes:
       - qdrant_data:/qdrant/storage
     ports:
-      - "6333:6333"
+      - "0.0.0.0:6333:6333"
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
     restart: unless-stopped
