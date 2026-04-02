@@ -26,18 +26,22 @@ function cycleSort(current: SortDir): SortDir {
 
 const PAGE_SIZE = 50
 
-const fmtMSKhm = new Intl.DateTimeFormat('ru-RU', {
+/** Дата и время по Москве: ДД.ММ.ГГГГ, чч:мм */
+const fmtMSKDateTime = new Intl.DateTimeFormat('ru-RU', {
   timeZone: 'Europe/Moscow',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
 })
 
-function formatLogTimeMSK(ts: unknown): string {
+function formatLogDateTimeMSK(ts: unknown): string {
   if (ts == null || ts === '') return ''
   const d = new Date(String(ts))
   if (Number.isNaN(d.getTime())) return String(ts)
-  return fmtMSKhm.format(d)
+  return fmtMSKDateTime.format(d)
 }
 
 export function Logs() {
@@ -114,9 +118,9 @@ export function Logs() {
               <table className="data-table data-table-header">
                 <thead>
                   <tr>
-                    <th style={{ width: '14%' }}>
-                      <button type="button" className="th-sort-btn" onClick={onTimeSortClick} title="Сортировка по времени">
-                        Time {timeSort === 'asc' && '↑'} {timeSort === 'desc' && '↓'}
+                    <th style={{ width: '18%' }}>
+                      <button type="button" className="th-sort-btn" onClick={onTimeSortClick} title="Сортировка по времени (МСК)">
+                        Time (МСК) {timeSort === 'asc' && '↑'} {timeSort === 'desc' && '↓'}
                       </button>
                     </th>
                     <th style={{ width: '8%' }}>
@@ -126,7 +130,7 @@ export function Logs() {
                     </th>
                     <th style={{ width: '12%' }}>Service</th>
                     <th style={{ width: '12%' }}>Request ID</th>
-                    <th style={{ width: '54%' }}>Message</th>
+                    <th style={{ width: '50%' }}>Message</th>
                   </tr>
                 </thead>
               </table>
@@ -144,8 +148,8 @@ export function Logs() {
                   <tbody>
                     {sortedLogs.map((l: Record<string, unknown>, i: number) => (
                       <tr key={i}>
-                        <td style={{ width: '14%' }} title={l.ts ? new Date(String(l.ts)).toISOString() : ''}>
-                          {formatLogTimeMSK(l.ts)}
+                        <td style={{ width: '18%' }} title={l.ts ? new Date(String(l.ts)).toISOString() : ''}>
+                          {formatLogDateTimeMSK(l.ts)}
                         </td>
                         <td style={{ width: '8%' }}>
                           <span className={`badge ${levelClass(String(l.level || ''))}`}>
@@ -154,7 +158,7 @@ export function Logs() {
                         </td>
                         <td style={{ width: '12%' }} className="mono">{String(l.service || '')}</td>
                         <td style={{ width: '12%' }} className="mono">{String(l.request_id || '')}</td>
-                        <td style={{ width: '54%', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(l.message || '')}</td>
+                        <td style={{ width: '50%', maxWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{String(l.message || '')}</td>
                       </tr>
                     ))}
                   </tbody>

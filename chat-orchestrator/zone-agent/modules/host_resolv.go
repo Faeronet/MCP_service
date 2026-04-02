@@ -8,6 +8,27 @@ import (
 	"strings"
 )
 
+// pruneDockerBuildCacheBeforeResolv сбрасывает кэш Docker BuildKit перед сменой DNS, чтобы сборки заново резолвили реестр.
+// Отключить: ZONE_AGENT_SKIP_DOCKER_BUILDER_PRUNE=1
+func (s *server) pruneDockerBuildCacheBeforeResolv(ctx context.Context, logs *strings.Builder) {
+	if strings.TrimSpace(os.Getenv("ZONE_AGENT_SKIP_DOCKER_BUILDER_PRUNE")) == "1" {
+		logs.WriteString("docker builder prune: skip (ZONE_AGENT_SKIP_DOCKER_BUILDER_PRUNE=1)\n")
+		return
+	}
+	out, err := runCmd(ctx, "docker", "builder", "prune", "-af")
+	if len(out) > 0 {
+		_, _ = logs.Write(out)
+		if out[len(out)-1] != '\n' {
+			logs.WriteByte('\n')
+		}
+	}
+	if err != nil {
+		logs.WriteString("docker builder prune: " + err.Error() + "\n")
+		return
+	}
+	logs.WriteString("docker builder prune: ok\n")
+}
+
 // patchHostResolvForBuild edits the host's /etc/resolv.conf (bind-mount that path in compose: /etc/resolv.conf:/etc/resolv.conf:rw).
 // Fixes Docker build/BuildKit resolving registry-1.docker.io: loopback stubs (127.0.0.53, 127.0.0.11, ::1), tabs/spaces, optional prepend.
 func (s *server) patchHostResolvForBuild(ctx context.Context, logs *strings.Builder) {
@@ -15,6 +36,8 @@ func (s *server) patchHostResolvForBuild(ctx context.Context, logs *strings.Buil
 		logs.WriteString("resolv: skip (ZONE_AGENT_SKIP_RESOLV_PATCH=1)\n")
 		return
 	}
+
+	s.pruneDockerBuildCacheBeforeResolv(ctx, logs)
 
 	path := strings.TrimSpace(os.Getenv("ZONE_AGENT_HOST_RESOLV_PATH"))
 	if path == "" {
