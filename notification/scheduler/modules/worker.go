@@ -37,7 +37,7 @@ func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *Bot
 		`, "1 hour")
 
 		rows, err := pool.Query(ctx, `
-			SELECT id, telegram_id, chat_id, message_text, send_at
+			SELECT id, telegram_id, chat_id, message_text, send_at, angel_chunk_id, angel_name
 			FROM chat.scheduler_notifications
 			WHERE status = 'pending'
 			  AND send_at <= (now() + interval '10 minutes')
@@ -51,9 +51,9 @@ func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *Bot
 		for rows.Next() {
 			var id string
 			var tg, chat int64
-			var text string
+			var text, angelChunkID, angelName string
 			var sendAt time.Time
-			if rows.Scan(&id, &tg, &chat, &text, &sendAt) != nil {
+			if rows.Scan(&id, &tg, &chat, &text, &sendAt, &angelChunkID, &angelName) != nil {
 				continue
 			}
 			mu.Lock()
@@ -68,7 +68,7 @@ func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *Bot
 			if delay < 0 {
 				delay = 0
 			}
-			go func(id string, telegramID, chatID int64, text string, delay time.Duration) {
+			go func(id string, telegramID, chatID int64, text, angelChunkID, angelName string, delay time.Duration) {
 				timer := time.NewTimer(delay)
 				defer timer.Stop()
 				select {
@@ -78,12 +78,12 @@ func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *Bot
 					mu.Unlock()
 					return
 				case <-timer.C:
-					dispatchOne(ctx, pool, bot, id, telegramID, chatID, text)
+					dispatchOne(ctx, pool, bot, id, telegramID, chatID, text, angelChunkID, angelName)
 					mu.Lock()
 					delete(scheduled, id)
 					mu.Unlock()
 				}
-			}(id, tg, chat, text, delay)
+			}(id, tg, chat, text, angelChunkID, angelName, delay)
 		}
 	}
 
@@ -98,7 +98,7 @@ func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *Bot
 	}
 }
 
-func dispatchOne(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, id string, telegramID, chatID int64, text string) {
+func dispatchOne(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, id string, telegramID, chatID int64, text, angelChunkID, angelName string) {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return
@@ -120,7 +120,7 @@ func dispatchOne(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, id str
 		return
 	}
 
-	err = bot.Deliver(context.Background(), telegramID, chatID, text)
+	err = bot.Deliver(context.Background(), telegramID, chatID, text, angelChunkID, angelName)
 	if err != nil {
 		// err может не сериализоваться корректно в structured logging, поэтому логируем строку.
 		workerLog.Warn(ctx, "deliver failed", logging.KV{"id", id}, logging.KV{"error", err.Error()})

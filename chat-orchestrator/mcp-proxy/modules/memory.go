@@ -191,3 +191,50 @@ func (s *Server) TrimSessionMessagesIfNeeded(ctx context.Context, sessionID uuid
 		logMemory.Info(ctx, "trimmed session messages", logging.KV{"session_id", sessionID}, logging.KV{"deleted", res.RowsAffected()})
 	}
 }
+
+func (s *Server) ensureSession(ctx context.Context, telegramID, chatID int64) (uuid.UUID, error) {
+	var sessionID uuid.UUID
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO chat.sessions (telegram_id, chat_id, last_active)
+		VALUES ($1, $2, now())
+		ON CONFLICT (telegram_id, chat_id)
+		DO UPDATE SET last_active = now()
+		RETURNING id
+	`, telegramID, chatID).Scan(&sessionID)
+	return sessionID, err
+}
+
+// SaveSchedulerReminderMemory writes delivered scheduler reminder to chat memory.
+func (s *Server) SaveSchedulerReminderMemory(ctx context.Context, telegramID, chatID int64, telegramMessageID int, text, angelChunkID string) error {
+	if telegramID == 0 || chatID == 0 || telegramMessageID == 0 || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	sessionID, err := s.ensureSession(ctx, telegramID, chatID)
+	if err != nil {
+		return err
+	}
+	msgID, err := s.AppendMessageWithReply(ctx, sessionID, "assistant", strings.TrimSpace(text), 0)
+	if err != nil {
+		return err
+	}
+	if err := s.UpdateMessageTelegramID(ctx, msgID, telegramMessageID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(angelChunkID) == "" {
+		return nil
+	}
+	var contextText string
+	if err := s.Pool.QueryRow(ctx, `
+		SELECT context
+		FROM core.document_context
+		WHERE chunk_id = $1
+		LIMIT 1
+	`, strings.TrimSpace(angelChunkID)).Scan(&contextText); err != nil {
+		return nil
+	}
+	contextText = strings.TrimSpace(contextText)
+	if contextText == "" {
+		return nil
+	}
+	return s.SaveAnswerContext(ctx, sessionID, msgID, contextText, "")
+}

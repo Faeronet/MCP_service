@@ -17,10 +17,12 @@ type schedulerComposeReq struct {
 }
 
 type schedulerDeliverReq struct {
-	TelegramID int64  `json:"telegram_id"`
-	ChatID     int64  `json:"chat_id"`
-	Text       string `json:"text"`
-	RequestID  string `json:"request_id"`
+	TelegramID  int64  `json:"telegram_id"`
+	ChatID      int64  `json:"chat_id"`
+	Text        string `json:"text"`
+	AngelChunkID string `json:"angel_chunk_id,omitempty"`
+	AngelName   string `json:"angel_name,omitempty"`
+	RequestID   string `json:"request_id"`
 }
 
 func (s *Server) schedulerInternalAuthorized(r *http.Request) bool {
@@ -117,6 +119,17 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 		} `json:"result"`
 	}
 	_ = json.Unmarshal(bb, &out)
+	if out.Result.MessageID != 0 {
+		// Best-effort: сохраняем напоминание в память чата, чтобы reply-вопрос шёл по его контексту.
+		_ = s.SaveSchedulerReminderMemory(
+			r.Context(),
+			req.TelegramID,
+			req.ChatID,
+			out.Result.MessageID,
+			text,
+			req.AngelChunkID,
+		)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "message_id": out.Result.MessageID})
 }

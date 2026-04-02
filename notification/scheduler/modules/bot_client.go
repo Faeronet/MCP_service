@@ -36,9 +36,11 @@ type composeRes struct {
 }
 
 type deliverReq struct {
-	TelegramID int64  `json:"telegram_id"`
-	ChatID     int64  `json:"chat_id"`
-	Text       string `json:"text"`
+	TelegramID   int64  `json:"telegram_id"`
+	ChatID       int64  `json:"chat_id"`
+	Text         string `json:"text"`
+	AngelChunkID string `json:"angel_chunk_id,omitempty"`
+	AngelName    string `json:"angel_name,omitempty"`
 }
 
 type deliverRes struct {
@@ -82,11 +84,13 @@ func (c *BotClient) Compose(ctx context.Context, angelName, contextText, request
 	return out.ReminderText, nil
 }
 
-func (c *BotClient) Deliver(ctx context.Context, telegramID, chatID int64, text string) error {
+func (c *BotClient) Deliver(ctx context.Context, telegramID, chatID int64, text, angelChunkID, angelName string) error {
 	body, _ := json.Marshal(deliverReq{
-		TelegramID: telegramID,
-		ChatID:     chatID,
-		Text:       text,
+		TelegramID:   telegramID,
+		ChatID:       chatID,
+		Text:         text,
+		AngelChunkID: angelChunkID,
+		AngelName:    angelName,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/scheduler/deliver", bytes.NewReader(body))
 	if err != nil {
