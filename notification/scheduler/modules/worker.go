@@ -12,10 +12,16 @@ import (
 
 var workerLog = logging.New("scheduler-worker")
 
-// RunDispatcher polls every PollInterval for notifications in next 10 minutes,
-// and sets per-item timers to dispatch exactly at send_at.
+// RunDispatcher periodically plans pending notifications and sets per-item timers.
+// It selects notifications where send_at <= now() + 10 minutes and schedules a timer for each item.
+// To avoid missing items created shortly after the previous scan, we plan at least as often
+// as SCHEDULER_DISPATCH_INTERVAL.
 func RunDispatcher(ctx context.Context, pool *pgxpool.Pool, cfg Config, bot *BotClient) {
-	poll := time.NewTicker(cfg.PollInterval)
+	planEvery := cfg.PollInterval
+	if cfg.DispatchInterval > 0 && cfg.DispatchInterval < planEvery {
+		planEvery = cfg.DispatchInterval
+	}
+	poll := time.NewTicker(planEvery)
 	defer poll.Stop()
 	scheduled := map[string]struct{}{}
 	var mu sync.Mutex
