@@ -242,14 +242,3 @@ func itoa(n int) string {
 
 // TelegramPhotoCaptionMax is Telegram's caption limit for photos.
 const TelegramPhotoCaptionMax = 1024
-
-func truncateCaption(s string) string {
-	if len(s) <= TelegramPhotoCaptionMax {
-		return s
-	}
-	runes := []rune(s)
-	if len(runes) <= TelegramPhotoCaptionMax {
-		return s
-	}
-	return string(runes[:TelegramPhotoCaptionMax-1]) + "…"
-}

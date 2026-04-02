@@ -32,7 +32,8 @@ func (s *Server) TelegramSendPhoto(ctx context.Context, chatID int64, imagePath,
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	_ = w.WriteField("chat_id", fmt.Sprintf("%d", chatID))
-	_ = w.WriteField("caption", truncateCaption(caption))
+	// Подпись ≤1024 символов (Telegram); длинный текст доклеивается отдельными sendMessage в HandleSchedulerDeliver.
+	_ = w.WriteField("caption", caption)
 	part, err := w.CreateFormFile("photo", filepath.Base(imagePath))
 	if err != nil {
 		return 0, err

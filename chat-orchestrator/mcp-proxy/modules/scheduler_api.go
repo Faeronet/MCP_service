@@ -2,6 +2,7 @@ package modules
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -72,6 +73,37 @@ func (s *Server) HandleSchedulerCompose(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"reminder_text": strings.TrimSpace(out), "fallback": false})
 }
 
+// splitPhotoCaptionAndRemainder — подпись к фото (лимит Telegram 1024 символа), остаток для sendMessage; разрыв по пробелу, если есть.
+func splitPhotoCaptionAndRemainder(full string, maxCaptionRunes int) (caption string, remainder string) {
+	full = strings.TrimSpace(full)
+	if full == "" {
+		return "", ""
+	}
+	rs := []rune(full)
+	if len(rs) <= maxCaptionRunes {
+		return full, ""
+	}
+	half := maxCaptionRunes / 2
+	splitAt := maxCaptionRunes
+	for i := maxCaptionRunes - 1; i >= half; i-- {
+		if unicode.IsSpace(rs[i]) {
+			splitAt = i + 1
+			break
+		}
+	}
+	if splitAt == maxCaptionRunes {
+		for i := half - 1; i >= 0; i-- {
+			if unicode.IsSpace(rs[i]) {
+				splitAt = i + 1
+				break
+			}
+		}
+	}
+	caption = strings.TrimSpace(string(rs[:splitAt]))
+	remainder = strings.TrimSpace(string(rs[splitAt:]))
+	return caption, remainder
+}
+
 // HandleSchedulerDeliver POST /scheduler/deliver
 func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -100,50 +132,26 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 	imgPath := s.ResolveAngelImagePathForScheduler(r.Context(), req.AngelChunkID, req.AngelName)
 	var msgID int
 	if imgPath != "" {
+		capText, rest := splitPhotoCaptionAndRemainder(text, TelegramPhotoCaptionMax)
 		var photoErr error
-		msgID, photoErr = s.TelegramSendPhoto(r.Context(), req.ChatID, imgPath, text)
+		msgID, photoErr = s.TelegramSendPhoto(r.Context(), req.ChatID, imgPath, capText)
 		if photoErr != nil || msgID == 0 {
 			msgID = 0
+		} else if strings.TrimSpace(rest) != "" {
+			if _, err := s.sendTelegramTextChunks(r.Context(), req.ChatID, rest); err != nil {
+				enc, _ := json.Marshal(map[string]string{"error": err.Error()})
+				http.Error(w, string(enc), http.StatusBadGateway)
+				return
+			}
 		}
 	}
 	if msgID == 0 {
-		chunks := splitTelegramMessageChunks(text, maxTelegramMessageRunes)
-		if len(chunks) == 0 {
-			chunks = []string{text}
-		}
-		url := "https://api.telegram.org/bot" + s.TelegramBotToken + "/sendMessage"
-		for i, chunk := range chunks {
-			body, _ := json.Marshal(map[string]interface{}{
-				"chat_id": req.ChatID,
-				"text":    chunk,
-			})
-			httpReq, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
-			httpReq.Header.Set("Content-Type", "application/json")
-			resp, err := http.DefaultClient.Do(httpReq)
-			if err != nil {
-				http.Error(w, `{"error":"telegram send failed"}`, http.StatusBadGateway)
-				return
-			}
-			bb, readErr := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if readErr != nil {
-				http.Error(w, `{"error":"telegram read failed"}`, http.StatusBadGateway)
-				return
-			}
-			if resp.StatusCode != http.StatusOK {
-				http.Error(w, fmt.Sprintf(`{"error":"telegram %d: %s"}`, resp.StatusCode, strings.TrimSpace(string(bb))), http.StatusBadGateway)
-				return
-			}
-			var telegramOut struct {
-				OK     bool `json:"ok"`
-				Result struct {
-					MessageID int `json:"message_id"`
-				} `json:"result"`
-			}
-			_ = json.Unmarshal(bb, &telegramOut)
-			if i == 0 {
-				msgID = telegramOut.Result.MessageID
-			}
+		var err error
+		msgID, err = s.sendTelegramTextChunks(r.Context(), req.ChatID, text)
+		if err != nil {
+			enc, _ := json.Marshal(map[string]string{"error": err.Error()})
+			http.Error(w, string(enc), http.StatusBadGateway)
+			return
 		}
 	}
 	out := struct {
@@ -272,3 +280,46 @@ func splitTelegramMessageChunks(text string, maxRunes int) []string {
 	return chunks
 }
 
+// sendTelegramTextChunks шлёт текст одним или несколькими sendMessage (до 4096 символов, разбиение по словам).
+func (s *Server) sendTelegramTextChunks(ctx context.Context, chatID int64, text string) (firstMsgID int, err error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0, nil
+	}
+	chunks := splitTelegramMessageChunks(text, maxTelegramMessageRunes)
+	if len(chunks) == 0 {
+		chunks = []string{text}
+	}
+	url := "https://api.telegram.org/bot" + s.TelegramBotToken + "/sendMessage"
+	for i, chunk := range chunks {
+		body, _ := json.Marshal(map[string]interface{}{
+			"chat_id": chatID,
+			"text":    chunk,
+		})
+		httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, e := http.DefaultClient.Do(httpReq)
+		if e != nil {
+			return firstMsgID, fmt.Errorf("telegram send failed: %w", e)
+		}
+		bb, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return firstMsgID, fmt.Errorf("telegram read failed: %w", readErr)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return firstMsgID, fmt.Errorf("telegram %d: %s", resp.StatusCode, strings.TrimSpace(string(bb)))
+		}
+		var telegramOut struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				MessageID int `json:"message_id"`
+			} `json:"result"`
+		}
+		_ = json.Unmarshal(bb, &telegramOut)
+		if i == 0 {
+			firstMsgID = telegramOut.Result.MessageID
+		}
+	}
+	return firstMsgID, nil
+}
