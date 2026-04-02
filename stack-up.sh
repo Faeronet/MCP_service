@@ -44,7 +44,7 @@ fi
 docker network create mcp_stack 2>/dev/null || true
 
 zone db-zone up -d postgres redis qdrant
-wait_tcp 127.0.0.1 5432 postgres
+wait_tcp 127.0.0.1 5433 postgres
 zone db-zone up migrate
 
 zone file-orchestrator up -d
