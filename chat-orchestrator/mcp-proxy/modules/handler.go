@@ -87,6 +87,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	defer s.LlmLimiter.Release()
 
 	var contextText string
+	var replyAngelChunkID string // chunk_id из Qdrant для картинки ангела в ответе TG
 	var replyToPrefix string // PREVIOUS_QUESTION / PREVIOUS_ANSWER без дублирования CONTEXT
 	var savedContextRef string
 	var useStoredReplyContext bool // вопрос по ответу бота: в LLM — тот же CONTEXT, что был у того ответа (full или чанк)
@@ -141,6 +142,9 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 			useStoredReplyContext = true
 			contextText = ctxForLLM
 			savedContextRef = ctxRef
+			if strings.TrimSpace(ctxRef) != "" {
+				replyAngelChunkID = NormalizeSchedulerChunkID(ctxRef)
+			}
 			// Для уточняющего вопроса не добавляем в system предыдущий вопрос/ответ — только CONTEXT.
 			logHandler.Info(ctx, "reply-to: using stored answer CONTEXT for LLM", logging.KV{"chat_id", req.ChatID}, logging.KV{"has_ref", ctxRef != ""})
 		}
@@ -232,6 +236,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 				// Коллекции emocionalnoe/intellektualnye/astralnyi_duh — по-прежнему только чанки, без полного документа.
 				skipFullContext := buildCollection == "emocionalnoe" || buildCollection == "intellektualnye" || buildCollection == "astralnyi_duh"
 				cid := strings.TrimSpace(buildChunkIDs[0])
+				replyAngelChunkID = cid
 				if skipFullContext {
 					buildContextKind = "chunks"
 				} else if buildCollection != "" && cid != "" {
@@ -300,7 +305,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 	_ = s.SaveAnswerContext(ctx, req.SessionID, msgID, contextText, savedContextRef)
 
-	resp := ChatResponse{ReplyText: reply, MessageID: msgID.String(), DebugMessage: debugMessage}
+	resp := ChatResponse{ReplyText: reply, MessageID: msgID.String(), DebugMessage: debugMessage, AngelChunkID: replyAngelChunkID}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }

@@ -19,4 +19,6 @@ type ChatResponse struct {
 	DebugMessage string `json:"debug_message,omitempty"`
 	MessageID    string `json:"message_id,omitempty"` // UUID of assistant message for bot to set telegram_message_id
 	ReminderExtraText string `json:"reminder_extra_text,omitempty"`
+	// AngelChunkID: когда контекст — один чанк ангела из Qdrant; tg-bot может отправить фото через /scheduler/deliver.
+	AngelChunkID string `json:"angel_chunk_id,omitempty"`
 }

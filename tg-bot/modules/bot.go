@@ -16,6 +16,7 @@ type Bot struct {
 	Pool                  *pgxpool.Pool
 	Minio                 *storage.Client
 	ProxyURL              string
+	SchedulerSecret       string // X-Scheduler-Secret для вызова mcp-proxy /scheduler/deliver (как у scheduler)
 	ExtractToolURL        string
 	Debounce              time.Duration
 	ChatMu                map[int64]chan struct{}

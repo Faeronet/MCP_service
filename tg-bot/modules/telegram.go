@@ -62,6 +62,16 @@ func (b *Bot) SendReplyTyping(ctx context.Context, chatID int64) int {
 	return b.SendReplyWithID(ctx, chatID, "...")
 }
 
+// DeleteChatMessage removes a message (e.g. typing placeholder).
+func (b *Bot) DeleteChatMessage(ctx context.Context, chatID int64, messageID int) {
+	if b.Bot == nil || messageID <= 0 {
+		return
+	}
+	if _, err := b.Bot.Request(tgbotapi.NewDeleteMessage(chatID, messageID)); err != nil {
+		logTG.Warn(ctx, "delete message", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
+	}
+}
+
 // SendLongReply sends text in one or more chunks; if typingMsgID > 0, edits it to first chunk. Returns first message ID.
 func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, text string) int {
 	if b.Bot == nil {

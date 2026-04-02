@@ -104,7 +104,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 
 	typingMsgID := b.SendReplyTyping(ctx, chatID)
 
-	replyText, debugMessage, messageIDStr, reminderExtra, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
+	replyText, debugMessage, messageIDStr, reminderExtra, angelChunkID, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
 	if err != nil {
 		logHandler.Error(ctx, "proxy call", logging.KV{"error", err})
 		hint := "Сервис временно недоступен. Запустите mcp-proxy (docker compose up -d mcp-proxy). В контейнерах MCP_PROXY_URL=http://mcp-proxy:8083; с хоста/Cursor — http://127.0.0.1:8083. Не используйте host.docker.internal на Linux к проброшенному порту — часто connection refused."
@@ -123,6 +123,20 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 
 	if debugMessage != "" {
 		b.SendReply(ctx, chatID, debugMessage)
+	}
+	if angelChunkID != "" && strings.TrimSpace(replyText) != "" {
+		tgMid, derr := b.ProxySchedulerDeliver(ctx, chatID, userID, replyText, angelChunkID)
+		if derr == nil && tgMid > 0 {
+			if typingMsgID > 0 {
+				b.DeleteChatMessage(ctx, chatID, typingMsgID)
+			}
+			if messageIDStr != "" {
+				if msgUUID, perr := uuid.Parse(messageIDStr); perr == nil {
+					_ = b.UpdateMessageTelegramID(ctx, msgUUID, tgMid)
+				}
+			}
+			return
+		}
 	}
 	firstMsgID := b.SendLongReply(ctx, chatID, typingMsgID, replyText)
 	if messageIDStr != "" {
@@ -259,7 +273,7 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 		return
 	}
 
-	replyText, debugMessage, messageIDStr, reminderExtra, err := b.CallChat(ctx, sessionID, chatID, userID, username, userMsg, 0, requestID)
+	replyText, debugMessage, messageIDStr, reminderExtra, angelChunkID, err := b.CallChat(ctx, sessionID, chatID, userID, username, userMsg, 0, requestID)
 	if err != nil {
 		logHandler.Warn(ctx, "proxy call for attachment", logging.KV{"error", err})
 		b.EditMessageText(ctx, chatID, typingMsgID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
@@ -276,6 +290,20 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 			preview = preview[:previewLen] + "..."
 		}
 		replyToUser = "Извлечённый текст (начало):\n" + preview + "\n\nОтвет:\n" + replyText
+	}
+	if angelChunkID != "" && strings.TrimSpace(replyToUser) != "" {
+		tgMid, derr := b.ProxySchedulerDeliver(ctx, chatID, userID, replyToUser, angelChunkID)
+		if derr == nil && tgMid > 0 {
+			if typingMsgID > 0 {
+				b.DeleteChatMessage(ctx, chatID, typingMsgID)
+			}
+			if messageIDStr != "" {
+				if msgUUID, perr := uuid.Parse(messageIDStr); perr == nil {
+					_ = b.UpdateMessageTelegramID(ctx, msgUUID, tgMid)
+				}
+			}
+			return
+		}
 	}
 	firstMsgID := b.SendLongReply(ctx, chatID, typingMsgID, replyToUser)
 	if messageIDStr != "" {

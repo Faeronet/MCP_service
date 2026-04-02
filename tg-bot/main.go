@@ -60,6 +60,7 @@ func main() {
 		Pool:                  pool,
 		Minio:                 minioClient,
 		ProxyURL:              proxyURL,
+		SchedulerSecret:       strings.TrimSpace(config.LoadString("SCHEDULER_INTERNAL_SECRET", "")),
 		ExtractToolURL:        extractToolURL,
 		Debounce:              time.Duration(debounceMs) * time.Millisecond,
 		ChatMu:                make(map[int64]chan struct{}),
