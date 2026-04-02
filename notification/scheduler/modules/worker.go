@@ -122,7 +122,8 @@ func dispatchOne(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, id str
 
 	err = bot.Deliver(context.Background(), telegramID, chatID, text)
 	if err != nil {
-		workerLog.Warn(ctx, "deliver failed", logging.KV{"id", id}, logging.KV{"error", err})
+		// err может не сериализоваться корректно в structured logging, поэтому логируем строку.
+		workerLog.Warn(ctx, "deliver failed", logging.KV{"id", id}, logging.KV{"error", err.Error()})
 		_, _ = pool.Exec(ctx, `
 			UPDATE chat.scheduler_notifications
 			SET status = 'failed', last_error = $2
