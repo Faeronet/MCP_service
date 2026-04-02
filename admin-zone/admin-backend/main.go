@@ -88,6 +88,7 @@ func main() {
 		MCPProxyURL:           strings.TrimSuffix(config.LoadString("MCP_PROXY_URL", "http://mcp-proxy:8083"), "/"),
 		LokiURL:               config.LoadString("LOKI_URL", "http://loki:3100"),
 		ReminderSuperAdminSub: config.LoadString("REMINDER_SUPERADMIN_SUB", "admin"),
+		ZoneAgents:            parseZoneAgentsJSON(config.LoadString("ZONE_AGENTS", "")),
 	})
 
 	mux := http.NewServeMux()
@@ -113,6 +114,8 @@ func main() {
 	mux.Handle("/api/reminders/scheduler-notifications/", authMiddleware(handler.JWTSecret, schedulerNotificationsRouter(handler)))
 	mux.Handle("/api/chat/llm", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ChatLLM)))
 	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
+	mux.Handle("/api/zones", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ZonesRoutes)))
+	mux.Handle("/api/zones/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ZonesRoutes)))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "" {
@@ -200,7 +203,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			origin = "*"
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

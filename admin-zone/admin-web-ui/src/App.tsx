@@ -13,6 +13,7 @@ import { Chat } from './pages/Chat'
 import { Monitor } from './pages/Monitor'
 import { Grafana } from './pages/Grafana'
 import { Reminders } from './pages/Reminders'
+import { ZonesConfig } from './pages/ZonesConfig'
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="reminders" element={<Reminders />} />
           <Route path="monitor" element={<Monitor />} />
           <Route path="grafana" element={<Grafana />} />
+          <Route path="zones" element={<ZonesConfig />} />
         </Route>
       </Routes>
     </BrowserRouter>

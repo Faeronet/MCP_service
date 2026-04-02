@@ -629,6 +629,17 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   border-color: var(--content-border);
 }
 .btn-secondary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+.mono-inline {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
 
 .text-muted { color: var(--text-muted); font-size: 0.8125rem; margin-top: 8px; }
 .text-error { color: var(--level-error); margin-bottom: 12px; }
@@ -1352,4 +1363,180 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   .reminders-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ----- Zones config (zone-agent) ----- */
+.zones-toolbar {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.zones-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.zones-icon {
+  flex-shrink: 0;
+}
+.zones-row-icon {
+  vertical-align: middle;
+  margin-right: 8px;
+  opacity: 0.85;
+}
+.zones-name {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 500;
+}
+.zones-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.zones-pill--ok {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+.zones-pill--bad {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+.zones-pill--idle {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+.zones-modal-overlay {
+  z-index: 10001;
+}
+.zones-modal {
+  max-width: 920px;
+  width: 100%;
+  max-height: 90vh;
+}
+.zones-modal-header {
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+}
+.zones-modal-title-block {
+  flex: 1;
+  min-width: 0;
+}
+.zones-modal-sub {
+  margin: 4px 0 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.zones-modal-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.zones-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.zones-section {
+  border: 1px solid var(--content-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.35);
+}
+.zones-section-title {
+  margin: 0 0 12px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.zones-services-err {
+  margin: 0;
+  color: #fca5a5;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+}
+.zones-service-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.zones-service-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.35);
+  border: 1px solid rgba(71, 85, 105, 0.22);
+  flex-wrap: wrap;
+}
+.zones-service-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.zones-rebuild-log {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  border: 1px solid rgba(71, 85, 105, 0.35);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.zones-env-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.zones-env-head .zones-section-title {
+  margin-bottom: 0;
+}
+.zones-env-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.zones-env-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  background: #0b1220;
+  color: #e2e8f0;
+  resize: vertical;
+  min-height: 280px;
+}
+.zones-env-textarea:focus {
+  outline: none;
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.12);
 }

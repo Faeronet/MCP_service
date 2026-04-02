@@ -3,6 +3,23 @@ networks:
     external: true
 
 services:
+  zone-agent:
+    build:
+      context: ./zone-agent
+      dockerfile: Dockerfile
+    environment:
+      ZONE_WORKDIR: /zone
+      ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
+      LISTEN: 0.0.0.0:19090
+    volumes:
+      - ./:/zone
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "0.0.0.0:29103:19090"
+    networks:
+      - mcp_stack
+    restart: unless-stopped
+
   wait-postgres:
     image: postgres:16-alpine
     networks:

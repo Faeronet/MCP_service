@@ -350,3 +350,70 @@ export async function getMonitorMetrics(): Promise<MonitorMetricsResponse> {
   if (!r.ok) throw new Error('Failed to load monitor metrics')
   return r.json()
 }
+
+// —— Зоны (zone-agent в каждой зоне, прокси admin-backend) ——
+
+export interface ZoneListItem {
+  id: string
+  name: string
+  agent_ok: boolean
+  hint?: string
+}
+
+export async function listZones(): Promise<{ zones: ZoneListItem[] }> {
+  const r = await fetch(`${API_URL}/api/zones`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Не удалось загрузить зоны')
+  return r.json()
+}
+
+export async function getZoneEnv(zoneId: string): Promise<string> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/env`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Не удалось прочитать .env')
+  return r.text()
+}
+
+export async function putZoneEnv(zoneId: string, content: string): Promise<void> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/env`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/plain; charset=utf-8', Authorization: `Bearer ${getToken()}` },
+    body: content,
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Не удалось сохранить .env')
+}
+
+export interface ZoneServiceRow {
+  name: string
+  running: boolean
+  state?: string
+}
+
+export async function getZoneServices(zoneId: string): Promise<{ services: ZoneServiceRow[]; error?: string }> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/services`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Не удалось загрузить сервисы')
+  return r.json()
+}
+
+export async function zoneRebuild(
+  zoneId: string,
+  body: { service?: string; all?: boolean }
+): Promise<{ ok: boolean; log: string }> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/rebuild`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(body),
+  })
+  checkAuth(r)
+  if (!r.ok) {
+    const t = await r.text()
+    throw new Error(t || `rebuild ${r.status}`)
+  }
+  return r.json()
+}

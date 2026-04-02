@@ -38,6 +38,7 @@ type HandlerDeps struct {
 	MCPProxyURL           string // POST /chat (тестовый чат из админки)
 	LokiURL               string
 	ReminderSuperAdminSub string // совпадение с логином → UI симуляции времени (например admin)
+	ZoneAgents            []ZoneAgentConfig       // из ZONE_AGENTS (JSON), прокси к zone-agent в каждой зоне
 }
 
 type Handler struct {
