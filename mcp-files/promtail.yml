@@ -31,12 +31,11 @@ scrape_configs:
       - json:
           expressions:
             output: log
-            stream: stream
             time: time
       - timestamp:
           source: time
           format: RFC3339Nano
-      - labels:
-          stream:
+      # stream не выносить в labels из JSON: при битой строке значение пустое → Loki 400 «no label pair».
+      # Поток уже помечен relabel: __meta_docker_container_log_stream → stream
       - output:
           source: output
