@@ -26,6 +26,20 @@ function cycleSort(current: SortDir): SortDir {
 
 const PAGE_SIZE = 50
 
+const fmtMSKhm = new Intl.DateTimeFormat('ru-RU', {
+  timeZone: 'Europe/Moscow',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+function formatLogTimeMSK(ts: unknown): string {
+  if (ts == null || ts === '') return ''
+  const d = new Date(String(ts))
+  if (Number.isNaN(d.getTime())) return String(ts)
+  return fmtMSKhm.format(d)
+}
+
 export function Logs() {
   const [logs, setLogs] = useState<Array<Record<string, unknown>>>([])
   const [total, setTotal] = useState(0)
@@ -130,7 +144,9 @@ export function Logs() {
                   <tbody>
                     {sortedLogs.map((l: Record<string, unknown>, i: number) => (
                       <tr key={i}>
-                        <td style={{ width: '14%' }}>{l.ts ? new Date(String(l.ts)).toISOString() : ''}</td>
+                        <td style={{ width: '14%' }} title={l.ts ? new Date(String(l.ts)).toISOString() : ''}>
+                          {formatLogTimeMSK(l.ts)}
+                        </td>
                         <td style={{ width: '8%' }}>
                           <span className={`badge ${levelClass(String(l.level || ''))}`}>
                             {String(l.level || 'info')}
