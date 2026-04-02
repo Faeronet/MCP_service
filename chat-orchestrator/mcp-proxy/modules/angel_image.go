@@ -131,6 +131,74 @@ func AngelPicIndex(angelName string) int {
 	return 0
 }
 
+// AngelNameCandidateList expands names for image lookup (parentheses, slash, dedup).
+func AngelNameCandidateList(names ...string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		for _, c := range expandAngelNameStrings(raw) {
+			k := strings.ToLower(strings.TrimSpace(c))
+			if k == "" {
+				continue
+			}
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, strings.TrimSpace(c))
+		}
+	}
+	for _, n := range names {
+		add(n)
+	}
+	return out
+}
+
+func expandAngelNameStrings(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	out := []string{s}
+	// "Before (Inside)"
+	if i := strings.Index(s, "("); i >= 0 {
+		j := strings.LastIndex(s, ")")
+		if j > i+1 {
+			before := strings.TrimSpace(s[:i])
+			inside := strings.TrimSpace(s[i+1 : j])
+			if before != "" {
+				out = append(out, before)
+			}
+			if inside != "" {
+				out = append(out, inside)
+			}
+		}
+	}
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == '/' || r == '|' || r == '•'
+	}) {
+		p := strings.TrimSpace(part)
+		if p != "" && p != s {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ResolveAngelImagePathAny returns first existing image for any candidate name.
+func ResolveAngelImagePathAny(dir string, names ...string) string {
+	for _, n := range names {
+		if p := ResolveAngelImagePath(dir, n); p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
 // ResolveAngelImagePath returns path to picN.jpg (or picN_1.jpg) or "".
 func ResolveAngelImagePath(dir, angelName string) string {
 	if dir == "" {

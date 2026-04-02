@@ -94,8 +94,7 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	angelName := strings.TrimSpace(req.AngelName)
-	imgPath := ResolveAngelImagePath("", angelName)
+	imgPath := s.ResolveAngelImagePathForScheduler(r.Context(), req.AngelChunkID, req.AngelName)
 	var msgID int
 	if imgPath != "" {
 		var photoErr error
