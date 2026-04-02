@@ -33,6 +33,7 @@ const TimeTable = () => {
   const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
   const [scheduleBanner, setScheduleBanner] = useState(null);
   const [scheduleModalError, setScheduleModalError] = useState('');
+  const [showScheduleHint, setShowScheduleHint] = useState(true);
   const [notifyDaily, setNotifyDaily] = useState(false);
 
   useEffect(() => {
@@ -191,6 +192,7 @@ const TimeTable = () => {
   const openScheduleModal = () => {
     setScheduleBanner(null);
     setScheduleModalError('');
+    setShowScheduleHint(true);
     try {
       const u = localStorage.getItem(TG_USERNAME_STORAGE_KEY);
       if (u) setTelegramUsername(u);
@@ -342,6 +344,25 @@ const TimeTable = () => {
             onChange={(e) => setTelegramUsername(e.target.value)}
             disabled={scheduleSubmitting}
           />
+          {showScheduleHint ? (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '12px 14px',
+                borderRadius: '8px',
+                background: '#edf5ff',
+                border: '1px solid #c6daff',
+              }}
+            >
+              <InlineNotification
+                kind="info"
+                title="Подсказка"
+                subtitle="Если хотите, чтобы уведомления начались сегодня, укажите время на +2-3 минуты от текущего момента отправки записи."
+                lowContrast
+                onClose={() => setShowScheduleHint(false)}
+              />
+            </div>
+          ) : null}
         </ModalBody>
         <ModalFooter>
           <Button

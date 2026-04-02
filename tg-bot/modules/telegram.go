@@ -37,6 +37,26 @@ func (b *Bot) SendReplyWithID(ctx context.Context, chatID int64, text string) in
 	return sent.MessageID
 }
 
+// SendReplyToWithID sends a message as reply to another message.
+func (b *Bot) SendReplyToWithID(ctx context.Context, chatID int64, replyToMessageID int, text string) int {
+	if b.Bot == nil {
+		return 0
+	}
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyToMessageID = replyToMessageID
+	msg.ParseMode = "Markdown"
+	sent, err := b.Bot.Send(msg)
+	if err != nil {
+		msg.ParseMode = ""
+		sent, err = b.Bot.Send(msg)
+	}
+	if err != nil {
+		logTG.Warn(ctx, "send reply-to", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
+		return 0
+	}
+	return sent.MessageID
+}
+
 // SendReplyTyping sends "..." and returns its MessageID (to be edited to final reply).
 func (b *Bot) SendReplyTyping(ctx context.Context, chatID int64) int {
 	return b.SendReplyWithID(ctx, chatID, "...")

@@ -14,7 +14,8 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-const welcomeMessage = "Привет! Я ИИ-ассистент, отвечаю на вопросы по книге «Книга ангелов»."
+const welcomeMessage = "Здравствуй, добрый друг. Я — Ангел Света. Чем могу быть полезен?\n\nесли вы хотите задать дополнительный вопрос по ответу, задавайте ответом на мой ответ"
+const welcomeReplyHintMessage = "вот так"
 const chatAlreadyStartedMessage = "Чат уже запущен."
 const chatResetMessage = "Чат сброшен. Отправьте /start для начала."
 const previewLen = 350
@@ -143,7 +144,10 @@ func (b *Bot) handleStart(ctx context.Context, chatID, userID int64, username st
 		return
 	}
 	_, _ = b.EnsureSession(ctx, chatID, userID, username)
-	b.SendReply(ctx, chatID, welcomeMessage)
+	firstID := b.SendReplyWithID(ctx, chatID, welcomeMessage)
+	if firstID > 0 {
+		b.SendReplyToWithID(ctx, chatID, firstID, welcomeReplyHintMessage)
+	}
 }
 
 func (b *Bot) handleRestart(ctx context.Context, chatID, userID int64) {
