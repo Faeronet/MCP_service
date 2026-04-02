@@ -30,12 +30,24 @@ func main() {
 	}
 
 	composeProject := strings.TrimSpace(os.Getenv("COMPOSE_PROJECT_NAME"))
+	profilesRaw := strings.TrimSpace(os.Getenv("COMPOSE_PROFILES"))
+	if profilesRaw == "" {
+		profilesRaw = strings.TrimSpace(os.Getenv("ZONE_AGENT_COMPOSE_PROFILES"))
+	}
+	var composeProfiles []string
+	for _, p := range strings.Split(profilesRaw, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			composeProfiles = append(composeProfiles, p)
+		}
+	}
 
 	if err := modules.Run(modules.Config{
-		Workdir:        abs,
-		Secret:         secret,
-		Listen:         listen,
-		ComposeProject: composeProject,
+		Workdir:         abs,
+		Secret:          secret,
+		Listen:          listen,
+		ComposeProject:  composeProject,
+		ComposeProfiles: composeProfiles,
 	}); err != nil {
 		log.Fatal(err)
 	}

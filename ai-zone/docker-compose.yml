@@ -24,7 +24,6 @@ services:
     restart: unless-stopped
 
   vllm:
-    profiles: [vllm]
     env_file: .env
     image: vllm/vllm-openai:v0.16.0
     container_name: mcp_vllm
@@ -68,7 +67,6 @@ services:
     restart: unless-stopped
 
   vllm-embed:
-    profiles: [vllm]
     env_file: .env
     image: vllm/vllm-openai:v0.16.0
     container_name: mcp_vllm_embed
@@ -97,7 +95,6 @@ services:
     restart: unless-stopped
 
   rerank:
-    profiles: [vllm]
     env_file: .env
     build:
       context: ./reranker

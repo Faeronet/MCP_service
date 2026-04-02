@@ -23,6 +23,7 @@ func (s *server) handleMeta(w http.ResponseWriter, r *http.Request) {
 	out := map[string]interface{}{
 		"workdir":           s.workdir,
 		"compose_project":   strings.TrimSpace(s.composeProject),
+		"compose_profiles":  s.composeProfiles,
 		"env_path":          envPath,
 		"env_exists":        envErr == nil,
 		"compose_path":      composePath,

@@ -41,7 +41,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/v1/services", s.withAuth(s.handleServices))
 	mux.HandleFunc("/v1/rebuild", s.withAuth(s.handleRebuild))
 
-	log.Printf("zone-agent workdir=%s compose_project=%q listen=%s", workdir, s.composeProject, cfg.Listen)
+	log.Printf("zone-agent workdir=%s compose_project=%q profiles=%v listen=%s", workdir, s.composeProject, s.composeProfiles, cfg.Listen)
 
 	// Keep the error message stable for logs.
 	addr := cfg.Listen
