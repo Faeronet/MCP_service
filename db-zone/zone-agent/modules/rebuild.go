@@ -45,6 +45,10 @@ func (s *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	base := append([]string{"docker"}, s.dockerComposeBaseArgs(composePath)...)
 
 	var logs strings.Builder
+	logs.WriteString("=== host resolv.conf (Docker Hub DNS) ===\n")
+	s.patchHostResolvForBuild(ctx, &logs)
+	logs.WriteString("\n")
+
 	var runErr error
 
 	if req.All {

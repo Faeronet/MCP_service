@@ -10,6 +10,7 @@ services:
     environment:
       ZONE_WORKDIR: /zone
       COMPOSE_PROJECT_NAME: notification
+      ZONE_AGENT_HOST_RESOLV_PATH: /host-etc-resolv.conf
       ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
       LISTEN: 0.0.0.0:19090
     volumes:

@@ -12,11 +12,13 @@ services:
     environment:
       ZONE_WORKDIR: /zone
       COMPOSE_PROJECT_NAME: db-zone
+      ZONE_AGENT_HOST_RESOLV_PATH: /host-etc-resolv.conf
       ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
       LISTEN: 0.0.0.0:19090
     volumes:
       - ./:/zone
       - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/resolv.conf:/host-etc-resolv.conf:rw
     ports:
       - "0.0.0.0:29100:19090"
     networks:
