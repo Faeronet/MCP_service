@@ -358,7 +358,7 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			INSERT INTO chat.scheduler_notifications
 			  (telegram_id, telegram_username, note_item_id, notify_daily, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
-			ON CONFLICT (telegram_id, note_item_id)
+			ON CONFLICT ON CONSTRAINT uq_scheduler_notifications_telegram_note_item
 			DO UPDATE SET
 			  telegram_username = EXCLUDED.telegram_username,
 			  notify_daily      = EXCLUDED.notify_daily,
