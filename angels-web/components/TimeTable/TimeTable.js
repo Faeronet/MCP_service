@@ -15,7 +15,7 @@ import {
   ModalBody,
   ModalFooter,
   InlineNotification,
-  Checkbox,
+  Toggle,
 } from '@carbon/react';
 import { TrashCan } from '@carbon/icons-react'; // Importing the delete icon
 import { angelNameToRu, timeDataWithRussianNames } from './angelNamesMap';
@@ -368,12 +368,33 @@ const TimeTable = () => {
           onChange={(e) => setFilterValue(e.target.value)}
         />
       </div>
-      <div style={{ marginBottom: '16px' }}>
-        <Checkbox
-          id="tg-daily-checkbox"
-          labelText="Уведомлять каждый день"
-          checked={notifyDaily}
-          onChange={(_, { checked }) => setNotifyDaily(checked)}
+      <div
+        style={{
+          marginBottom: '16px',
+          padding: '12px 16px',
+          borderRadius: '8px',
+          background: '#f4f4f4',
+          border: '1px solid #e0e0e0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ minWidth: '220px' }}>
+          <div style={{ fontWeight: 600, marginBottom: '2px' }}>Уведомлять каждый день</div>
+          <div style={{ fontSize: '12px', color: '#6f6f6f' }}>
+            Если включено, напоминания будут приходить ежедневно, пока запись не удалена.
+          </div>
+        </div>
+        <Toggle
+          id="tg-daily-toggle"
+          labelA="Выкл"
+          labelB="Вкл"
+          labelText=""
+          toggled={notifyDaily}
+          onToggle={(checked) => setNotifyDaily(checked)}
         />
       </div>
 
