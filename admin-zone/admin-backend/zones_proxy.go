@@ -23,6 +23,11 @@ func parseZoneAgentsJSON(raw string) []ZoneAgentConfig {
 	if raw == "" {
 		return nil
 	}
+	if len(raw) >= 2 {
+		if (raw[0] == '\'' && raw[len(raw)-1] == '\'') || (raw[0] == '"' && raw[len(raw)-1] == '"') {
+			raw = strings.TrimSpace(raw[1 : len(raw)-1])
+		}
+	}
 	var out []ZoneAgentConfig
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		stdlog.Printf("ZONE_AGENTS JSON parse error: %v", err)
