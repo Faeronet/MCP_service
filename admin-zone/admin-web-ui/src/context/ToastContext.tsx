@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useReducer } from 'react'
+import { createContext, useCallback, useContext, useMemo, useReducer } from 'react'
 
 export type ToastType = 'success' | 'error'
 
@@ -57,11 +57,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'remove', payload: id })
   }, [])
 
-  return (
-    <ToastContext.Provider value={{ toasts, success, error, remove }}>
-      {children}
-    </ToastContext.Provider>
+  const value = useMemo(
+    () => ({ toasts, success, error, remove }),
+    [toasts, success, error, remove]
   )
+
+  return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>
 }
 
 export function useToast() {

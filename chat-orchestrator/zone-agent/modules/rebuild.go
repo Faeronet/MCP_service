@@ -10,9 +10,17 @@ import (
 	"time"
 )
 
+// compose service name of this agent; rebuilding it in "all" recreates this container and drops the HTTP response.
+const zoneAgentComposeService = "zone-agent"
+
 type rebuildReq struct {
 	Service string `json:"service"`
 	All     bool   `json:"all"`
+}
+
+func composeUpBuildArgs(composeArgs []string, svc string) []string {
+	// --force-recreate: apply .env / env_file changes; plain up may leave running containers unchanged.
+	return append(append([]string{}, composeArgs...), "up", "-d", "--build", "--force-recreate", svc)
 }
 
 func (s *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
@@ -53,8 +61,12 @@ func (s *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		for _, svc := range names {
-			logs.WriteString(fmt.Sprintf("=== up --build %s ===\n", svc))
-			out, err := runCmd(ctx, base[0], append(base[1:], "up", "-d", "--build", svc)...)
+			if svc == zoneAgentComposeService {
+				logs.WriteString("=== skip zone-agent (в режиме «все» не пересобираем — иначе оборвётся ответ API; на хосте: docker compose up -d --build zone-agent) ===\n\n")
+				continue
+			}
+			logs.WriteString(fmt.Sprintf("=== up --build --force-recreate %s ===\n", svc))
+			out, err := runCmd(ctx, base[0], composeUpBuildArgs(base[1:], svc)...)
 			logs.Write(out)
 			if err != nil {
 				logs.WriteString("\n" + err.Error() + "\n")
@@ -69,8 +81,8 @@ func (s *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"service required unless all"}`, http.StatusBadRequest)
 			return
 		}
-		logs.WriteString(fmt.Sprintf("=== up --build %s ===\n", svc))
-		out, err := runCmd(ctx, base[0], append(base[1:], "up", "-d", "--build", svc)...)
+		logs.WriteString(fmt.Sprintf("=== up --build --force-recreate %s ===\n", svc))
+		out, err := runCmd(ctx, base[0], composeUpBuildArgs(base[1:], svc)...)
 		logs.Write(out)
 		if err != nil {
 			logs.WriteString("\n" + err.Error() + "\n")
@@ -94,4 +106,3 @@ func appendRunLog(logs *strings.Builder, out []byte, err error) string {
 	}
 	return trimLog(logs.String(), 120000)
 }
-

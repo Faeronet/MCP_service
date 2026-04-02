@@ -23,20 +23,24 @@ export function ZonesConfig() {
   const [envDirty, setEnvDirty] = useState(false)
   const [rebuildLog, setRebuildLog] = useState<string | null>(null)
   const [rebuilding, setRebuilding] = useState<string | null>(null)
-  const toast = useToast()
+  const { success: toastSuccess, error: toastError } = useToast()
 
-  const loadZones = useCallback(async () => {
-    setLoading(true)
-    try {
-      const { zones: z } = await listZones()
-      setZones(Array.isArray(z) ? z : [])
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось загрузить зоны')
-      setZones([])
-    } finally {
-      setLoading(false)
-    }
-  }, [toast])
+  const loadZones = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true
+      if (!silent) setLoading(true)
+      try {
+        const { zones: z } = await listZones()
+        setZones(Array.isArray(z) ? z : [])
+      } catch (e) {
+        toastError(e instanceof Error ? e.message : 'Не удалось загрузить зоны')
+        setZones([])
+      } finally {
+        if (!silent) setLoading(false)
+      }
+    },
+    [toastError]
+  )
 
   useEffect(() => {
     void loadZones()
@@ -55,7 +59,7 @@ export function ZonesConfig() {
         setEnvText(env)
         setEnvDirty(false)
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Ошибка загрузки зоны')
+        toastError(e instanceof Error ? e.message : 'Ошибка загрузки зоны')
         setServices([])
         setEnvText('')
       } finally {
@@ -63,7 +67,7 @@ export function ZonesConfig() {
         setEnvLoading(false)
       }
     },
-    [toast]
+    [toastError]
   )
 
   useEffect(() => {
@@ -88,9 +92,9 @@ export function ZonesConfig() {
     try {
       await putZoneEnv(modalZone.id, envText)
       setEnvDirty(false)
-      toast.success('.env сохранён на хосте')
+      toastSuccess('.env сохранён на хосте')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка сохранения')
+      toastError(e instanceof Error ? e.message : 'Ошибка сохранения')
     }
   }
 
@@ -103,7 +107,7 @@ export function ZonesConfig() {
       setServices(Array.isArray(svc.services) ? svc.services : [])
       setServicesErr(svc.error || null)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка списка сервисов')
+      toastError(e instanceof Error ? e.message : 'Ошибка списка сервисов')
     } finally {
       setServicesLoading(false)
     }
@@ -117,11 +121,11 @@ export function ZonesConfig() {
     try {
       const out = await zoneRebuild(modalZone.id, all ? { all: true } : { service: service! })
       setRebuildLog(out.log || (out.ok ? 'Готово' : 'Ошибка'))
-      if (!out.ok) toast.error('Сборка завершилась с ошибкой')
-      else toast.success(all ? 'Все сервисы обработаны' : `Сервис ${service} обновлён`)
+      if (!out.ok) toastError('Сборка завершилась с ошибкой')
+      else toastSuccess(all ? 'Все сервисы обработаны' : `Сервис ${service} обновлён`)
       await refreshServices()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка пересборки')
+      toastError(e instanceof Error ? e.message : 'Ошибка пересборки')
     } finally {
       setRebuilding(null)
     }
@@ -139,7 +143,12 @@ export function ZonesConfig() {
       </div>
       <div className="content-panel">
         <div className="zones-toolbar">
-          <button type="button" className="btn-secondary zones-refresh" onClick={() => void loadZones()} disabled={loading}>
+          <button
+            type="button"
+            className="btn-secondary zones-refresh"
+            onClick={() => void loadZones({ silent: zones.length > 0 })}
+            disabled={loading}
+          >
             <RefreshCw className="zones-icon" aria-hidden size={16} />
             Обновить список
           </button>
