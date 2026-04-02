@@ -20,7 +20,7 @@ export function Layout() {
     { to: '/reminders', label: 'Reminders', icon: Bell },
     { to: '/monitor', label: 'Monitor', icon: Gauge },
     { to: '/grafana', label: 'Grafana', icon: BarChart3 },
-    { to: '/zones', label: 'Зоны', icon: Boxes },
+    { to: '/configurations', label: 'Configurations', icon: Boxes },
   ]
 
   return (

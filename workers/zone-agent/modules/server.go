@@ -9,8 +9,9 @@ import (
 )
 
 type server struct {
-	workdir string
-	secret  string
+	workdir        string
+	secret         string
+	composeProject string
 }
 
 func (s *server) withAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -39,6 +40,11 @@ func (s *server) composeFile() (string, error) {
 
 func (s *server) dockerComposeBaseArgs(composePath string) []string {
 	// Always run against the mounted zone directory (not container cwd).
-	return []string{"compose", "--project-directory", s.workdir, "-f", composePath}
+	out := []string{"compose"}
+	if p := strings.TrimSpace(s.composeProject); p != "" {
+		out = append(out, "-p", p)
+	}
+	out = append(out, "--project-directory", s.workdir, "-f", composePath)
+	return out
 }
 

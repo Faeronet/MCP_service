@@ -8,5 +8,7 @@ type Config struct {
 	Secret string
 	// Listen is host:port to bind HTTP server.
 	Listen string
+	// ComposeProject is docker compose -p (e.g. COMPOSE_PROJECT_NAME). Required when workdir is /zone — otherwise every zone shares project name "zone".
+	ComposeProject string
 }
 

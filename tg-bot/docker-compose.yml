@@ -9,6 +9,8 @@ services:
       dockerfile: Dockerfile
     environment:
       ZONE_WORKDIR: /zone
+      # Имя проекта compose: иначе при /zone все зоны получают project "zone" и затирают чужие контейнеры.
+      COMPOSE_PROJECT_NAME: tg-bot
       ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
       LISTEN: 0.0.0.0:19090
     volumes:

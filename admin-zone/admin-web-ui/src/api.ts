@@ -351,7 +351,7 @@ export async function getMonitorMetrics(): Promise<MonitorMetricsResponse> {
   return r.json()
 }
 
-// —— Зоны (zone-agent в каждой зоне, прокси admin-backend) ——
+// —— Configurations / zone-agent (one agent per compose stack, proxied by admin-backend) ——
 
 export interface ZoneListItem {
   id: string

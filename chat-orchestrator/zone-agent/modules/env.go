@@ -21,11 +21,12 @@ func (s *server) handleMeta(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]interface{}{
-		"workdir":        s.workdir,
-		"env_path":       envPath,
-		"env_exists":     envErr == nil,
-		"compose_path":   composePath,
-		"compose_exists": composeErr == nil,
+		"workdir":           s.workdir,
+		"compose_project":   strings.TrimSpace(s.composeProject),
+		"env_path":          envPath,
+		"env_exists":        envErr == nil,
+		"compose_path":      composePath,
+		"compose_exists":    composeErr == nil,
 	}
 	if composeErr != nil {
 		out["compose_error"] = composeErr.Error()

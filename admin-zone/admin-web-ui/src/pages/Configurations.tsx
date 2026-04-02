@@ -11,7 +11,7 @@ import {
 import { useToast } from '../context/ToastContext'
 import { RefreshCw, Server, Layers } from 'lucide-react'
 
-export function ZonesConfig() {
+export function ConfigurationsPage() {
   const [zones, setZones] = useState<ZoneListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [modalZone, setModalZone] = useState<ZoneListItem | null>(null)
@@ -33,7 +33,7 @@ export function ZonesConfig() {
         const { zones: z } = await listZones()
         setZones(Array.isArray(z) ? z : [])
       } catch (e) {
-        toastError(e instanceof Error ? e.message : 'Не удалось загрузить зоны')
+        toastError(e instanceof Error ? e.message : 'Failed to load configurations')
         setZones([])
       } finally {
         if (!silent) setLoading(false)
@@ -59,7 +59,7 @@ export function ZonesConfig() {
         setEnvText(env)
         setEnvDirty(false)
       } catch (e) {
-        toastError(e instanceof Error ? e.message : 'Ошибка загрузки зоны')
+        toastError(e instanceof Error ? e.message : 'Failed to open configuration')
         setServices([])
         setEnvText('')
       } finally {
@@ -92,9 +92,9 @@ export function ZonesConfig() {
     try {
       await putZoneEnv(modalZone.id, envText)
       setEnvDirty(false)
-      toastSuccess('.env сохранён на хосте')
+      toastSuccess('.env saved on host')
     } catch (e) {
-      toastError(e instanceof Error ? e.message : 'Ошибка сохранения')
+      toastError(e instanceof Error ? e.message : 'Save failed')
     }
   }
 
@@ -107,7 +107,7 @@ export function ZonesConfig() {
       setServices(Array.isArray(svc.services) ? svc.services : [])
       setServicesErr(svc.error || null)
     } catch (e) {
-      toastError(e instanceof Error ? e.message : 'Ошибка списка сервисов')
+      toastError(e instanceof Error ? e.message : 'Failed to load services')
     } finally {
       setServicesLoading(false)
     }
@@ -120,12 +120,12 @@ export function ZonesConfig() {
     setRebuildLog(null)
     try {
       const out = await zoneRebuild(modalZone.id, all ? { all: true } : { service: service! })
-      setRebuildLog(out.log || (out.ok ? 'Готово' : 'Ошибка'))
-      if (!out.ok) toastError('Сборка завершилась с ошибкой')
-      else toastSuccess(all ? 'Все сервисы обработаны' : `Сервис ${service} обновлён`)
+      setRebuildLog(out.log || (out.ok ? 'Done' : 'Error'))
+      if (!out.ok) toastError('Rebuild finished with errors')
+      else toastSuccess(all ? 'All services processed' : `Service ${service} updated`)
       await refreshServices()
     } catch (e) {
-      toastError(e instanceof Error ? e.message : 'Ошибка пересборки')
+      toastError(e instanceof Error ? e.message : 'Rebuild failed')
     } finally {
       setRebuilding(null)
     }
@@ -134,11 +134,11 @@ export function ZonesConfig() {
   return (
     <div className="page-layout">
       <div className="page-header">
-        <h1 className="page-title">Конфигурация зон</h1>
+        <h1 className="page-title">Configurations</h1>
         <p className="text-muted">
-          Управление .env и docker compose на хосте через{' '}
-          <span className="mono-inline">zone-agent</span> (см. каталог <span className="mono-inline">zone-agent</span> в репозитории).
-          В <span className="mono-inline">admin-backend</span> задайте <span className="mono-inline">ZONE_AGENTS</span> (JSON).
+          Host <span className="mono-inline">.env</span> and Docker Compose via{' '}
+          <span className="mono-inline">zone-agent</span> (see <span className="mono-inline">zone-agent</span> in the repo). Set{' '}
+          <span className="mono-inline">ZONE_AGENTS</span> (JSON) in <span className="mono-inline">admin-backend</span>.
         </p>
       </div>
       <div className="content-panel">
@@ -150,16 +150,17 @@ export function ZonesConfig() {
             disabled={loading}
           >
             <RefreshCw className="zones-icon" aria-hidden size={16} />
-            Обновить список
+            Refresh list
           </button>
         </div>
         {loading ? (
-          <p className="text-muted">Загрузка…</p>
+          <p className="text-muted">Loading…</p>
         ) : zones.length === 0 ? (
           <div className="table-empty">
-            <p className="table-empty-msg">Зоны не настроены</p>
+            <p className="table-empty-msg">Configurations are not set</p>
             <p className="text-muted table-empty-hint">
-              Добавьте JSON в ZONE_AGENTS у admin-backend и поднимите сервис zone-agent в compose каждой зоны.
+              Add JSON to <span className="mono-inline">ZONE_AGENTS</span> in admin-backend and run the <span className="mono-inline">zone-agent</span>{' '}
+              service in each compose stack.
             </p>
           </div>
         ) : (
@@ -168,9 +169,9 @@ export function ZonesConfig() {
               <table className="data-table data-table-header">
                 <thead>
                   <tr>
-                    <th style={{ width: '40%' }}>Зона</th>
+                    <th style={{ width: '40%' }}>Name</th>
                     <th style={{ width: '35%' }}>ID</th>
-                    <th style={{ width: '25%' }}>Агент</th>
+                    <th style={{ width: '25%' }}>Agent</th>
                   </tr>
                 </thead>
               </table>
@@ -198,7 +199,7 @@ export function ZonesConfig() {
                       </td>
                       <td style={{ width: '25%' }}>
                         <span className={z.agent_ok ? 'zones-pill zones-pill--ok' : 'zones-pill zones-pill--bad'}>
-                          {z.agent_ok ? 'доступен' : 'нет связи'}
+                          {z.agent_ok ? 'reachable' : 'unreachable'}
                         </span>
                       </td>
                     </tr>
@@ -220,11 +221,11 @@ export function ZonesConfig() {
               </div>
               <div className="zones-modal-header-actions">
                 <span className={modalZone.agent_ok ? 'zones-pill zones-pill--ok' : 'zones-pill zones-pill--bad'}>
-                  {modalZone.agent_ok ? 'агент OK' : 'агент недоступен'}
+                  {modalZone.agent_ok ? 'agent OK' : 'agent down'}
                 </span>
                 <button type="button" className="btn-secondary btn-sm" onClick={() => void refreshServices()} disabled={servicesLoading}>
                   <RefreshCw size={14} aria-hidden />
-                  Статусы
+                  Status
                 </button>
                 <button
                   type="button"
@@ -232,9 +233,9 @@ export function ZonesConfig() {
                   disabled={!!rebuilding || !modalZone.agent_ok}
                   onClick={() => void runRebuild(undefined, true)}
                 >
-                  {rebuilding === '__all__' ? '…' : 'Пересобрать все'}
+                  {rebuilding === '__all__' ? '…' : 'Rebuild all'}
                 </button>
-                <button type="button" className="chat-modal-close" onClick={closeModal} aria-label="Закрыть">
+                <button type="button" className="chat-modal-close" onClick={closeModal} aria-label="Close">
                   ×
                 </button>
               </div>
@@ -243,14 +244,14 @@ export function ZonesConfig() {
               <section className="zones-section">
                 <h3 className="zones-section-title">
                   <Server size={18} aria-hidden />
-                  Сервисы docker compose
+                  Docker Compose services
                 </h3>
                 {servicesLoading && services.length === 0 ? (
-                  <p className="text-muted">Загрузка…</p>
+                  <p className="text-muted">Loading…</p>
                 ) : servicesErr ? (
                   <p className="zones-services-err">{servicesErr}</p>
                 ) : services.length === 0 ? (
-                  <p className="text-muted">Нет сервисов или compose не найден.</p>
+                  <p className="text-muted">No services or compose file missing.</p>
                 ) : (
                   <ul className="zones-service-list">
                     {services.map((s) => (
@@ -267,7 +268,7 @@ export function ZonesConfig() {
                           disabled={!!rebuilding || !modalZone.agent_ok}
                           onClick={() => void runRebuild(s.name)}
                         >
-                          {rebuilding === s.name ? '…' : 'Пересобрать'}
+                          {rebuilding === s.name ? '…' : 'Rebuild'}
                         </button>
                       </li>
                     ))}
@@ -277,14 +278,14 @@ export function ZonesConfig() {
 
               {rebuildLog != null && (
                 <section className="zones-section">
-                  <h3 className="zones-section-title">Лог пересборки</h3>
+                  <h3 className="zones-section-title">Rebuild log</h3>
                   <pre className="zones-rebuild-log">{rebuildLog}</pre>
                 </section>
               )}
 
               <section className="zones-section">
                 <div className="zones-env-head">
-                  <h3 className="zones-section-title">Файл .env на хосте</h3>
+                  <h3 className="zones-section-title">Host .env file</h3>
                   <div className="zones-env-actions">
                     <button
                       type="button"
@@ -292,15 +293,15 @@ export function ZonesConfig() {
                       disabled={envLoading}
                       onClick={() => modalZone && void loadModalData(modalZone)}
                     >
-                      Перечитать
+                      Reload
                     </button>
                     <button type="button" className="btn-primary btn-sm" disabled={envLoading || !envDirty} onClick={() => void saveEnv()}>
-                      Сохранить
+                      Save
                     </button>
                   </div>
                 </div>
                 {envLoading ? (
-                  <p className="text-muted">Загрузка .env…</p>
+                  <p className="text-muted">Loading .env…</p>
                 ) : (
                   <textarea
                     className="zones-env-textarea"

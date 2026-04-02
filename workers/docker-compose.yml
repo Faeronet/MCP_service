@@ -9,6 +9,7 @@ services:
       dockerfile: Dockerfile
     environment:
       ZONE_WORKDIR: /zone
+      COMPOSE_PROJECT_NAME: workers
       ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
       LISTEN: 0.0.0.0:19090
     volumes:

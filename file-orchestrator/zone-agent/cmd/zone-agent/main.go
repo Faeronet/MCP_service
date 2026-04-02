@@ -29,10 +29,13 @@ func main() {
 		listen = "0.0.0.0:19090"
 	}
 
+	composeProject := strings.TrimSpace(os.Getenv("COMPOSE_PROJECT_NAME"))
+
 	if err := modules.Run(modules.Config{
-		Workdir: abs,
-		Secret:  secret,
-		Listen:  listen,
+		Workdir:        abs,
+		Secret:         secret,
+		Listen:         listen,
+		ComposeProject: composeProject,
 	}); err != nil {
 		log.Fatal(err)
 	}
