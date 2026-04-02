@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   DataTable,
   TableContainer,
@@ -35,6 +35,8 @@ const TimeTable = () => {
   const [scheduleModalError, setScheduleModalError] = useState('');
   const [showScheduleHint, setShowScheduleHint] = useState(true);
   const [notifyDaily, setNotifyDaily] = useState(false);
+  const autoSyncSignatureRef = useRef('');
+  const tableSignatureRef = useRef('');
 
   useEffect(() => {
     const data = loadTimeDataFromLocalStorage();
@@ -217,7 +219,7 @@ const TimeTable = () => {
     setScheduleSubmitting(true);
     setScheduleModalError('');
     try {
-      const body = JSON.stringify({ telegram_username: u, items });
+      const body = JSON.stringify({ telegram_username: u, sync: true, items });
       const res = await fetch('/api/schedule', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,6 +249,7 @@ const TimeTable = () => {
           });
           localStorage.setItem('timeData', JSON.stringify(raw));
           setTimeData(formatDataForTable(raw));
+          autoSyncSignatureRef.current = '';
         } catch {
           /* ignore */
         }
@@ -263,6 +266,46 @@ const TimeTable = () => {
       setScheduleSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    const syncConfiguredSchedule = async () => {
+      const raw = loadTimeDataFromLocalStorage();
+      const rows = formatDataForTable(raw);
+      const tableSig = JSON.stringify(rows.map((r) => [r.id, r.value, r.validation, r.message, r.notifyDaily]));
+      if (tableSignatureRef.current !== tableSig) {
+        tableSignatureRef.current = tableSig;
+        setTimeData(rows);
+      }
+
+      const storedUsername = normalizeUsername(localStorage.getItem(TG_USERNAME_STORAGE_KEY) || telegramUsername);
+      if (!storedUsername) return;
+      const storedDaily = localStorage.getItem(TG_DAILY_STORAGE_KEY) === '1';
+      const items = buildSchedulePayloadFromRows(rows, storedDaily);
+      const signature = JSON.stringify({
+        u: storedUsername,
+        d: storedDaily,
+        items: items.map((it) => [it.note_item_id, it.time, it.notify_daily]),
+      });
+      if (autoSyncSignatureRef.current === signature) return;
+
+      autoSyncSignatureRef.current = signature;
+      try {
+        await fetch('/api/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telegram_username: storedUsername, sync: true, items }),
+        });
+      } catch {
+        autoSyncSignatureRef.current = '';
+      }
+    };
+
+    void syncConfiguredSchedule();
+    const timer = setInterval(() => {
+      void syncConfiguredSchedule();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [telegramUsername]);
 
   const headers = [
     { key: 'pageName', header: 'Часть' },
