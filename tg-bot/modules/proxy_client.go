@@ -64,12 +64,13 @@ func (b *Bot) CallChat(ctx context.Context, sessionID uuid.UUID, chatID, userID 
 // ProxySchedulerDeliver sends photo+caption or text via mcp-proxy (тот же путь, что и у scheduler).
 func (b *Bot) ProxySchedulerDeliver(ctx context.Context, chatID, telegramUserID int64, text, angelChunkID string) (telegramMessageID int, err error) {
 	body := map[string]interface{}{
-		"chat_id":          chatID,
-		"telegram_id":      telegramUserID,
-		"text":             text,
-		"angel_chunk_id":   angelChunkID,
-		"angel_name":       "",
-		"request_id":       "tg-chat",
+		"chat_id":           chatID,
+		"telegram_id":       telegramUserID,
+		"text":              text,
+		"angel_chunk_id":    angelChunkID,
+		"angel_name":        "",
+		"request_id":        "tg-chat",
+		"skip_chat_memory":  true, // ответ уже записан в HandleChat; иначе дубль в Chat Log
 	}
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.ProxyURL+"/scheduler/deliver", bytes.NewReader(payload))

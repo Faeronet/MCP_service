@@ -17,12 +17,14 @@ type schedulerComposeReq struct {
 }
 
 type schedulerDeliverReq struct {
-	TelegramID  int64  `json:"telegram_id"`
-	ChatID      int64  `json:"chat_id"`
-	Text        string `json:"text"`
+	TelegramID   int64  `json:"telegram_id"`
+	ChatID       int64  `json:"chat_id"`
+	Text         string `json:"text"`
 	AngelChunkID string `json:"angel_chunk_id,omitempty"`
-	AngelName   string `json:"angel_name,omitempty"`
-	RequestID   string `json:"request_id"`
+	AngelName    string `json:"angel_name,omitempty"`
+	RequestID    string `json:"request_id"`
+	// SkipChatMemory: при true не пишем второй assistant в chat.messages (ответ уже сохранён в HandleChat).
+	SkipChatMemory bool `json:"skip_chat_memory,omitempty"`
 }
 
 func (s *Server) schedulerInternalAuthorized(r *http.Request) bool {
@@ -138,8 +140,8 @@ func (s *Server) HandleSchedulerDeliver(w http.ResponseWriter, r *http.Request) 
 		} `json:"result"`
 	}{}
 	out.Result.MessageID = msgID
-	if out.Result.MessageID != 0 {
-		// Best-effort: сохраняем напоминание в память чата, чтобы reply-вопрос шёл по его контексту.
+	if out.Result.MessageID != 0 && !req.SkipChatMemory {
+		// Напоминания из notification: пишем в chat.messages. После /chat ответ уже в БД + answer_context — дублировать нельзя.
 		_ = s.SaveSchedulerReminderMemory(
 			r.Context(),
 			req.TelegramID,

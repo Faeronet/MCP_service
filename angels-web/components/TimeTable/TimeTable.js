@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 import {
   DataTable,
   TableContainer,
@@ -23,6 +24,31 @@ import { angelNameToRu, timeDataWithRussianNames } from './angelNamesMap';
 const TG_USERNAME_STORAGE_KEY = 'schedulerTelegramUsername';
 const TG_DAILY_STORAGE_KEY = 'schedulerDailyNotify';
 const NOTE_SCHEDULE_BRIDGE_KEY = '__mcp_schedule_from_note__';
+const SCHEDULE_BOT_URL = 'https://t.me/tet_mcp_bot#';
+
+/** Split text on http(s) URLs and render anchors (Carbon InlineNotification forbids links inside subtitle). */
+function linkifyErrorText(text) {
+  const segments = String(text || '').split(/(https?:\/\/\S+)/g);
+  return segments.map((segment, i) => {
+    if (!/^https?:\/\//.test(segment)) {
+      return <React.Fragment key={i}>{segment}</React.Fragment>;
+    }
+    let href = segment;
+    let extra = '';
+    while (href.length > 1 && /[.,;:!?]$/.test(href) && !href.endsWith('#')) {
+      extra = href.slice(-1) + extra;
+      href = href.slice(0, -1);
+    }
+    return (
+      <React.Fragment key={i}>
+        <a href={href} target="_blank" rel="noopener noreferrer">
+          {href}
+        </a>
+        {extra}
+      </React.Fragment>
+    );
+  });
+}
 
 const TimeTable = () => {
   const [timeData, setTimeData] = useState([]);
@@ -323,14 +349,60 @@ const TimeTable = () => {
         <ModalHeader title="Уведомления в Telegram" />
         <ModalBody>
           {scheduleModalError ? (
-            <div style={{ marginBottom: '1rem' }}>
-              <InlineNotification
-                kind="error"
-                title="Ошибка"
-                subtitle={scheduleModalError}
-                lowContrast
-                onClose={() => setScheduleModalError('')}
-              />
+            <div
+              role="alert"
+              style={{
+                position: 'relative',
+                marginBottom: '1rem',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '14px',
+                alignItems: 'flex-start',
+                padding: '12px 40px 12px 14px',
+                borderRadius: '4px',
+                borderLeft: '3px solid #da1e28',
+                background: '#fff1f1',
+                color: '#161616',
+              }}
+            >
+              <button
+                type="button"
+                aria-label="Скрыть сообщение об ошибке"
+                onClick={() => setScheduleModalError('')}
+                style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: '1.25rem',
+                  lineHeight: 1,
+                  padding: '4px',
+                  color: '#161616',
+                }}
+              >
+                ×
+              </button>
+              <div style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.42 }}>
+                <div style={{ fontWeight: 600, marginBottom: '6px' }}>Ошибка</div>
+                <div>{linkifyErrorText(scheduleModalError)}</div>
+              </div>
+              <a
+                href={SCHEDULE_BOT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ flexShrink: 0, lineHeight: 0, alignSelf: 'center' }}
+                aria-label="Открыть бота в Telegram (QR)"
+              >
+                <Image
+                  src="/telegram-qr-tet-mcp-bot.png"
+                  alt=""
+                  width={104}
+                  height={124}
+                  style={{ display: 'block', borderRadius: '4px', height: 'auto' }}
+                />
+              </a>
             </div>
           ) : null}
           <p style={{ marginBottom: '1rem' }}>

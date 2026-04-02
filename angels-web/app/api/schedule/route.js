@@ -1,4 +1,4 @@
-const BOT_URL = 'https://t.me/tet_mcp_bot';
+const BOT_URL = 'https://t.me/tet_mcp_bot#';
 
 function schedulerBase() {
   return (process.env.SCHEDULER_INTERNAL_URL || 'http://127.0.0.1:8090').replace(/\/$/, '');

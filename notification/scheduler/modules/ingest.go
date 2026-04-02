@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const telegramBotURL = "https://t.me/tet_mcp_bot"
+const telegramBotURL = "https://t.me/tet_mcp_bot#"
 
 var mskLoc *time.Location
 

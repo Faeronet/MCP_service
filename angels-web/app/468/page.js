@@ -5,11 +5,9 @@ import { Content,Grid,Column } from "@carbon/react";
 import cx from 'classnames';
 import Image from 'next/image'
 
-
-import Pic1 from '../../public/pictures/telegram.jpg'
-
-
 import styles from '../../app/case.module.css'
+
+const BOT_URL = 'https://t.me/tet_mcp_bot#'
 const StoryContent = ({
   useResponsiveOffset = true
 }) => {
@@ -32,20 +30,32 @@ const StoryContent = ({
           <h2 style={{
           margin: '0 0 30px'
         }}>Telegram</h2>
-       <div>
+       <div
+         style={{
+           display: 'flex',
+           flexDirection: 'column',
+           alignItems: 'center',
+           width: '100%',
+           marginBottom: '24px'
+         }}
+       >
+      <div style={{ width: '100%', maxWidth: 'min(100%, 420px)' }}>
       <Image
-        src={Pic1}
-        alt="Example Image"
+        src="/telegram-qr-tet-mcp-bot.png"
+        alt="QR-код Telegram-бота @tet_mcp_bot"
+        width={948}
+        height={1134}
         className={styles.responsiveImage}
+        priority
       />
     </div>
 
-<div>
-     <p>
-            
-            <a href="https://t.me/angeliroad">Telegram ссылка</a>. 
+<div style={{ width: '100%', textAlign: 'center' }}>
+     <p style={{ marginTop: '16px' }}>
+            <a href={BOT_URL}>Telegram ссылка</a>.
     </p>
-</div>   
+</div>
+</div>
 
 <h2 style={{
           margin: '0 0 30px'
