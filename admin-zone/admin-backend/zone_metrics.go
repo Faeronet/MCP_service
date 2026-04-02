@@ -32,7 +32,7 @@ func (h *Handler) collectContainersForMonitor(ctx context.Context) []ContainerMe
 	var mu sync.Mutex
 	out := make([]ContainerMetrics, 0, 128)
 	var wg sync.WaitGroup
-	timeout := 15 * time.Second
+	timeout := 25 * time.Second
 	for _, z := range h.ZoneAgents {
 		if strings.TrimSpace(z.AgentURL) == "" {
 			continue

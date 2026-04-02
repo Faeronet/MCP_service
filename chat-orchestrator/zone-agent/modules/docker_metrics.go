@@ -221,12 +221,18 @@ func tryDockerList(client *http.Client) ([]byte, string, bool) {
 	return nil, "", false
 }
 
+// normalizeComposeProjectLabel приводит имя проекта compose к одному виду (Docker иногда даёт _ вместо -).
+func normalizeComposeProjectLabel(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.ReplaceAll(s, "_", "-")
+}
+
 func composeProjectOf(labels map[string]string) string {
 	if labels == nil {
 		return ""
 	}
 	if v := strings.TrimSpace(labels["com.docker.compose.project"]); v != "" {
-		return strings.ToLower(v)
+		return normalizeComposeProjectLabel(v)
 	}
 	return ""
 }
@@ -240,7 +246,7 @@ func composeServiceOf(labels map[string]string) string {
 
 // collectZoneDockerMetrics lists containers for this compose project and returns CPU/RAM + short history.
 func (s *server) collectZoneDockerMetrics(ctx context.Context) []containerMetricsOut {
-	want := strings.ToLower(strings.TrimSpace(s.composeProject))
+	want := normalizeComposeProjectLabel(s.composeProject)
 	if want == "" {
 		return nil
 	}

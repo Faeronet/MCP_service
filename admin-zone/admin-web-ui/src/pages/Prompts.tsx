@@ -10,6 +10,21 @@ import {
 import { useToast } from '../context/ToastContext'
 import { Pencil, RefreshCw } from 'lucide-react'
 
+/** Зона, где лежит mcp-proxy/prompts (остальные зоны в списке не показываем). */
+const PROMPTS_MCP_ZONE_ID =
+  (import.meta.env.VITE_PROMPTS_MCP_ZONE_ID as string | undefined)?.trim() || 'chat-orchestrator'
+
+/** Короткое имя для UI: без « / …» и без « (Prompt X)» в конце. */
+function promptDisplayTitle(raw: string): string {
+  let t = raw.trim()
+  const slash = t.indexOf(' / ')
+  if (slash >= 0) {
+    t = t.slice(0, slash).trim()
+  }
+  t = t.replace(/\s+\([^)]*\)\s*$/, '').trim()
+  return t || raw.trim()
+}
+
 type PromptTableEntry = {
   key: string
   zoneId: string
@@ -35,31 +50,30 @@ export function PromptsPage() {
       try {
         const { zones: z } = await listZones()
         const zones: ZoneListItem[] = Array.isArray(z) ? z : []
+        const zone = zones.find((x) => x.id === PROMPTS_MCP_ZONE_ID)
         const out: PromptTableEntry[] = []
-        await Promise.all(
-          zones.map(async (zone) => {
-            try {
-              const meta = await listZoneMcpPrompts(zone.id)
-              const rows = Array.isArray(meta.prompts) ? meta.prompts : []
-              for (const row of rows) {
-                out.push({
-                  key: `${zone.id}:${row.id}`,
-                  zoneId: zone.id,
-                  zoneName: zone.name,
-                  agentOk: zone.agent_ok,
-                  row,
-                })
-              }
-            } catch {
-              /* зона без агента или без mcp-proxy/prompts — пропускаем */
+        if (zone) {
+          try {
+            const meta = await listZoneMcpPrompts(zone.id)
+            const rows = Array.isArray(meta.prompts) ? meta.prompts : []
+            for (const row of rows) {
+              out.push({
+                key: `${zone.id}:${row.id}`,
+                zoneId: zone.id,
+                zoneName: zone.name,
+                agentOk: zone.agent_ok,
+                row,
+              })
             }
+          } catch {
+            /* нет агента или каталога mcp-proxy/prompts */
+          }
+        }
+        out.sort((a, b) =>
+          promptDisplayTitle(a.row.title).localeCompare(promptDisplayTitle(b.row.title), undefined, {
+            sensitivity: 'base',
           })
         )
-        out.sort((a, b) => {
-          const t = a.row.title.localeCompare(b.row.title, undefined, { sensitivity: 'base' })
-          if (t !== 0) return t
-          return a.zoneName.localeCompare(b.zoneName, undefined, { sensitivity: 'base' })
-        })
         setEntries(out)
       } catch (e) {
         toastError(e instanceof Error ? e.message : 'Не удалось загрузить список')
@@ -122,7 +136,7 @@ export function PromptsPage() {
     try {
       await putZoneMcpPrompt(selected.zoneId, selected.row.id, modalText)
       setModalDirty(false)
-      toastSuccess(`Промпт «${selected.row.title}» сохранён на хосте`)
+      toastSuccess(`Промпт «${promptDisplayTitle(selected.row.title)}» сохранён на хосте`)
       await loadPrompts({ silent: true })
     } catch (e) {
       toastError(e instanceof Error ? e.message : 'Сохранение не удалось')
@@ -144,9 +158,11 @@ export function PromptsPage() {
       <div className="page-header">
         <h1 className="page-title">Prompts</h1>
         <p className="text-muted">
-          Файлы <span className="mono-inline">mcp-proxy/prompts/*.txt</span> на хостах зон (через{' '}
-          <span className="mono-inline">zone-agent</span>). Нажмите строку, чтобы открыть редактор. После правок перезапустите{' '}
-          <span className="mono-inline">mcp-proxy</span>.
+          Только зона <span className="mono-inline">{PROMPTS_MCP_ZONE_ID}</span> (mcp-proxy):{' '}
+          <span className="mono-inline">mcp-proxy/prompts/*.txt</span> через{' '}
+          <span className="mono-inline">zone-agent</span>. После правок перезапустите{' '}
+          <span className="mono-inline">mcp-proxy</span>. Другой id зоны:{' '}
+          <span className="mono-inline">VITE_PROMPTS_MCP_ZONE_ID</span>.
         </p>
       </div>
       <div className="content-panel">
@@ -167,10 +183,9 @@ export function PromptsPage() {
             <table className="data-table data-table-header">
               <thead>
                 <tr>
-                  <th style={{ width: '32%' }}>Промпт</th>
-                  <th style={{ width: '28%' }}>Файл</th>
-                  <th style={{ width: '22%' }}>Зона</th>
-                  <th style={{ width: '18%' }}>Статус</th>
+                  <th style={{ width: '40%' }}>Промпт</th>
+                  <th style={{ width: '35%' }}>Файл</th>
+                  <th style={{ width: '25%' }}>Статус</th>
                 </tr>
               </thead>
             </table>
@@ -184,9 +199,9 @@ export function PromptsPage() {
               <div className="table-empty">
                 <p className="table-empty-msg">Промпты не найдены</p>
                 <p className="text-muted table-empty-hint">
-                  Нужны записи в <span className="mono-inline">ZONE_AGENTS</span> и каталог{' '}
-                  <span className="mono-inline">mcp-proxy/prompts</span> на зоне (например{' '}
-                  <span className="mono-inline">chat-orchestrator</span>).
+                  В <span className="mono-inline">ZONE_AGENTS</span> должна быть зона{' '}
+                  <span className="mono-inline">{PROMPTS_MCP_ZONE_ID}</span> с каталогом{' '}
+                  <span className="mono-inline">mcp-proxy/prompts</span>.
                 </p>
               </div>
             ) : (
@@ -201,20 +216,16 @@ export function PromptsPage() {
                       tabIndex={0}
                       onKeyDown={(ev) => ev.key === 'Enter' && void openModal(e)}
                     >
-                      <td style={{ width: '32%' }}>
+                      <td style={{ width: '40%' }}>
                         <span className="zones-name">
                           <Pencil className="zones-row-icon" size={18} aria-hidden />
-                          {e.row.title}
+                          {promptDisplayTitle(e.row.title)}
                         </span>
                       </td>
-                      <td style={{ width: '28%' }} className="mono prompts-table-file">
+                      <td style={{ width: '35%' }} className="mono prompts-table-file">
                         {e.row.file}
                       </td>
-                      <td style={{ width: '22%' }}>
-                        <span className="mono">{e.zoneName}</span>
-                        <span className="text-muted mono prompts-table-zone-id"> · {e.zoneId}</span>
-                      </td>
-                      <td style={{ width: '18%' }}>
+                      <td style={{ width: '25%' }}>
                         <span
                           className={
                             !e.agentOk
@@ -244,11 +255,11 @@ export function PromptsPage() {
                 <h2 className="chat-modal-title">
                   <span className="zones-name">
                     <Pencil className="zones-row-icon" size={20} aria-hidden />
-                    {selected.row.title}
+                    {promptDisplayTitle(selected.row.title)}
                   </span>
                 </h2>
                 <p className="zones-modal-sub mono">
-                  {selected.row.file} · {selected.zoneName} ({selected.zoneId})
+                  {selected.row.file} · {selected.zoneId}
                 </p>
               </div>
               <div className="zones-modal-header-actions">

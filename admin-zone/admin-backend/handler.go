@@ -634,7 +634,7 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	system, gpus, history := CollectMetrics()
+	system, gpus, history := CollectMetrics(h)
 	containers := h.collectContainersForMonitor(r.Context())
 
 	systemMap := map[string]interface{}{

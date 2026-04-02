@@ -42,6 +42,7 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/v1/services", s.withAuth(s.handleServices))
 	mux.HandleFunc("/v1/rebuild", s.withAuth(s.handleRebuild))
 	mux.HandleFunc("/v1/metrics", s.withAuth(s.handleMetrics))
+	mux.HandleFunc("/v1/metrics/gpu", s.withAuth(s.handleGPUMetrics))
 	if cfg.AISwap {
 		mux.HandleFunc("/v1/ai-swap/status", s.withAuth(s.handleAISwapStatus))
 		mux.HandleFunc("/v1/ai-swap/catalog", s.withAuth(s.handleAISwapCatalog))

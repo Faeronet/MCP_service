@@ -704,7 +704,8 @@ func GetUptimeSec() float64 {
 
 // CollectMetrics gathers current system and GPU metrics and appends to history.
 // On non-Linux or when /proc is unavailable, returns mock data.
-func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []HistoryPoint) {
+// Если в контейнере admin-backend нет GPU, метрики карт подтягиваются с zone-agent (docker exec nvidia-smi в vllm и т.д.).
+func CollectMetrics(h *Handler) (system SystemMetrics, gpus []GPUMetrics, history []HistoryPoint) {
 	now := time.Now()
 	if runtime.GOOS != "linux" {
 		return mockMetrics(now)
@@ -720,7 +721,7 @@ func CollectMetrics() (system SystemMetrics, gpus []GPUMetrics, history []Histor
 	system.RAMPct, system.RamUsedGB, system.RamTotalGB = collectRAM()
 	system.DiskIOK, metricsStore.lastDisk = collectDiskIO(&metricsStore.lastDisk)
 
-	gpus = collectGPUs()
+	gpus = mergeGPUWithZoneAgents(h, collectGPUs())
 	if len(gpus) == 0 {
 		gpus = metricsStore.lastGPUs
 		if gpus == nil {
