@@ -42,12 +42,16 @@ func main() {
 		}
 	}
 
+	aiSwap := strings.TrimSpace(os.Getenv("ZONE_AGENT_AI_SWAP"))
+	aiSwapOn := aiSwap == "1" || strings.EqualFold(aiSwap, "true") || strings.EqualFold(aiSwap, "yes")
+
 	if err := modules.Run(modules.Config{
 		Workdir:         abs,
 		Secret:          secret,
 		Listen:          listen,
 		ComposeProject:  composeProject,
 		ComposeProfiles: composeProfiles,
+		AISwap:          aiSwapOn,
 	}); err != nil {
 		log.Fatal(err)
 	}

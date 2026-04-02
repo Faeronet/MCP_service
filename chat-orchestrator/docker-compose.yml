@@ -62,6 +62,10 @@ services:
     container_name: mcp_proxy
     networks:
       - mcp_stack
+    environment:
+      MCP_PROMPTS_DIR: /mcp-prompts
+    volumes:
+      - ./mcp-proxy/prompts:/mcp-prompts:ro
     ports:
       - "0.0.0.0:8083:8083"
     depends_on:

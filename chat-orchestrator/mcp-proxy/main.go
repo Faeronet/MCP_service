@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -30,14 +31,41 @@ func main() {
 	defer pool.Close()
 
 	var promptA, promptB, promptC string
-	if raw, err := promptFS.ReadFile("prompts/query_extract.txt"); err == nil {
-		promptA = strings.TrimSpace(string(raw))
+	tryDir := strings.TrimSpace(os.Getenv("MCP_PROMPTS_DIR"))
+	readFromDir := func(name string) (string, bool) {
+		if tryDir == "" {
+			return "", false
+		}
+		b, err := os.ReadFile(filepath.Join(tryDir, name))
+		if err != nil {
+			return "", false
+		}
+		return strings.TrimSpace(string(b)), true
 	}
-	if raw, err := promptFS.ReadFile("prompts/answer.txt"); err == nil {
-		promptB = strings.TrimSpace(string(raw))
+	var fromDiskA, fromDiskB, fromDiskC bool
+	if s, ok := readFromDir("query_extract.txt"); ok {
+		promptA, fromDiskA = s, true
 	}
-	if raw, err := promptFS.ReadFile("prompts/reminder_compose.txt"); err == nil {
-		promptC = strings.TrimSpace(string(raw))
+	if s, ok := readFromDir("answer.txt"); ok {
+		promptB, fromDiskB = s, true
+	}
+	if s, ok := readFromDir("reminder_compose.txt"); ok {
+		promptC, fromDiskC = s, true
+	}
+	if !fromDiskA && promptA == "" {
+		if raw, err := promptFS.ReadFile("prompts/query_extract.txt"); err == nil {
+			promptA = strings.TrimSpace(string(raw))
+		}
+	}
+	if !fromDiskB && promptB == "" {
+		if raw, err := promptFS.ReadFile("prompts/answer.txt"); err == nil {
+			promptB = strings.TrimSpace(string(raw))
+		}
+	}
+	if !fromDiskC && promptC == "" {
+		if raw, err := promptFS.ReadFile("prompts/reminder_compose.txt"); err == nil {
+			promptC = strings.TrimSpace(string(raw))
+		}
 	}
 	if promptA == "" {
 		promptA = "Сформулируй короткий поисковый запрос по сообщению пользователя для поиска в базе. Только запрос, без пояснений."

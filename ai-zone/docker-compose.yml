@@ -12,6 +12,7 @@ services:
       COMPOSE_PROJECT_NAME: ai-zone
       ZONE_AGENT_HOST_RESOLV_PATH: /etc/resolv.conf
       ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
+      ZONE_AGENT_AI_SWAP: "1"
       LISTEN: 0.0.0.0:19090
     volumes:
       - ./:/zone
@@ -72,7 +73,7 @@ services:
     container_name: mcp_vllm_embed
     networks:
       - mcp_stack
-    command: ["--model", "BAAI/bge-m3", "--port", "8000", "--gpu-memory-utilization", "0.30"]
+    command: ["--model", "${VLLM_EMBED_MODEL:-BAAI/bge-m3}", "--port", "8000", "--gpu-memory-utilization", "0.30"]
     deploy:
       resources:
         limits:

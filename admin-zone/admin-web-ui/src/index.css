@@ -697,9 +697,6 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
 .login-card .btn-primary { width: 100%; margin-top: 8px; padding: 12px; }
 
 /* iframe full height in content panel */
-.grafana-iframe-wrap { height: calc(100vh - var(--top-bar-height) - var(--bottom-bar-height) - 120px); min-height: 400px; }
-.grafana-iframe-wrap iframe { width: 100%; height: 100%; border: 1px solid var(--content-border); border-radius: 8px; }
-
 /* ----- Monitor: компактные спидометры в ряд, кнопки как в Logs ----- */
 .page-header-row {
   display: flex;
@@ -1365,6 +1362,27 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   }
 }
 
+/* ----- Zones list pages: Configurations + Prompts (shared table) ----- */
+.zones-list-page .content-panel {
+  display: flex;
+  flex-direction: column;
+  background: rgba(24, 26, 38, 0.55);
+  border: 1px solid var(--content-border);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.zones-list-page .zones-toolbar {
+  flex-shrink: 0;
+}
+.zones-list-page .zones-picker-table {
+  flex: 1;
+  min-height: 0;
+}
+.zones-table-loading {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
 /* ----- Zones config (zone-agent) ----- */
 .zones-toolbar {
   margin-bottom: 14px;
@@ -1420,6 +1438,30 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   max-width: 920px;
   width: 100%;
   max-height: 90vh;
+}
+.zones-modal--wide {
+  max-width: min(1100px, 96vw);
+}
+.zones-prompts-hint {
+  font-size: 0.85rem;
+  margin: 0 0 12px 0;
+  line-height: 1.45;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--content-border);
+  background: rgba(15, 23, 42, 0.35);
+}
+.zones-prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.zones-prompt-block .zones-prompt-textarea {
+  min-height: 200px;
+}
+.zones-prompt-meta {
+  font-size: 0.75rem;
+  align-self: center;
 }
 .zones-modal-header {
   flex-wrap: wrap;
@@ -1504,6 +1546,40 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.ai-swap-log {
+  max-height: min(50vh, 360px);
+}
+.ai-swap-hint {
+  margin-top: 8px;
+}
+.ai-swap-model-cell {
+  font-size: 0.8125rem;
+  word-break: break-word;
+}
+.ai-swap-model-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ai-swap-model-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  min-width: 200px;
+  max-width: 100%;
+}
+.ai-swap-model-btn-label {
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.ai-swap-model-btn-id {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  line-height: 1.3;
+  word-break: break-all;
 }
 .zones-env-head {
   display: flex;

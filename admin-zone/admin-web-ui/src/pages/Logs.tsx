@@ -89,7 +89,7 @@ export function Logs() {
             Поиск
           </button>
         </div>
-        <p className="text-muted">Индекс из Postgres (таблица obs.logs_index). Для сырых запросов к Loki — Grafana.</p>
+        <p className="text-muted">Индекс из Postgres (таблица obs.logs_index).</p>
       </div>
       <div className="content-panel">
         {loading ? (

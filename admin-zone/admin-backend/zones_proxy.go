@@ -6,6 +6,7 @@ import (
 	"io"
 	stdlog "log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -55,7 +56,9 @@ func (h *Handler) zoneByID(id string) *ZoneAgentConfig {
 	return nil
 }
 
-// ZonesRoutes: GET /api/zones; GET|PUT /api/zones/{id}/env; GET /api/zones/{id}/services; POST /api/zones/{id}/rebuild
+// ZonesRoutes: GET /api/zones; GET|PUT /api/zones/{id}/env; GET /api/zones/{id}/services; POST /api/zones/{id}/rebuild;
+// GET /api/zones/{id}/ai-swap/status; GET /api/zones/{id}/ai-swap/catalog; POST /api/zones/{id}/ai-swap/swap;
+// GET /api/zones/{id}/mcp-proxy-prompts; GET|PUT /api/zones/{id}/mcp-proxy-prompts/{promptId}
 func (h *Handler) ZonesRoutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
 	if path == "/api/zones" {
@@ -82,6 +85,53 @@ func (h *Handler) ZonesRoutes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unknown zone"}`, http.StatusNotFound)
 		return
 	}
+	if len(parts) >= 3 && parts[1] == "ai-swap" {
+		action := strings.TrimSpace(parts[2])
+		switch action {
+		case "status":
+			if r.Method != http.MethodGet {
+				http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+				return
+			}
+			h.zoneProxyAISwap(w, r, z, http.MethodGet, "/v1/ai-swap/status", nil, 30*time.Second)
+		case "catalog":
+			if r.Method != http.MethodGet {
+				http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+				return
+			}
+			p := "/v1/ai-swap/catalog"
+			if q := r.URL.RawQuery; q != "" {
+				p += "?" + q
+			}
+			h.zoneProxyAISwap(w, r, z, http.MethodGet, p, nil, 30*time.Second)
+		case "swap":
+			if r.Method != http.MethodPost {
+				http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+				return
+			}
+			h.zoneProxyAISwap(w, r, z, http.MethodPost, "/v1/ai-swap/swap", r.Body, 90*time.Minute)
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
+	if len(parts) >= 2 && parts[1] == "mcp-proxy-prompts" {
+		if len(parts) == 2 {
+			if r.Method != http.MethodGet {
+				http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+				return
+			}
+			h.zoneProxyMcpPromptsList(w, r, z)
+			return
+		}
+		if len(parts) == 3 {
+			h.zoneProxyMcpPromptOne(w, r, z, parts[2])
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+
 	sub := ""
 	if len(parts) > 1 {
 		sub = parts[1]
@@ -229,6 +279,31 @@ func (h *Handler) zoneProxyRebuild(w http.ResponseWriter, r *http.Request, z *Zo
 	_, _ = io.Copy(w, resp.Body)
 }
 
+func (h *Handler) zoneProxyAISwap(w http.ResponseWriter, r *http.Request, z *ZoneAgentConfig, method, agentPath string, body io.Reader, timeout time.Duration) {
+	u := z.AgentURL + agentPath
+	req, err := http.NewRequestWithContext(r.Context(), method, u, body)
+	if err != nil {
+		http.Error(w, `{"error":"request"}`, http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("X-Zone-Agent-Secret", z.Secret)
+	if method == http.MethodPost && body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := h.zoneAgentClient(timeout).Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"agent unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 func (h *Handler) zoneProxyMeta(w http.ResponseWriter, r *http.Request, z *ZoneAgentConfig) {
 	resp, err := h.zoneDo(r.Context(), z, http.MethodGet, "/v1/meta", nil, "", 15*time.Second)
 	if err != nil {
@@ -239,4 +314,53 @@ func (h *Handler) zoneProxyMeta(w http.ResponseWriter, r *http.Request, z *ZoneA
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func (h *Handler) zoneProxyMcpPromptsList(w http.ResponseWriter, r *http.Request, z *ZoneAgentConfig) {
+	resp, err := h.zoneDo(r.Context(), z, http.MethodGet, "/v1/mcp-proxy-prompts", nil, "", 30*time.Second)
+	if err != nil {
+		http.Error(w, `{"error":"agent unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (h *Handler) zoneProxyMcpPromptOne(w http.ResponseWriter, r *http.Request, z *ZoneAgentConfig, promptID string) {
+	promptID = strings.TrimSpace(promptID)
+	if promptID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	path := "/v1/mcp-proxy-prompts/" + url.PathEscape(promptID)
+	switch r.Method {
+	case http.MethodGet:
+		resp, err := h.zoneDo(r.Context(), z, http.MethodGet, path, nil, "", 30*time.Second)
+		if err != nil {
+			http.Error(w, `{"error":"agent unreachable"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	case http.MethodPut:
+		body := io.LimitReader(r.Body, 2<<20)
+		resp, err := h.zoneDo(r.Context(), z, http.MethodPut, path, body, "text/plain; charset=utf-8", 30*time.Second)
+		if err != nil {
+			http.Error(w, `{"error":"agent unreachable"}`, http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
 }

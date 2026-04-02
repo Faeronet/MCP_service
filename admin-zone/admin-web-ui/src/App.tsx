@@ -11,9 +11,10 @@ import { Logs } from './pages/Logs'
 import { ChatLog } from './pages/ChatLog'
 import { Chat } from './pages/Chat'
 import { Monitor } from './pages/Monitor'
-import { Grafana } from './pages/Grafana'
 import { Reminders } from './pages/Reminders'
 import { ConfigurationsPage } from './pages/Configurations'
+import { PromptsPage } from './pages/Prompts'
+import { AISwap } from './pages/AISwap'
 
 export default function App() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
@@ -39,8 +40,9 @@ export default function App() {
           <Route path="chat" element={<Chat />} />
           <Route path="reminders" element={<Reminders />} />
           <Route path="monitor" element={<Monitor />} />
-          <Route path="grafana" element={<Grafana />} />
           <Route path="configurations" element={<ConfigurationsPage />} />
+          <Route path="prompts" element={<PromptsPage />} />
+          <Route path="ai-swap" element={<AISwap />} />
           <Route path="zones" element={<Navigate to="/configurations" replace />} />
         </Route>
       </Routes>

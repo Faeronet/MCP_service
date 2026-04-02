@@ -9,14 +9,29 @@ type ChartMode = 'all' | 'separate'
 
 const POLL_MS = Number(import.meta.env.VITE_MONITOR_POLL_MS) || 30000
 
-/** Какие блоки показывать в каждом разделе. Контейнеры — по точному совпадению имени (lowercase). */
-const SECTION_CONFIG: Record<MonitorSection, { gpus: boolean; containers: string[] }> = {
-  gpus: { gpus: true, containers: [] },
-  ai: { gpus: true, containers: ['extract-tool', 'vllm', 'vllm-embed', 'rerank', 'minio'] },
-  read: { gpus: true, containers: ['mcp-read', 'qdrant', 'vllm-embed', 'rerank', 'vllm'] },
-  write: { gpus: true, containers: ['admin-backend', 'minio', 'rabbitmq', 'ingestion-worker', 'mcp-write', 'extract-tool', 'vllm', 'vllm-embed', 'rerank', 'qdrant'] },
-  worker: { gpus: false, containers: ['ingestion-worker', 'attachment-worker', 'rabbitmq', 'mcp-write', 'mcp-read'] },
-  other: { gpus: false, containers: ['bot-service', 'redis', 'log-indexer'] },
+/**
+ * Имена compose-сервисов по зонам (как в docker-compose), без префикса «zone / ».
+ * С агентов приходит имя вида «db-zone / qdrant» — сравниваем только часть после « / ».
+ * Other — всё, что не попало в ai ∪ read ∪ write ∪ worker (в т.ч. angels-web, tg-bot, scheduler, zone-agent, promtail).
+ */
+const SECTION_SERVICE_LISTS: Record<Exclude<MonitorSection, 'gpus' | 'other'>, string[]> = {
+  ai: ['extract-tool', 'vllm', 'vllm-embed', 'rerank'],
+  read: ['mcp-read', 'mcp-proxy', 'qdrant', 'vllm-embed', 'rerank', 'vllm'],
+  write: ['admin-backend', 'minio', 'rabbitmq', 'ingestion-worker', 'mcp-write', 'extract-tool', 'vllm', 'vllm-embed', 'rerank', 'qdrant'],
+  worker: ['ingestion-worker', 'attachment-worker', 'rabbitmq', 'mcp-write', 'mcp-read'],
+}
+
+const CORE_SECTION_SERVICES = new Set(
+  (['ai', 'read', 'write', 'worker'] as const).flatMap(s => SECTION_SERVICE_LISTS[s].map(k => k.toLowerCase())),
+)
+
+const SECTION_SHOW_GPUS: Record<MonitorSection, boolean> = {
+  gpus: true,
+  ai: true,
+  read: true,
+  write: true,
+  worker: false,
+  other: false,
 }
 const SECTION_ORDER: readonly MonitorSection[] = ['gpus', 'ai', 'read', 'write', 'worker', 'other']
 const SECTION_LABELS: Record<MonitorSection, string> = {
@@ -53,9 +68,20 @@ function formatUptime(sec: number): string {
   return parts.join(' ')
 }
 
-function containerInSection(name: string, containerList: string[]): boolean {
-  const n = name.toLowerCase().trim()
-  return containerList.some(key => n === key)
+function serviceKeyFromMonitorName(name: string): string {
+  const t = name.toLowerCase().trim()
+  const sep = ' / '
+  const i = t.indexOf(sep)
+  if (i >= 0) return t.slice(i + sep.length).trim()
+  return t
+}
+
+function containerMatchesSection(name: string, section: MonitorSection): boolean {
+  if (section === 'gpus') return false
+  const svc = serviceKeyFromMonitorName(name)
+  if (section === 'other') return !CORE_SECTION_SERVICES.has(svc)
+  const list = SECTION_SERVICE_LISTS[section]
+  return list.some(key => key.toLowerCase() === svc)
 }
 
 export function Monitor() {
@@ -99,12 +125,10 @@ export function Monitor() {
     return []
   }, [data])
 
-  const config = SECTION_CONFIG[section]
-  const showGpus = config.gpus && gpus.length > 0
+  const showGpus = SECTION_SHOW_GPUS[section] && gpus.length > 0
   const filteredContainers = useMemo((): ContainerMetrics[] => {
     if (!data?.containers?.length) return []
-    const list = SECTION_CONFIG[section].containers
-    return data.containers.filter((c: ContainerMetrics) => containerInSection(c.name, list))
+    return data.containers.filter((c: ContainerMetrics) => containerMatchesSection(c.name, section))
   }, [data?.containers, section])
 
   if (loading && !data) {

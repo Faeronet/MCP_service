@@ -12,5 +12,7 @@ type Config struct {
 	ComposeProject string
 	// ComposeProfiles is docker compose --profile for each entry (from COMPOSE_PROFILES or ZONE_AGENT_COMPOSE_PROFILES, comma-separated).
 	ComposeProfiles []string
+	// AISwap enables HTTP /v1/ai-swap/* (model swap for this zone). Set ZONE_AGENT_AI_SWAP=1 on ai-zone.
+	AISwap bool
 }
 

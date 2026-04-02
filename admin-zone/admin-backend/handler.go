@@ -635,7 +635,7 @@ func (h *Handler) MonitorMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	system, gpus, history := CollectMetrics()
-	containers := CollectContainerMetrics()
+	containers := h.collectContainersForMonitor(r.Context())
 
 	systemMap := map[string]interface{}{
 		"cpu_pct":     system.CPUPct,

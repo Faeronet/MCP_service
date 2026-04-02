@@ -26,9 +26,10 @@ func Run(cfg Config) error {
 	secret := cfg.Secret
 
 	s := &server{
-		workdir:        workdir,
-		secret:         secret,
-		composeProject: strings.TrimSpace(cfg.ComposeProject),
+		workdir:         workdir,
+		secret:          secret,
+		composeProject:  strings.TrimSpace(cfg.ComposeProject),
+		composeProfiles: append([]string(nil), cfg.ComposeProfiles...),
 	}
 	mux := http.NewServeMux()
 
@@ -40,6 +41,10 @@ func Run(cfg Config) error {
 	mux.HandleFunc("/v1/env", s.withAuth(s.handleEnv))
 	mux.HandleFunc("/v1/services", s.withAuth(s.handleServices))
 	mux.HandleFunc("/v1/rebuild", s.withAuth(s.handleRebuild))
+	mux.HandleFunc("/v1/metrics", s.withAuth(s.handleMetrics))
+	hMcp := s.withAuth(s.handleMcpProxyPrompts)
+	mux.HandleFunc("/v1/mcp-proxy-prompts", hMcp)
+	mux.HandleFunc("/v1/mcp-proxy-prompts/", hMcp)
 
 	log.Printf("zone-agent workdir=%s compose_project=%q profiles=%v listen=%s", workdir, s.composeProject, s.composeProfiles, cfg.Listen)
 

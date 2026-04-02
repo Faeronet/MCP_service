@@ -9,7 +9,8 @@ import {
   type ZoneServiceRow,
 } from '../api'
 import { useToast } from '../context/ToastContext'
-import { RefreshCw, Server, Layers } from 'lucide-react'
+import { ZonesPickerTable } from '../components/ZonesPickerTable'
+import { RefreshCw, Server } from 'lucide-react'
 
 export function ConfigurationsPage() {
   const [zones, setZones] = useState<ZoneListItem[]>([])
@@ -132,7 +133,7 @@ export function ConfigurationsPage() {
   }
 
   return (
-    <div className="page-layout">
+    <div className="page-layout zones-list-page">
       <div className="page-header">
         <h1 className="page-title">Configurations</h1>
         <p className="text-muted">
@@ -153,62 +154,18 @@ export function ConfigurationsPage() {
             Refresh list
           </button>
         </div>
-        {loading ? (
-          <p className="text-muted">Loading…</p>
-        ) : zones.length === 0 ? (
-          <div className="table-empty">
-            <p className="table-empty-msg">Configurations are not set</p>
-            <p className="text-muted table-empty-hint">
-              Add JSON to <span className="mono-inline">ZONE_AGENTS</span> in admin-backend and run the <span className="mono-inline">zone-agent</span>{' '}
-              service in each compose stack.
-            </p>
-          </div>
-        ) : (
-          <div className="table-wrap table-wrap-logs">
-            <div className="table-header-wrap">
-              <table className="data-table data-table-header">
-                <thead>
-                  <tr>
-                    <th style={{ width: '40%' }}>Name</th>
-                    <th style={{ width: '35%' }}>ID</th>
-                    <th style={{ width: '25%' }}>Agent</th>
-                  </tr>
-                </thead>
-              </table>
-            </div>
-            <div className="table-body-wrap">
-              <table className="data-table data-table-body">
-                <tbody>
-                  {zones.map((z) => (
-                    <tr
-                      key={z.id}
-                      className="chat-log-row zones-row"
-                      onClick={() => setModalZone(z)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => e.key === 'Enter' && setModalZone(z)}
-                    >
-                      <td style={{ width: '40%' }}>
-                        <span className="zones-name">
-                          <Layers className="zones-row-icon" size={18} aria-hidden />
-                          {z.name}
-                        </span>
-                      </td>
-                      <td style={{ width: '35%' }} className="mono">
-                        {z.id}
-                      </td>
-                      <td style={{ width: '25%' }}>
-                        <span className={z.agent_ok ? 'zones-pill zones-pill--ok' : 'zones-pill zones-pill--bad'}>
-                          {z.agent_ok ? 'reachable' : 'unreachable'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <ZonesPickerTable
+          zones={zones}
+          loading={loading}
+          emptyTitle="Configurations are not set"
+          emptyHint={
+            <>
+              Add JSON to <span className="mono-inline">ZONE_AGENTS</span> in admin-backend and run the{' '}
+              <span className="mono-inline">zone-agent</span> service in each compose stack.
+            </>
+          }
+          onSelectRow={setModalZone}
+        />
       </div>
 
       {modalZone && (

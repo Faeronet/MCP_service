@@ -290,12 +290,6 @@ export async function sendChatMessage(
   return r.json()
 }
 
-export function grafanaUrl(): string {
-  const base = `${API_URL}/api/grafana/`
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : ''
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base
-}
-
 export interface GPUMetrics {
   name?: string
   gpu_pct: number
@@ -416,4 +410,136 @@ export async function zoneRebuild(
     throw new Error(t || `rebuild ${r.status}`)
   }
   return r.json()
+}
+
+export interface AISwapServiceRow {
+  id: string
+  label: string
+  compose_service: string
+  env_key: string
+  current_model: string
+  models_dir: string
+  uses_host_hf_cache: boolean
+}
+
+export interface AISwapStatusResponse {
+  services: AISwapServiceRow[]
+  ai_store_configured: boolean
+  ai_store_hint?: string
+  catalog_file?: string
+}
+
+export async function getAISwapStatus(zoneId: string): Promise<AISwapStatusResponse> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/ai-swap/status`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) {
+    const t = await r.text()
+    throw new Error(t || `ai-swap status ${r.status}`)
+  }
+  return r.json()
+}
+
+export interface AISwapCatalogModel {
+  id: string
+  label: string
+}
+
+export interface AISwapCatalogResponse {
+  service: string
+  models: AISwapCatalogModel[]
+  stub: boolean
+}
+
+export async function getAISwapCatalog(zoneId: string, service: string): Promise<AISwapCatalogResponse> {
+  const u = new URL(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/ai-swap/catalog`)
+  u.searchParams.set('service', service)
+  const r = await fetch(u.toString(), { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
+  if (!r.ok) {
+    const t = await r.text()
+    throw new Error(t || `ai-swap catalog ${r.status}`)
+  }
+  return r.json()
+}
+
+/** Поток text/plain логов от zone-agent (удаление кэша, заглушка store, .env, docker compose). */
+export async function streamAISwap(
+  zoneId: string,
+  body: { service: string; model_id: string },
+  onChunk: (text: string) => void
+): Promise<void> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/ai-swap/swap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+    body: JSON.stringify(body),
+  })
+  checkAuth(r)
+  if (!r.ok) {
+    const t = await r.text()
+    throw new Error(t || `ai-swap ${r.status}`)
+  }
+  if (!r.body) {
+    const t = await r.text()
+    onChunk(t)
+    return
+  }
+  const reader = r.body.getReader()
+  const dec = new TextDecoder()
+  let carry = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    carry += dec.decode(value, { stream: true })
+    const lines = carry.split('\n')
+    carry = lines.pop() ?? ''
+    for (const line of lines) {
+      onChunk(line + '\n')
+    }
+  }
+  if (carry) onChunk(carry)
+}
+
+export interface McpPromptRow {
+  id: string
+  title: string
+  file: string
+  exists: boolean
+  size: number
+}
+
+export async function listZoneMcpPrompts(
+  zoneId: string
+): Promise<{ prompts: McpPromptRow[]; dir?: string; error?: string }> {
+  const r = await fetch(`${API_URL}/api/zones/${encodeURIComponent(zoneId)}/mcp-proxy-prompts`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load mcp-proxy prompts list')
+  return r.json()
+}
+
+export async function getZoneMcpPrompt(zoneId: string, promptId: string): Promise<string> {
+  const r = await fetch(
+    `${API_URL}/api/zones/${encodeURIComponent(zoneId)}/mcp-proxy-prompts/${encodeURIComponent(promptId)}`,
+    { headers: { Authorization: `Bearer ${getToken()}` } }
+  )
+  checkAuth(r)
+  if (r.status === 404) return ''
+  if (!r.ok) throw new Error(`Failed to read prompt ${promptId}`)
+  return r.text()
+}
+
+export async function putZoneMcpPrompt(zoneId: string, promptId: string, content: string): Promise<void> {
+  const r = await fetch(
+    `${API_URL}/api/zones/${encodeURIComponent(zoneId)}/mcp-proxy-prompts/${encodeURIComponent(promptId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', Authorization: `Bearer ${getToken()}` },
+      body: content,
+    }
+  )
+  checkAuth(r)
+  if (!r.ok) throw new Error(`Failed to save prompt ${promptId}`)
 }
