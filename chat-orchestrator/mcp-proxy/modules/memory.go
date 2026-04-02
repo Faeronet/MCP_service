@@ -2,9 +2,12 @@ package modules
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
@@ -213,7 +216,26 @@ func (s *Server) SaveSchedulerReminderMemory(ctx context.Context, telegramID, ch
 	if err != nil {
 		return err
 	}
-	msgID, err := s.AppendMessageWithReply(ctx, sessionID, "assistant", strings.TrimSpace(text), 0)
+	textNorm := strings.TrimSpace(text)
+	// После /chat ответ уже в chat.messages; deliver с фото раньше дублировал строку. Окно по времени — чтобы не схлопнуть старое сообщение с тем же текстом (напоминание).
+	const dedupAssistantWindow = 2 * time.Minute
+	var lastID uuid.UUID
+	var lastRole, lastContent string
+	var lastCreated time.Time
+	qErr := s.Pool.QueryRow(ctx, `
+		SELECT id, role, TRIM(BOTH FROM content), created_at FROM chat.messages
+		WHERE session_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, sessionID).Scan(&lastID, &lastRole, &lastContent, &lastCreated)
+	if qErr == nil && lastRole == "assistant" && lastContent == textNorm && time.Since(lastCreated) < dedupAssistantWindow {
+		return s.UpdateMessageTelegramID(ctx, lastID, telegramMessageID)
+	}
+	if qErr != nil && !errors.Is(qErr, pgx.ErrNoRows) {
+		return qErr
+	}
+
+	msgID, err := s.AppendMessageWithReply(ctx, sessionID, "assistant", textNorm, 0)
 	if err != nil {
 		return err
 	}
