@@ -296,7 +296,7 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 	chatID := tgID
 
 	groups := groupItems(req.Items)
-	if len(groups) == 0 {
+	if len(groups) == 0 && !req.Sync {
 		res.Accepted = false
 		res.Errors = append(res.Errors, "no valid items (need name, time HH:MM)")
 		_, _ = pool.Exec(ctx, `
@@ -307,6 +307,23 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 		return res
 	}
 	res.GroupedAngelsCount = len(groups)
+	if len(groups) == 0 && req.Sync {
+		_, _ = pool.Exec(ctx, `
+			DELETE FROM chat.scheduler_notifications
+			WHERE telegram_id = $1
+			  AND note_item_id IS NOT NULL
+			  AND note_item_id <> ''
+		`, tgID)
+		res.ScheduledCount = 0
+		if requestID != "" {
+			_, _ = pool.Exec(ctx, `
+				UPDATE chat.scheduler_note_requests
+				SET telegram_id = $2, accepted = true, errors_json = '[]'::jsonb
+				WHERE id::text = $1
+			`, requestID, tgID)
+		}
+		return res
+	}
 
 	now := time.Now().In(mskLoc)
 	total := 0
