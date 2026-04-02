@@ -100,6 +100,7 @@ export function timeDataWithRussianNames(stored) {
     const goal = row?.['цель'] ?? row?.message ?? '';
     out[id] = {
       ...row,
+      note_item_id: id,
       часть: part,
       цель: goal,
       validation: angelNameToRu(row.validation),

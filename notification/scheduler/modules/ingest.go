@@ -53,39 +53,13 @@ func parseClock(s string) (hh, mm int, err error) {
 	return hh, mm, nil
 }
 
-func parseDDMM(s string) (day, month int, err error) {
-	s = strings.TrimSpace(s)
-	parts := strings.Split(s, ".")
-	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("ddmm")
-	}
-	day, err = strconv.Atoi(parts[0])
-	if err != nil {
-		return 0, 0, err
-	}
-	month, err = strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, 0, err
-	}
-	if day < 1 || day > 31 || month < 1 || month > 12 {
-		return 0, 0, fmt.Errorf("bad date")
-	}
-	return day, month, nil
-}
-
-func nextOccurrenceMSK(day, month, hh, mm int, from time.Time) (time.Time, error) {
+func nextTodayOrTomorrowMSK(hh, mm int, from time.Time) time.Time {
 	from = from.In(mskLoc)
-	t0 := time.Date(from.Year(), time.Month(month), day, hh, mm, 0, 0, mskLoc)
-	if t0.Month() != time.Month(month) || t0.Day() != day {
-		return time.Time{}, fmt.Errorf("invalid calendar day %d.%02d", day, month)
+	today := time.Date(from.Year(), from.Month(), from.Day(), hh, mm, 0, 0, mskLoc)
+	if !today.After(from) {
+		return today.AddDate(0, 0, 1)
 	}
-	if !t0.After(from) {
-		t0 = time.Date(from.Year()+1, time.Month(month), day, hh, mm, 0, 0, mskLoc)
-		if t0.Month() != time.Month(month) || t0.Day() != day {
-			return time.Time{}, fmt.Errorf("invalid calendar day (year+1) %d.%02d", day, month)
-		}
-	}
-	return t0, nil
+	return today
 }
 
 func lookupUserTelegramID(ctx context.Context, pool *pgxpool.Pool, usernameNorm string) (int64, error) {
@@ -99,11 +73,51 @@ func lookupUserTelegramID(ctx context.Context, pool *pgxpool.Pool, usernameNorm 
 	`, usernameNorm).Scan(&tg)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			similar, _ := findClosestUsername(ctx, pool, usernameNorm)
+			if similar != "" {
+				return 0, fmt.Errorf("такого пользователя нет, но возможно вы имели в виду @%s; откройте %s, нажмите Start и повторите", similar, telegramBotURL)
+			}
 			return 0, fmt.Errorf("user not found: open %s, press Start, then retry", telegramBotURL)
 		}
 		return 0, err
 	}
 	return tg, nil
+}
+
+func findClosestUsername(ctx context.Context, pool *pgxpool.Pool, usernameNorm string) (string, error) {
+	usernameNorm = normalizeTelegramUsername(usernameNorm)
+	if usernameNorm == "" {
+		return "", nil
+	}
+	var out string
+	err := pool.QueryRow(ctx, `
+		WITH u AS (
+			SELECT lower(regexp_replace(trim(coalesce(username, '')), '^@', '', 'g')) AS uname
+			FROM core.users
+			WHERE telegram_id IS NOT NULL
+			  AND trim(coalesce(username, '')) <> ''
+		)
+		SELECT uname
+		FROM u
+		ORDER BY
+		  CASE
+			WHEN uname = $1 THEN 0
+			WHEN uname LIKE $1 || '%' THEN 1
+			WHEN uname LIKE '%' || $1 || '%' THEN 2
+			WHEN $1 LIKE uname || '%' THEN 3
+			ELSE 4
+		  END,
+		  abs(length(uname) - length($1)),
+		  uname
+		LIMIT 1
+	`, usernameNorm).Scan(&out)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return out, nil
 }
 
 func lookupAngel(ctx context.Context, pool *pgxpool.Pool, nameRU, validation string) (chunkID, canonName string, err error) {
@@ -122,29 +136,15 @@ func loadDocumentContext(ctx context.Context, pool *pgxpool.Pool, chunkID string
 	return txt, err
 }
 
-func loadPhysicalDDMMs(ctx context.Context, pool *pgxpool.Pool, chunkID string) ([]string, error) {
-	rows, err := pool.Query(ctx, `
-		SELECT ddmm FROM core.angel_physical_date_entries WHERE chunk_id = $1 ORDER BY ddmm
-	`, chunkID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var d string
-		if rows.Scan(&d) == nil && d != "" {
-			out = append(out, d)
-		}
-	}
-	return out, rows.Err()
-}
-
 func groupItems(items []FromNoteItem) []groupedAngel {
 	seen := make(map[string]groupedAngel)
 	order := []string{}
 	for _, it := range items {
-		key := strings.TrimSpace(it.Name)
+		noteID := strings.TrimSpace(it.NoteItemID)
+		key := noteID
+		if key == "" {
+			key = strings.TrimSpace(it.Name)
+		}
 		if key == "" {
 			key = strings.TrimSpace(it.Validation)
 		}
@@ -158,21 +158,34 @@ func groupItems(items []FromNoteItem) []groupedAngel {
 		if _, ok := seen[key]; !ok {
 			order = append(order, key)
 			seen[key] = groupedAngel{
-				Key:     key,
-				NameRU:  strings.TrimSpace(it.Name),
-				Valid:   strings.TrimSpace(it.Validation),
-				TimeHH:  hh,
-				TimeMM:  mm,
-				Part:    strings.TrimSpace(it.Part),
-				Message: strings.TrimSpace(it.Message),
+				Key:         key,
+				NoteItemID:  noteID,
+				NameRU:      strings.TrimSpace(it.Name),
+				Valid:       strings.TrimSpace(it.Validation),
+				KeyName:     strings.TrimSpace(it.KeyName),
+				TimeRaw:     strings.TrimSpace(it.Time),
+				TimeHH:      hh,
+				TimeMM:      mm,
+				Part:        strings.TrimSpace(it.Part),
+				Message:     strings.TrimSpace(it.Message),
+				NotifyDaily: it.NotifyDaily,
 			}
 		} else {
 			g := seen[key]
+			if g.KeyName == "" && strings.TrimSpace(it.KeyName) != "" {
+				g.KeyName = strings.TrimSpace(it.KeyName)
+			}
+			if g.TimeRaw == "" && strings.TrimSpace(it.Time) != "" {
+				g.TimeRaw = strings.TrimSpace(it.Time)
+			}
 			if g.Part == "" && strings.TrimSpace(it.Part) != "" {
 				g.Part = strings.TrimSpace(it.Part)
 			}
 			if g.Message == "" && strings.TrimSpace(it.Message) != "" {
 				g.Message = strings.TrimSpace(it.Message)
+			}
+			if it.NotifyDaily {
+				g.NotifyDaily = true
 			}
 			seen[key] = g
 		}
@@ -203,6 +216,20 @@ func applyGoalPartToReminderText(text, goal, part string) string {
 		}
 		out = t
 	}
+	return strings.TrimSpace(out)
+}
+
+func applyTimeToReminderText(text, keyName, timeRaw string, hh, mm int) string {
+	out := strings.TrimSpace(text)
+	marker := strings.TrimSpace(keyName)
+	if marker == "" {
+		marker = strings.TrimSpace(timeRaw)
+	}
+	if marker == "" {
+		marker = fmt.Sprintf("%02d:%02d", hh, mm)
+	}
+	out = strings.ReplaceAll(out, "[время]", marker)
+	out = strings.ReplaceAll(out, "[Время]", marker)
 	return strings.TrimSpace(out)
 }
 
@@ -283,8 +310,8 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 
 	now := time.Now().In(mskLoc)
 	total := 0
-	// Один ангел на один chunk_id в рамках запроса (дубли в items с разными строками ключа → один проход).
-	seenChunk := make(map[string]struct{})
+	composeCache := make(map[string]string)
+	noteIDs := make([]string, 0, len(groups))
 
 	for _, g := range groups {
 		nameRU := g.NameRU
@@ -296,88 +323,78 @@ func ProcessFromNote(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, re
 			res.Errors = append(res.Errors, fmt.Sprintf("angel not in DB: %s", nameRU))
 			continue
 		}
-		if _, dup := seenChunk[ch]; dup {
-			continue
+		text, ok := composeCache[ch]
+		if !ok {
+			ctxText, errC := loadDocumentContext(ctx, pool, ch)
+			if errC != nil || strings.TrimSpace(ctxText) == "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("no document context for %s", displayName))
+				continue
+			}
+			reqID := uuid.New().String()
+			compiled, errL := bot.Compose(ctx, displayName, ctxText, reqID)
+			if errL != nil || strings.TrimSpace(compiled) == "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("compose failed for %s: %v", displayName, errL))
+				continue
+			}
+			_, _ = pool.Exec(ctx, `
+				INSERT INTO chat.scheduler_compose_results
+				  (telegram_id, angel_chunk_id, angel_name, reminder_text, request_id)
+				VALUES ($1,$2,$3,$4,$5)
+			`, tgID, ch, displayName, compiled, reqID)
+			text = compiled
+			composeCache[ch] = compiled
 		}
-		seenChunk[ch] = struct{}{}
-
-		ctxText, errC := loadDocumentContext(ctx, pool, ch)
-		if errC != nil || strings.TrimSpace(ctxText) == "" {
-			res.Errors = append(res.Errors, fmt.Sprintf("no document context for %s", displayName))
-			continue
-		}
-		reqID := uuid.New().String()
-		text, errL := bot.Compose(ctx, displayName, ctxText, reqID)
-		if errL != nil || strings.TrimSpace(text) == "" {
-			res.Errors = append(res.Errors, fmt.Sprintf("compose failed for %s: %v", displayName, errL))
-			continue
-		}
-		_, _ = pool.Exec(ctx, `
-			INSERT INTO chat.scheduler_compose_results
-			  (telegram_id, angel_chunk_id, angel_name, reminder_text, request_id)
-			VALUES ($1,$2,$3,$4,$5)
-		`, tgID, ch, displayName, text, reqID)
 		text = applyGoalPartToReminderText(text, g.Message, g.Part)
-		ddmms, errD := loadPhysicalDDMMs(ctx, pool, ch)
-		if errD != nil {
-			res.Errors = append(res.Errors, fmt.Sprintf("physical dates: %s: %v", displayName, errD))
-			continue
+		text = applyTimeToReminderText(text, g.KeyName, g.TimeRaw, g.TimeHH, g.TimeMM)
+		tSend := nextTodayOrTomorrowMSK(g.TimeHH, g.TimeMM, now)
+		noteID := g.NoteItemID
+		if noteID == "" {
+			noteID = g.Key
 		}
-		if len(ddmms) == 0 {
-			// No angel_physical_date_entries: schedule once tomorrow at the user's local (MSK) clock time.
-			today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, mskLoc)
-			nextDay := today.AddDate(0, 0, 1)
-			tSend := time.Date(nextDay.Year(), nextDay.Month(), nextDay.Day(), g.TimeHH, g.TimeMM, 0, 0, mskLoc)
-			ct, errI := pool.Exec(ctx, `
-				INSERT INTO chat.scheduler_notifications
-				  (telegram_id, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
-				VALUES ($1,$2,$3,$4,$5,$6,'pending')
-				ON CONFLICT DO NOTHING
-			`, tgID, chatID, ch, displayName, text, tSend)
-			if errI != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("insert: %v", errI))
-				continue
-			}
-			if ct.RowsAffected() > 0 {
-				total++
-			}
-			continue
-		}
-		// Одно уведомление на ангела: ближайшая по времени физическая дата, а не по строке на каждую DD.MM в таблице.
-		var (
-			bestSend time.Time
-			hasBest  bool
-		)
-		for _, raw := range ddmms {
-			day, month, errP := parseDDMM(raw)
-			if errP != nil {
-				continue
-			}
-			tSend, errN := nextOccurrenceMSK(day, month, g.TimeHH, g.TimeMM, now)
-			if errN != nil {
-				continue
-			}
-			if !hasBest || tSend.Before(bestSend) {
-				bestSend = tSend
-				hasBest = true
-			}
-		}
-		if !hasBest {
-			res.Errors = append(res.Errors, fmt.Sprintf("no valid physical dates for %s", displayName))
-			continue
+		if noteID != "" {
+			noteIDs = append(noteIDs, noteID)
 		}
 		ct, errI := pool.Exec(ctx, `
 			INSERT INTO chat.scheduler_notifications
-			  (telegram_id, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
-			VALUES ($1,$2,$3,$4,$5,$6,'pending')
-			ON CONFLICT DO NOTHING
-		`, tgID, chatID, ch, displayName, text, bestSend)
+			  (telegram_id, telegram_username, note_item_id, notify_daily, chat_id, angel_chunk_id, angel_name, message_text, send_at, status)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending')
+			ON CONFLICT (telegram_id, note_item_id)
+			DO UPDATE SET
+			  telegram_username = EXCLUDED.telegram_username,
+			  notify_daily      = EXCLUDED.notify_daily,
+			  chat_id           = EXCLUDED.chat_id,
+			  angel_chunk_id    = EXCLUDED.angel_chunk_id,
+			  angel_name        = EXCLUDED.angel_name,
+			  message_text      = EXCLUDED.message_text,
+			  send_at           = EXCLUDED.send_at,
+			  status            = 'pending',
+			  sent_at           = NULL,
+			  last_error        = NULL
+		`, tgID, normalizeTelegramUsername(req.TelegramUsername), noteID, g.NotifyDaily, chatID, ch, displayName, text, tSend)
 		if errI != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("insert: %v", errI))
 			continue
 		}
 		if ct.RowsAffected() > 0 {
 			total++
+		}
+	}
+	if req.Sync {
+		if len(noteIDs) == 0 {
+			_, _ = pool.Exec(ctx, `
+				DELETE FROM chat.scheduler_notifications
+				WHERE telegram_id = $1
+				  AND note_item_id IS NOT NULL
+				  AND note_item_id <> ''
+			`, tgID)
+		} else {
+			_, _ = pool.Exec(ctx, `
+				DELETE FROM chat.scheduler_notifications
+				WHERE telegram_id = $1
+				  AND note_item_id IS NOT NULL
+				  AND note_item_id <> ''
+				  AND NOT (note_item_id = ANY($2))
+			`, tgID, noteIDs)
 		}
 	}
 

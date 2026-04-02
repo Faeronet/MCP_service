@@ -15,11 +15,13 @@ import {
   ModalBody,
   ModalFooter,
   InlineNotification,
+  Checkbox,
 } from '@carbon/react';
 import { TrashCan } from '@carbon/icons-react'; // Importing the delete icon
 import { angelNameToRu, timeDataWithRussianNames } from './angelNamesMap';
 
 const TG_USERNAME_STORAGE_KEY = 'schedulerTelegramUsername';
+const TG_DAILY_STORAGE_KEY = 'schedulerDailyNotify';
 const NOTE_SCHEDULE_BRIDGE_KEY = '__mcp_schedule_from_note__';
 
 const TimeTable = () => {
@@ -31,6 +33,7 @@ const TimeTable = () => {
   const [scheduleSubmitting, setScheduleSubmitting] = useState(false);
   const [scheduleBanner, setScheduleBanner] = useState(null);
   const [scheduleModalError, setScheduleModalError] = useState('');
+  const [notifyDaily, setNotifyDaily] = useState(false);
 
   useEffect(() => {
     const data = loadTimeDataFromLocalStorage();
@@ -42,10 +45,44 @@ const TimeTable = () => {
     try {
       const u = localStorage.getItem(TG_USERNAME_STORAGE_KEY);
       if (u) setTelegramUsername(u);
+      setNotifyDaily(localStorage.getItem(TG_DAILY_STORAGE_KEY) === '1');
     } catch {
       /* ignore */
     }
   }, []);
+
+  useEffect(() => {
+    const u = telegramUsername.trim().replace(/^@/, '');
+    if (!u) return;
+    const sync = async () => {
+      try {
+        const res = await fetch(`/api/schedule?telegram_username=${encodeURIComponent(u)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const remote = new Set(Array.isArray(data?.note_item_ids) ? data.note_item_ids : []);
+        const raw = loadTimeDataFromLocalStorage();
+        let changed = false;
+        Object.entries(raw).forEach(([id, row]) => {
+          if (!row || typeof row !== 'object') return;
+          if (!row.notifyTelegram) return;
+          if (normalizeUsername(row.schedulerUsername || '') !== u) return;
+          if (!remote.has(id)) {
+            delete raw[id];
+            changed = true;
+          }
+        });
+        if (changed) {
+          localStorage.setItem('timeData', JSON.stringify(raw));
+          setTimeData(formatDataForTable(raw));
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    void sync();
+  }, [telegramUsername]);
+
+  const normalizeUsername = (u) => String(u || '').trim().replace(/^@/, '').toLowerCase();
 
   const loadTimeDataFromLocalStorage = () => {
     try {
@@ -67,6 +104,7 @@ const TimeTable = () => {
       const value = row.value ?? '';
       const validation = row.validation ?? '';
       const message = row['цель'] ?? row.message ?? '';
+      const notifyDailyRow = !!row.notifyDaily;
       const show = row.show;
       if (show) {
         formattedData.push({
@@ -76,6 +114,7 @@ const TimeTable = () => {
           value,
           validation: angelNameToRu(validation),
           message,
+          notifyDaily: notifyDailyRow,
           actions: 'delete'
         });
       }
@@ -84,7 +123,7 @@ const TimeTable = () => {
     return formattedData;
   };
 
-  const deleteEntry = (id) => {
+  const deleteEntry = async (id) => {
     const updatedData = { ...loadTimeDataFromLocalStorage() };
 
     if (updatedData[id]) {
@@ -96,6 +135,19 @@ const TimeTable = () => {
 
     // Update the state to reflect the changes in the UI
     setTimeData(formatDataForTable(updatedData));
+    try {
+      const u = normalizeUsername(telegramUsername || localStorage.getItem(TG_USERNAME_STORAGE_KEY) || '');
+      if (u) {
+        const items = buildSchedulePayloadFromRows(formatDataForTable(updatedData), notifyDaily);
+        await fetch('/api/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ telegram_username: u, sync: true, items }),
+        });
+      }
+    } catch {
+      /* ignore */
+    }
   };
 
   const downloadJson = () => {
@@ -115,7 +167,7 @@ const TimeTable = () => {
     URL.revokeObjectURL(url);
   };
 
-  const buildSchedulePayloadFromRows = (rows) => {
+  const buildSchedulePayloadFromRows = (rows, dailyFlag = false) => {
     const items = [];
     for (const entry of rows) {
       const ru = angelNameToRu(entry.validation);
@@ -123,11 +175,14 @@ const TimeTable = () => {
       const part = String(entry.pageName || '').trim();
       if (!ru || !time) continue;
       items.push({
+        note_item_id: String(entry.id || '').trim(),
         validation: ru,
         name: ru,
+        keyName: String(entry.timeKey || '').trim(),
         time,
         part,
         message: String(entry.message || '').trim(),
+        notify_daily: !!dailyFlag,
       });
     }
     return items;
@@ -146,9 +201,9 @@ const TimeTable = () => {
   };
 
   const handleScheduleSubmit = async () => {
-    const rows = timeData.filter((entry) => String(entry.value ?? '').includes(filterValue));
-    const items = buildSchedulePayloadFromRows(rows);
-    const u = telegramUsername.trim().replace(/^@/, '');
+    const rows = [...timeData];
+    const items = buildSchedulePayloadFromRows(rows, notifyDaily);
+    const u = normalizeUsername(telegramUsername);
     if (!u) {
       setScheduleModalError('Укажите Telegram username без @.');
       return;
@@ -175,6 +230,21 @@ const TimeTable = () => {
       if (res.ok && data?.accepted) {
         try {
           localStorage.setItem(TG_USERNAME_STORAGE_KEY, u);
+          localStorage.setItem(TG_DAILY_STORAGE_KEY, notifyDaily ? '1' : '0');
+          const raw = loadTimeDataFromLocalStorage();
+          Object.entries(raw).forEach(([id, row]) => {
+            if (!row || typeof row !== 'object') return;
+            if (!row.show) return;
+            if (!String(row.value || '').trim()) return;
+            raw[id] = {
+              ...row,
+              notifyTelegram: true,
+              schedulerUsername: u,
+              notifyDaily: !!notifyDaily,
+            };
+          });
+          localStorage.setItem('timeData', JSON.stringify(raw));
+          setTimeData(formatDataForTable(raw));
         } catch {
           /* ignore */
         }
@@ -296,6 +366,14 @@ const TimeTable = () => {
           placeholder="Ввведите время (пример, 12:34)"
           value={filterValue}
           onChange={(e) => setFilterValue(e.target.value)}
+        />
+      </div>
+      <div style={{ marginBottom: '16px' }}>
+        <Checkbox
+          id="tg-daily-checkbox"
+          labelText="Уведомлять каждый день"
+          checked={notifyDaily}
+          onChange={(_, { checked }) => setNotifyDaily(checked)}
         />
       </div>
 

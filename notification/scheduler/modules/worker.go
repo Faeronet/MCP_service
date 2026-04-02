@@ -131,6 +131,19 @@ func dispatchOne(ctx context.Context, pool *pgxpool.Pool, bot *BotClient, id str
 		`, id, err.Error())
 		return
 	}
+	var daily bool
+	_ = pool.QueryRow(ctx, `SELECT coalesce(notify_daily, false) FROM chat.scheduler_notifications WHERE id = $1::uuid`, id).Scan(&daily)
+	if daily {
+		_, _ = pool.Exec(ctx, `
+			UPDATE chat.scheduler_notifications
+			SET status = 'pending',
+			    send_at = (send_at + interval '1 day'),
+			    sent_at = now(),
+			    last_error = NULL
+			WHERE id = $1::uuid
+		`, id)
+		return
+	}
 	_, _ = pool.Exec(ctx, `
 		UPDATE chat.scheduler_notifications
 		SET status = 'sent', sent_at = now(), last_error = NULL
