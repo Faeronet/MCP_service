@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Toggle, TimePicker, Button, InlineNotification } from '@carbon/react';
 import { Save } from '@carbon/icons-react';
+import { angelNameToRu } from '../TimeTable/angelNamesMap';
+
+const TG_USERNAME_STORAGE_KEY = 'schedulerTelegramUsername';
+const TG_DAILY_STORAGE_KEY = 'schedulerDailyNotify';
 
 const hashCode = (str) => {
   let hash = 0;
@@ -18,6 +22,43 @@ const TimeToggle = ({ pageName, keyName, validationName, messageName }) => {
   const [validationError, setValidationError] = useState('');
 
   const storageKey = hashCode(`${pageName}-${keyName}-${validationName}-${messageName}`);
+
+  const syncSchedulerFromLocalStorage = async () => {
+    try {
+      const username = String(localStorage.getItem(TG_USERNAME_STORAGE_KEY) || '')
+        .trim()
+        .replace(/^@/, '')
+        .toLowerCase();
+      if (!username) return;
+      const daily = localStorage.getItem(TG_DAILY_STORAGE_KEY) === '1';
+      const savedData = JSON.parse(localStorage.getItem('timeData')) || {};
+      const items = [];
+      Object.entries(savedData).forEach(([id, row]) => {
+        if (!row || typeof row !== 'object') return;
+        if (!row.show) return;
+        const ru = angelNameToRu(row.validation);
+        const time = String(row.value || '').trim();
+        if (!ru || !time) return;
+        items.push({
+          note_item_id: id,
+          validation: ru,
+          name: ru,
+          keyName: String(row.keyName || '').trim(),
+          time,
+          part: String(row['часть'] ?? row.pageName ?? '').trim(),
+          message: String(row['цель'] ?? row.message ?? '').trim(),
+          notify_daily: !!daily,
+        });
+      });
+      await fetch('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telegram_username: username, sync: true, items }),
+      });
+    } catch {
+      /* ignore */
+    }
+  };
 
   useEffect(() => {
     // Load the saved state from localStorage
@@ -66,6 +107,7 @@ const TimeToggle = ({ pageName, keyName, validationName, messageName }) => {
     if (!newShowTime) {
       removeFromLocalStorage();
       setTimeValue(''); // Reset time value when toggled off
+      void syncSchedulerFromLocalStorage();
     }
   };
 
@@ -101,6 +143,7 @@ const TimeToggle = ({ pageName, keyName, validationName, messageName }) => {
 
     saveToLocalStorage(data);
     setValidationError(''); // Clear any previous validation errors
+    void syncSchedulerFromLocalStorage();
   };
 
   return (
