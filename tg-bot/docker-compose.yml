@@ -11,13 +11,13 @@ services:
       ZONE_WORKDIR: /zone
       # Имя проекта compose: иначе при /zone все зоны получают project "zone" и затирают чужие контейнеры.
       COMPOSE_PROJECT_NAME: tg-bot
-      ZONE_AGENT_HOST_RESOLV_PATH: /host-etc-resolv.conf
+      ZONE_AGENT_HOST_RESOLV_PATH: /etc/resolv.conf
       ZONE_AGENT_SECRET: ${ZONE_AGENT_SECRET:-change-me-in-production}
       LISTEN: 0.0.0.0:19090
     volumes:
       - ./:/zone
       - /var/run/docker.sock:/var/run/docker.sock
-      - /etc/resolv.conf:/host-etc-resolv.conf:rw
+      - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
       - "0.0.0.0:29108:19090"
     networks:

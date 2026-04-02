@@ -45,7 +45,7 @@ func (s *server) handleRebuild(w http.ResponseWriter, r *http.Request) {
 	base := append([]string{"docker"}, s.dockerComposeBaseArgs(composePath)...)
 
 	var logs strings.Builder
-	logs.WriteString("=== host resolv.conf (Docker Hub DNS) ===\n")
+	logs.WriteString("=== /etc/resolv.conf on host (bind-mounted at /etc/resolv.conf in agent) ===\n")
 	s.patchHostResolvForBuild(ctx, &logs)
 	logs.WriteString("\n")
 
