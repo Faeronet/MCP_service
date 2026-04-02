@@ -1,0 +1,9 @@
+# Опционально: подключить GPU к admin-backend для метрик Monitor (nvidia-smi).
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+# Нужны драйвер NVIDIA и NVIDIA Container Toolkit на хосте.
+
+services:
+  admin-backend:
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all

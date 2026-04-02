@@ -63,7 +63,8 @@ type dockerContainer struct {
 type dockerStatsResponse struct {
 	CPUStats struct {
 		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
 		} `json:"cpu_usage"`
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
 		OnlineCPUs     uint32 `json:"online_cpus"`
@@ -75,8 +76,9 @@ type dockerStatsResponse struct {
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
 	} `json:"precpu_stats"`
 	MemoryStats struct {
-		Usage uint64 `json:"usage"`
-		Limit uint64 `json:"limit"`
+		Usage uint64            `json:"usage"`
+		Limit uint64            `json:"limit"`
+		Stats map[string]uint64 `json:"stats"`
 	} `json:"memory_stats"`
 }
 
@@ -225,17 +227,26 @@ func CollectContainerMetrics() []ContainerMetrics {
 			continue
 		}
 
-		cpuPct := 0
-		containerCPUMu.Lock()
-		prev, ok := containerCPUPrev[c.ID]
-		containerCPUMu.Unlock()
-		if ok && res.CPUStats.SystemCPUUsage > prev.systemUsage && res.CPUStats.CPUUsage.TotalUsage >= prev.totalUsage {
-			deltaCPU := res.CPUStats.CPUUsage.TotalUsage - prev.totalUsage
-			deltaSys := res.CPUStats.SystemCPUUsage - prev.systemUsage
-			if deltaSys > 0 {
-				cpuPct = int(float64(deltaCPU)/float64(deltaSys)*100 + 0.5)
-				if cpuPct > 100 {
-					cpuPct = 100
+		cpuPct := dockerCPUPercentFromStats(
+			res.CPUStats.CPUUsage.TotalUsage,
+			res.PreCPUStats.CPUUsage.TotalUsage,
+			res.CPUStats.SystemCPUUsage,
+			res.PreCPUStats.SystemCPUUsage,
+			res.CPUStats.OnlineCPUs,
+			len(res.CPUStats.CPUUsage.PercpuUsage),
+		)
+		if cpuPct == 0 {
+			containerCPUMu.Lock()
+			prev, ok := containerCPUPrev[c.ID]
+			containerCPUMu.Unlock()
+			if ok && res.CPUStats.SystemCPUUsage > prev.systemUsage && res.CPUStats.CPUUsage.TotalUsage >= prev.totalUsage {
+				deltaCPU := res.CPUStats.CPUUsage.TotalUsage - prev.totalUsage
+				deltaSys := res.CPUStats.SystemCPUUsage - prev.systemUsage
+				if deltaSys > 0 {
+					cpuPct = int(float64(deltaCPU)/float64(deltaSys)*100 + 0.5)
+					if cpuPct > 100 {
+						cpuPct = 100
+					}
 				}
 			}
 		}
@@ -247,20 +258,11 @@ func CollectContainerMetrics() []ContainerMetrics {
 		}
 		containerCPUMu.Unlock()
 
-		ramUsage := res.MemoryStats.Usage
-		ramLimit := res.MemoryStats.Limit
-		ramPct := 0
-		if ramLimit > 0 {
-			ramPct = int(float64(ramUsage)/float64(ramLimit)*100 + 0.5)
-			if ramPct > 100 {
-				ramPct = 100
-			}
-		}
-		usedGB := float64(ramUsage) / (1024 * 1024 * 1024)
-		limitGB := float64(ramLimit) / (1024 * 1024 * 1024)
-		if ramLimit == 0 {
-			limitGB = 0
-		}
+		ramPct, usedGB, limitGB := dockerRAMMetricsWithStats(
+			res.MemoryStats.Usage,
+			res.MemoryStats.Limit,
+			res.MemoryStats.Stats,
+		)
 
 		// История для графика: добавляем текущую точку и храним последние containerHistorySize.
 		now := time.Now().Format(time.RFC3339)

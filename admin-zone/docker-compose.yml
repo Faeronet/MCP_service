@@ -35,6 +35,8 @@ services:
     restart: "no"
 
   admin-backend:
+    # Образ на базе CUDA уже содержит nvidia-smi; без проброса GPU контейнер не видит карту — метрики GPU будут нули.
+    # См. docker-compose.nvidia.yml (docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d).
     env_file: .env
     build:
       context: .

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,9 +41,11 @@ type dockerListItem struct {
 type dockerStatsBody struct {
 	CPUStats struct {
 		CPUUsage struct {
-			TotalUsage uint64 `json:"total_usage"`
+			TotalUsage  uint64   `json:"total_usage"`
+			PercpuUsage []uint64 `json:"percpu_usage"`
 		} `json:"cpu_usage"`
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs     uint32 `json:"online_cpus"`
 	} `json:"cpu_stats"`
 	PreCPUStats struct {
 		CPUUsage struct {
@@ -51,8 +54,9 @@ type dockerStatsBody struct {
 		SystemCPUUsage uint64 `json:"system_cpu_usage"`
 	} `json:"precpu_stats"`
 	MemoryStats struct {
-		Usage uint64 `json:"usage"`
-		Limit uint64 `json:"limit"`
+		Usage uint64            `json:"usage"`
+		Limit uint64            `json:"limit"`
+		Stats map[string]uint64 `json:"stats"`
 	} `json:"memory_stats"`
 }
 
@@ -69,8 +73,108 @@ var (
 	metricsCPUPrev          map[string]cpuPrev
 	metricsHistMu           sync.Mutex
 	metricsHistByContainer  map[string][]metricsHistoryPoint
-	nameSuffixRe              = regexp.MustCompile(`-\d+$`)
+	nameSuffixRe           = regexp.MustCompile(`-\d+$`)
 )
+
+const dockerMemUnlimited uint64 = 1 << 42
+
+var hostMemTotalOnce sync.Once
+var hostMemTotalB uint64
+
+func hostMemTotalBytesZA() uint64 {
+	hostMemTotalOnce.Do(func() {
+		b, err := os.ReadFile("/proc/meminfo")
+		if err != nil {
+			return
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "MemTotal:") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					if kb, err := strconv.ParseUint(fields[1], 10, 64); err == nil && kb > 0 {
+						hostMemTotalB = kb * 1024
+					}
+				}
+				return
+			}
+		}
+	})
+	return hostMemTotalB
+}
+
+func dockerCPUPctZA(totalUsage, preTotal, sysUsage, preSys uint64, online uint32, percpuN int) int {
+	dCPU := int64(totalUsage) - int64(preTotal)
+	dSys := int64(sysUsage) - int64(preSys)
+	if dSys <= 0 || dCPU < 0 {
+		return 0
+	}
+	n := percpuN
+	if n <= 0 {
+		n = int(online)
+	}
+	if n <= 0 {
+		n = 1
+	}
+	p := (float64(dCPU) / float64(dSys)) * float64(n) * 100.0
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	return int(p + 0.5)
+}
+
+func dockerMemUsageZA(usage uint64, stats map[string]uint64) uint64 {
+	if usage > 0 {
+		return usage
+	}
+	if stats == nil {
+		return 0
+	}
+	if v, ok := stats["total_rss"]; ok && v > 0 {
+		return v
+	}
+	if v, ok := stats["rss"]; ok && v > 0 {
+		return v
+	}
+	var sum uint64
+	if v, ok := stats["anon"]; ok {
+		sum += v
+	}
+	if v, ok := stats["file"]; ok {
+		sum += v
+	}
+	if sum > 0 {
+		return sum
+	}
+	return 0
+}
+
+func dockerRAMZA(usage, limit uint64, stats map[string]uint64) (pct int, usedGB, limGB float64) {
+	host := hostMemTotalBytesZA()
+	u := dockerMemUsageZA(usage, stats)
+	usedGB = float64(u) / (1024 * 1024 * 1024)
+	denom := limit
+	if denom == 0 || denom > dockerMemUnlimited {
+		denom = host
+		limGB = float64(denom) / (1024 * 1024 * 1024)
+	} else {
+		limGB = float64(limit) / (1024 * 1024 * 1024)
+	}
+	if denom == 0 {
+		return 0, usedGB, limGB
+	}
+	p := float64(u) / float64(denom) * 100
+	if p > 100 {
+		p = 100
+	}
+	if p < 0 {
+		p = 0
+	}
+	return int(p + 0.5), usedGB, limGB
+}
 
 func dockerSockPath() string {
 	if p := os.Getenv("DOCKER_SOCKET_PATH"); p != "" {
@@ -193,17 +297,26 @@ func (s *server) collectZoneDockerMetrics(ctx context.Context) []containerMetric
 			continue
 		}
 
-		cpuPct := 0
-		metricsCPUMu.Lock()
-		prev, okp := metricsCPUPrev[c.ID]
-		metricsCPUMu.Unlock()
-		if okp && res.CPUStats.SystemCPUUsage > prev.systemUsage && res.CPUStats.CPUUsage.TotalUsage >= prev.totalUsage {
-			deltaCPU := res.CPUStats.CPUUsage.TotalUsage - prev.totalUsage
-			deltaSys := res.CPUStats.SystemCPUUsage - prev.systemUsage
-			if deltaSys > 0 {
-				cpuPct = int(float64(deltaCPU)/float64(deltaSys)*100 + 0.5)
-				if cpuPct > 100 {
-					cpuPct = 100
+		cpuPct := dockerCPUPctZA(
+			res.CPUStats.CPUUsage.TotalUsage,
+			res.PreCPUStats.CPUUsage.TotalUsage,
+			res.CPUStats.SystemCPUUsage,
+			res.PreCPUStats.SystemCPUUsage,
+			res.CPUStats.OnlineCPUs,
+			len(res.CPUStats.CPUUsage.PercpuUsage),
+		)
+		if cpuPct == 0 {
+			metricsCPUMu.Lock()
+			prev, okp := metricsCPUPrev[c.ID]
+			metricsCPUMu.Unlock()
+			if okp && res.CPUStats.SystemCPUUsage > prev.systemUsage && res.CPUStats.CPUUsage.TotalUsage >= prev.totalUsage {
+				deltaCPU := res.CPUStats.CPUUsage.TotalUsage - prev.totalUsage
+				deltaSys := res.CPUStats.SystemCPUUsage - prev.systemUsage
+				if deltaSys > 0 {
+					cpuPct = int(float64(deltaCPU)/float64(deltaSys)*100 + 0.5)
+					if cpuPct > 100 {
+						cpuPct = 100
+					}
 				}
 			}
 		}
@@ -215,20 +328,11 @@ func (s *server) collectZoneDockerMetrics(ctx context.Context) []containerMetric
 		}
 		metricsCPUMu.Unlock()
 
-		ramUsage := res.MemoryStats.Usage
-		ramLimit := res.MemoryStats.Limit
-		ramPct := 0
-		if ramLimit > 0 {
-			ramPct = int(float64(ramUsage)/float64(ramLimit)*100 + 0.5)
-			if ramPct > 100 {
-				ramPct = 100
-			}
-		}
-		usedGB := float64(ramUsage) / (1024 * 1024 * 1024)
-		limitGB := float64(ramLimit) / (1024 * 1024 * 1024)
-		if ramLimit == 0 {
-			limitGB = 0
-		}
+		ramPct, usedGB, limitGB := dockerRAMZA(
+			res.MemoryStats.Usage,
+			res.MemoryStats.Limit,
+			res.MemoryStats.Stats,
+		)
 
 		now := time.Now().Format(time.RFC3339)
 		metricsHistMu.Lock()

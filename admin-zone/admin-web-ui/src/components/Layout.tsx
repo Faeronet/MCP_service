@@ -1,5 +1,5 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom'
-import { FileText, Briefcase, ScrollText, MessageCircle, Bot, Gauge, LogOut, Bell, Boxes, Sparkles, ArrowLeftRight } from 'lucide-react'
+import { FileText, Briefcase, ScrollText, MessageCircle, Bot, Gauge, LogOut, Bell, Boxes, Pencil, ArrowLeftRight } from 'lucide-react'
 
 export function Layout() {
   const navigate = useNavigate()
@@ -20,7 +20,7 @@ export function Layout() {
     { to: '/reminders', label: 'Reminders', icon: Bell },
     { to: '/monitor', label: 'Monitor', icon: Gauge },
     { to: '/configurations', label: 'Configurations', icon: Boxes },
-    { to: '/prompts', label: 'Prompts', icon: Sparkles },
+    { to: '/prompts', label: 'Prompts', icon: Pencil },
     { to: '/ai-swap', label: 'AI swap', icon: ArrowLeftRight },
   ]
 

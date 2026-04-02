@@ -1463,6 +1463,19 @@ table.data-table code, .mono { font-family: 'Roboto Mono', 'Roboto', ui-monospac
   font-size: 0.75rem;
   align-self: center;
 }
+.prompts-table-row {
+  cursor: pointer;
+}
+.prompts-table-row:hover {
+  background: rgba(56, 189, 248, 0.06);
+}
+.prompts-table-file {
+  font-size: 0.8125rem;
+  word-break: break-all;
+}
+.prompts-table-zone-id {
+  font-size: 0.75rem;
+}
 .zones-modal-header {
   flex-wrap: wrap;
   gap: 10px;
