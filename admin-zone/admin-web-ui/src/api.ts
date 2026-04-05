@@ -22,6 +22,49 @@ export interface LoginResult {
   reminder_debug?: boolean
 }
 
+export type KeycloakConfig = {
+  enabled?: boolean
+  issuer?: string
+  client_id?: string
+  authorization_endpoint?: string
+  password_login_disabled?: boolean
+  error?: string
+}
+
+export async function fetchKeycloakConfig(): Promise<KeycloakConfig> {
+  try {
+    const r = await fetch(`${API_URL}/api/auth/keycloak`)
+    if (!r.ok) return { enabled: false }
+    return (await r.json()) as KeycloakConfig
+  } catch {
+    return { enabled: false }
+  }
+}
+
+export async function keycloakCallback(code: string, redirectUri: string, codeVerifier: string): Promise<LoginResult> {
+  let r: Response
+  try {
+    r = await fetch(`${API_URL}/api/auth/keycloak/callback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, redirect_uri: redirectUri, code_verifier: codeVerifier }),
+    })
+  } catch {
+    throw new Error('CONNECTION_ERROR')
+  }
+  if (r.status === 401) throw new Error('KEYCLOAK_EXCHANGE_FAILED')
+  if (!r.ok) throw new Error(`SERVER_ERROR:${r.status}`)
+  const data = await r.json()
+  if (!data || typeof data.token !== 'string') throw new Error('INVALID_RESPONSE')
+  if (data.reminder_debug === true) {
+    localStorage.setItem('reminder_debug', '1')
+  } else {
+    localStorage.removeItem('reminder_debug')
+  }
+  localStorage.setItem('token', data.token)
+  return data
+}
+
 export async function login(username: string, password: string): Promise<LoginResult> {
   let r: Response
   try {

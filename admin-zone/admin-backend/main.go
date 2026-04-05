@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,13 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/google/uuid"
 	"github.com/telegram-ai-assistant/root/pkg/config"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 	"github.com/telegram-ai-assistant/root/pkg/queue"
 	"github.com/telegram-ai-assistant/root/pkg/storage"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -76,6 +75,22 @@ func main() {
 	if jwtExpHours < 1 {
 		jwtExpHours = 168
 	}
+
+	kcIssuer := normalizeKeycloakIssuer(config.LoadString("KEYCLOAK_ISSUER", ""))
+	kcJWKSURL := strings.TrimSpace(config.LoadString("KEYCLOAK_JWKS_URL", ""))
+	if kcJWKSURL == "" && kcIssuer != "" {
+		kcJWKSURL = kcIssuer + "/protocol/openid-connect/certs"
+	}
+	var kcKF keyfunc.Keyfunc
+	if kcIssuer != "" && kcJWKSURL != "" {
+		kf, kerr := newKeycloakKeyfunc(ctx, kcJWKSURL)
+		if kerr != nil {
+			log.Warn(ctx, "KEYCLOAK_ISSUER set but JWKS init failed (Keycloak auth disabled)", logging.KV{"error", kerr})
+		} else {
+			kcKF = kf
+		}
+	}
+
 	handler := NewHandler(HandlerDeps{
 		Pool:                  pool,
 		MinIO:                 minioClient,
@@ -89,33 +104,45 @@ func main() {
 		LokiURL:               config.LoadString("LOKI_URL", "http://loki:3100"),
 		ReminderSuperAdminSub: config.LoadString("REMINDER_SUPERADMIN_SUB", "admin"),
 		ZoneAgents:            parseZoneAgentsJSON(config.LoadString("ZONE_AGENTS", "")),
+		KeycloakIssuer:        kcIssuer,
+		KeycloakClientID:      strings.TrimSpace(config.LoadString("KEYCLOAK_CLIENT_ID", "")),
+		KeycloakClientSecret:  strings.TrimSpace(config.LoadString("KEYCLOAK_CLIENT_SECRET", "")),
+		KeycloakRequiredRole:       strings.TrimSpace(config.LoadString("KEYCLOAK_REQUIRED_ROLE", "")),
+		KeycloakOnly:               strings.EqualFold(strings.TrimSpace(config.LoadString("KEYCLOAK_ONLY", "")), "1"),
+		KeycloakKeyfunc:            kcKF,
+		KeycloakTokenURL:           strings.TrimSpace(config.LoadString("KEYCLOAK_TOKEN_URL", "")),
+		KeycloakAuthorizationURL:   strings.TrimSpace(config.LoadString("KEYCLOAK_AUTHORIZATION_URL", "")),
 	})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/api/login", handler.Login)
 	mux.HandleFunc("/api/login/", handler.Login)
-	mux.Handle("/api/upload", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.Upload)))
-	mux.Handle("/api/docs", authMiddleware(handler.JWTSecret, docsRouter(handler)))
-	mux.Handle("/api/docs/", authMiddleware(handler.JWTSecret, docsRouter(handler)))
-	mux.Handle("/api/jobs", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListJobs)))
-	mux.Handle("/api/jobs/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.JobStatus)))
-	mux.Handle("/api/logs/search", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsSearch)))
-	mux.Handle("/api/logs/raw", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.LogsRaw)))
-	mux.Handle("/api/chats", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ListChats)))
-	mux.Handle("/api/chats/", authMiddleware(handler.JWTSecret, chatsRouter(handler)))
-	mux.Handle("/api/monitor/metrics", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.MonitorMetrics)))
-	mux.Handle("/api/reminders/config", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersConfig)))
-	mux.Handle("/api/reminders/toggle", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersToggle)))
-	mux.Handle("/api/reminders/debug-clock", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersDebugClock)))
-	mux.Handle("/api/reminders/subscribers", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersSubscribers)))
-	mux.Handle("/api/reminders/reset-user", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.RemindersResetUser)))
-	mux.Handle("/api/reminders/scheduler-notifications", authMiddleware(handler.JWTSecret, schedulerNotificationsRouter(handler)))
-	mux.Handle("/api/reminders/scheduler-notifications/", authMiddleware(handler.JWTSecret, schedulerNotificationsRouter(handler)))
-	mux.Handle("/api/chat/llm", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ChatLLM)))
-	mux.Handle("/api/grafana/", grafanaAuthMiddleware(handler.JWTSecret, http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
-	mux.Handle("/api/zones", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ZonesRoutes)))
-	mux.Handle("/api/zones/", authMiddleware(handler.JWTSecret, http.HandlerFunc(handler.ZonesRoutes)))
+	mux.HandleFunc("/api/auth/keycloak", handler.KeycloakPublicConfig)
+	mux.HandleFunc("/api/auth/keycloak/", handler.KeycloakPublicConfig)
+	mux.HandleFunc("/api/auth/keycloak/callback", handler.KeycloakCallback)
+	mux.HandleFunc("/api/auth/keycloak/callback/", handler.KeycloakCallback)
+	mux.Handle("/api/upload", handler.AuthMiddleware(http.HandlerFunc(handler.Upload)))
+	mux.Handle("/api/docs", handler.AuthMiddleware(docsRouter(handler)))
+	mux.Handle("/api/docs/", handler.AuthMiddleware(docsRouter(handler)))
+	mux.Handle("/api/jobs", handler.AuthMiddleware(http.HandlerFunc(handler.ListJobs)))
+	mux.Handle("/api/jobs/", handler.AuthMiddleware(http.HandlerFunc(handler.JobStatus)))
+	mux.Handle("/api/logs/search", handler.AuthMiddleware(http.HandlerFunc(handler.LogsSearch)))
+	mux.Handle("/api/logs/raw", handler.AuthMiddleware(http.HandlerFunc(handler.LogsRaw)))
+	mux.Handle("/api/chats", handler.AuthMiddleware(http.HandlerFunc(handler.ListChats)))
+	mux.Handle("/api/chats/", handler.AuthMiddleware(chatsRouter(handler)))
+	mux.Handle("/api/monitor/metrics", handler.AuthMiddleware(http.HandlerFunc(handler.MonitorMetrics)))
+	mux.Handle("/api/reminders/config", handler.AuthMiddleware(http.HandlerFunc(handler.RemindersConfig)))
+	mux.Handle("/api/reminders/toggle", handler.AuthMiddleware(http.HandlerFunc(handler.RemindersToggle)))
+	mux.Handle("/api/reminders/debug-clock", handler.AuthMiddleware(http.HandlerFunc(handler.RemindersDebugClock)))
+	mux.Handle("/api/reminders/subscribers", handler.AuthMiddleware(http.HandlerFunc(handler.RemindersSubscribers)))
+	mux.Handle("/api/reminders/reset-user", handler.AuthMiddleware(http.HandlerFunc(handler.RemindersResetUser)))
+	mux.Handle("/api/reminders/scheduler-notifications", handler.AuthMiddleware(schedulerNotificationsRouter(handler)))
+	mux.Handle("/api/reminders/scheduler-notifications/", handler.AuthMiddleware(schedulerNotificationsRouter(handler)))
+	mux.Handle("/api/chat/llm", handler.AuthMiddleware(http.HandlerFunc(handler.ChatLLM)))
+	mux.Handle("/api/grafana/", handler.GrafanaAuthMiddleware(http.StripPrefix("/api/grafana", handler.GrafanaProxy())))
+	mux.Handle("/api/zones", handler.AuthMiddleware(http.HandlerFunc(handler.ZonesRoutes)))
+	mux.Handle("/api/zones/", handler.AuthMiddleware(http.HandlerFunc(handler.ZonesRoutes)))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "" {
@@ -225,67 +252,3 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func authMiddleware(secret []byte, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tokenStr := r.Header.Get("Authorization")
-		if tokenStr == "" {
-			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
-			return
-		}
-		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
-			tokenStr = tokenStr[7:]
-		}
-		if tokenStr == "" {
-			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
-			return
-		}
-		_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) { return secret, nil })
-		if err != nil {
-			log.Warn(r.Context(), "auth middleware jwt parse failed", logging.KV{"error", err})
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			body := `{"error":"invalid token"}`
-			if errors.Is(err, jwt.ErrTokenExpired) {
-				body = `{"error":"token_expired"}`
-			}
-			_, _ = w.Write([]byte(body))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func grafanaAuthMiddleware(secret []byte, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/grafana/public/") || strings.HasPrefix(r.URL.Path, "/api/grafana/img/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		tokenStr := r.Header.Get("Authorization")
-		if tokenStr == "" {
-			tokenStr = r.URL.Query().Get("token")
-		}
-		if tokenStr == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"missing authorization","hint":"Open Grafana from the admin panel (log in first, then open Grafana in the menu)"}`))
-			return
-		}
-		if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
-			tokenStr = tokenStr[7:]
-		}
-		_, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) { return secret, nil })
-		if err != nil {
-			log.Warn(r.Context(), "grafana auth jwt parse failed", logging.KV{"error", err})
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			body := `{"error":"invalid token"}`
-			if errors.Is(err, jwt.ErrTokenExpired) {
-				body = `{"error":"token_expired"}`
-			}
-			_, _ = w.Write([]byte(body))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}

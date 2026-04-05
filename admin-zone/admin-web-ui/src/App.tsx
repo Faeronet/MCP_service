@@ -5,6 +5,7 @@ import { ToastContainer } from './components/Toast'
 import { MonitorProvider } from './context/MonitorContext'
 import { useToast } from './context/ToastContext'
 import { Login } from './pages/Login'
+import { KeycloakCallback } from './pages/KeycloakCallback'
 import { Docs } from './pages/Docs'
 import { Jobs } from './pages/Jobs'
 import { Logs } from './pages/Logs'
@@ -31,6 +32,7 @@ export default function App() {
       <ToastContainer toasts={toasts} onRemove={remove} />
       <Routes>
         <Route path="/login" element={<Login onLogin={() => setToken(localStorage.getItem('token'))} />} />
+        <Route path="/auth/callback" element={<KeycloakCallback />} />
         <Route path="/" element={token ? <MonitorProvider><Layout /></MonitorProvider> : <Navigate to="/login" replace />}>
           <Route index element={<Navigate to="/docs" replace />} />
           <Route path="docs" element={<Docs />} />

@@ -22,6 +22,7 @@ import (
 	"github.com/telegram-ai-assistant/root/pkg/queue"
 	"github.com/telegram-ai-assistant/root/pkg/storage"
 
+	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,6 +40,15 @@ type HandlerDeps struct {
 	LokiURL               string
 	ReminderSuperAdminSub string // совпадение с логином → UI симуляции времени (например admin)
 	ZoneAgents            []ZoneAgentConfig       // из ZONE_AGENTS (JSON), прокси к zone-agent в каждой зоне
+	// Keycloak OIDC (опционально): JWKS по KEYCLOAK_ISSUER, проверка iss/aud/azp.
+	KeycloakIssuer        string
+	KeycloakClientID      string
+	KeycloakClientSecret  string // для confidential client при обмене code; для public — пусто
+	KeycloakRequiredRole       string // если задано — в token должна быть realm-роль
+	KeycloakOnly               bool   // true — POST /api/login отключён
+	KeycloakKeyfunc            keyfunc.Keyfunc
+	KeycloakTokenURL           string // опционально, обмен code
+	KeycloakAuthorizationURL   string // опционально, редирект браузера
 }
 
 type Handler struct {
@@ -62,6 +72,12 @@ type LoginResponse struct {
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if h.KeycloakOnly {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"password login disabled","hint":"Use Keycloak sign-in"}`))
 		return
 	}
 	var req LoginRequest
@@ -834,14 +850,29 @@ func rawJSON(b []byte) interface{} {
 }
 
 func (h *Handler) parseJWTClaims(r *http.Request) (jwt.MapClaims, error) {
-	tokenStr := r.Header.Get("Authorization")
+	tokenStr := bearerFromRequest(r)
 	if tokenStr == "" {
 		return nil, fmt.Errorf("missing authorization")
 	}
-	if len(tokenStr) > 7 && tokenStr[:7] == "Bearer " {
-		tokenStr = tokenStr[7:]
+	if h.KeycloakKeyfunc != nil {
+		token, err := jwt.Parse(tokenStr, h.KeycloakKeyfunc.Keyfunc, jwt.WithValidMethods([]string{"RS256", "RS384", "RS512", "PS256"}))
+		if err == nil && token != nil && token.Valid {
+			if c, ok := token.Claims.(jwt.MapClaims); ok {
+				if err := keycloakCheckClaims(c, h.KeycloakIssuer, h.KeycloakClientID, h.KeycloakRequiredRole); err == nil {
+					return c, nil
+				}
+			}
+		}
 	}
-	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) { return h.JWTSecret, nil })
+	if h.KeycloakOnly {
+		return nil, fmt.Errorf("keycloak token required")
+	}
+	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return h.JWTSecret, nil
+	})
 	if err != nil || !token.Valid {
 		return nil, err
 	}
