@@ -113,6 +113,7 @@ func main() {
 		KeycloakTokenURL:           strings.TrimSpace(config.LoadString("KEYCLOAK_TOKEN_URL", "")),
 		KeycloakAuthorizationURL:   strings.TrimSpace(config.LoadString("KEYCLOAK_AUTHORIZATION_URL", "")),
 	})
+	handler.StartChatLogStatsSampler()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -130,6 +131,7 @@ func main() {
 	mux.Handle("/api/logs/search", handler.AuthMiddleware(http.HandlerFunc(handler.LogsSearch)))
 	mux.Handle("/api/logs/raw", handler.AuthMiddleware(http.HandlerFunc(handler.LogsRaw)))
 	mux.Handle("/api/chats", handler.AuthMiddleware(http.HandlerFunc(handler.ListChats)))
+	mux.Handle("/api/chats/stats", handler.AuthMiddleware(http.HandlerFunc(handler.ChatLogStats)))
 	mux.Handle("/api/chats/", handler.AuthMiddleware(chatsRouter(handler)))
 	mux.Handle("/api/monitor/metrics", handler.AuthMiddleware(http.HandlerFunc(handler.MonitorMetrics)))
 	mux.Handle("/api/reminders/config", handler.AuthMiddleware(http.HandlerFunc(handler.RemindersConfig)))

@@ -81,6 +81,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/chat", srv.HandleChat)
+	mux.HandleFunc("/metrics/llm", srv.HandleLLMStats)
 	mux.HandleFunc("/scheduler/compose", srv.HandleSchedulerCompose)
 	mux.HandleFunc("/scheduler/deliver", srv.HandleSchedulerDeliver)
 

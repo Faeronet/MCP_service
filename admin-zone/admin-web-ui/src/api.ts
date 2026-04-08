@@ -285,6 +285,24 @@ export async function listChats(): Promise<{ chats: ChatListItem[] }> {
   return r.json()
 }
 
+export interface ChatLogStatsPoint {
+  ts: string
+  count: number
+}
+
+export interface ChatLogStats {
+  total_chats: number
+  llm_inflight: number
+  series_24h: ChatLogStatsPoint[]
+}
+
+export async function getChatLogStats(): Promise<ChatLogStats> {
+  const r = await fetch(`${API_URL}/api/chats/stats`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  checkAuth(r)
+  if (!r.ok) throw new Error('Failed to load chat stats')
+  return r.json()
+}
+
 export interface ChatMessage {
   id?: string
   role: string

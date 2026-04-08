@@ -53,10 +53,11 @@ type HandlerDeps struct {
 
 type Handler struct {
 	HandlerDeps
+	ChatStats *chatStatsState
 }
 
 func NewHandler(d HandlerDeps) *Handler {
-	return &Handler{HandlerDeps: d}
+	return &Handler{HandlerDeps: d, ChatStats: newChatStatsState()}
 }
 
 type LoginRequest struct {

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { listChats, getChatMessages, type ChatListItem, type ChatMessage } from '../api'
+import { listChats, getChatMessages, getChatLogStats, type ChatListItem, type ChatMessage, type ChatLogStatsPoint } from '../api'
 import { useToast } from '../context/ToastContext'
 
 const CHAT_MESSAGES_POLL_MS = 5000
+const CHAT_STATS_POLL_MS = 10000
 
 function formatTime(iso: string): string {
   try {
@@ -18,8 +19,37 @@ function truncateForReply(text: string, maxLen: number = 120): string {
   return t.length <= maxLen ? t : t.slice(0, maxLen) + '…'
 }
 
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n))
+}
+
+function compressToBuckets(src: ChatLogStatsPoint[], buckets: number): ChatLogStatsPoint[] {
+  if (src.length <= buckets || buckets <= 0) return src
+  const out: ChatLogStatsPoint[] = []
+  const step = src.length / buckets
+  for (let i = 0; i < buckets; i++) {
+    const from = Math.floor(i * step)
+    const to = Math.min(src.length, Math.floor((i + 1) * step))
+    let maxCount = 0
+    let ts = src[from]?.ts || src[src.length - 1]?.ts || new Date().toISOString()
+    for (let j = from; j < to; j++) {
+      const p = src[j]
+      if (p.count >= maxCount) {
+        maxCount = p.count
+        ts = p.ts
+      }
+    }
+    out.push({ ts, count: maxCount })
+  }
+  return out
+}
+
 export function ChatLog() {
   const [chats, setChats] = useState<ChatListItem[]>([])
+  const [totalChats, setTotalChats] = useState<number>(0)
+  const [llmInflight, setLlmInflight] = useState<number>(0)
+  const [llmSeries24h, setLlmSeries24h] = useState<ChatLogStatsPoint[]>([])
+  const [showGraph, setShowGraph] = useState(false)
   const [loading, setLoading] = useState(true)
   const [modalSession, setModalSession] = useState<ChatListItem | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -62,9 +92,28 @@ export function ChatLog() {
     }
   }
 
+  const loadStats = useCallback(async () => {
+    try {
+      const s = await getChatLogStats()
+      setTotalChats(typeof s.total_chats === 'number' ? s.total_chats : 0)
+      setLlmInflight(typeof s.llm_inflight === 'number' ? s.llm_inflight : 0)
+      setLlmSeries24h(Array.isArray(s.series_24h) ? s.series_24h : [])
+    } catch {
+      // not fatal for chat table
+    }
+  }, [])
+
   useEffect(() => {
     loadChats()
+    void loadStats()
   }, [])
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      void loadStats()
+    }, CHAT_STATS_POLL_MS)
+    return () => clearInterval(t)
+  }, [loadStats])
 
   useEffect(() => {
     if (!modalSession) {
@@ -108,11 +157,45 @@ export function ChatLog() {
     return map
   }, [messages])
 
+  const chartData = useMemo(() => compressToBuckets(llmSeries24h, 96), [llmSeries24h])
+  const chartPeakRaw = useMemo(() => chartData.reduce((m, p) => Math.max(m, p.count), 0), [chartData])
+  const chartYMax = useMemo(() => clamp(chartPeakRaw, 5, 100), [chartPeakRaw])
+
   return (
     <div className="page-layout">
       <div className="page-header">
         <h1 className="page-title">Chat Log</h1>
         <p className="text-muted">Чаты из PostgreSQL (chat.sessions, chat.messages).</p>
+        <div className="input-line">
+          <span className="text-muted">Всего чатов: <b>{totalChats || chats.length}</b></span>
+          <span className="text-muted">Сейчас в LLM: <b>{llmInflight}</b></span>
+          <button type="button" className="btn-monitor-inactive" onClick={() => setShowGraph(v => !v)}>
+            {showGraph ? 'Скрыть график' : 'График 24ч'}
+          </button>
+        </div>
+        {showGraph && (
+          <div style={{ marginTop: 8, border: '1px solid #2f3441', borderRadius: 8, padding: 8 }}>
+            <div className="text-muted" style={{ marginBottom: 6 }}>
+              Одновременные запросы к LLM за 24 часа · пик: {chartPeakRaw} · шкала: 0..{chartYMax}
+            </div>
+            <div style={{ height: 120, display: 'flex', alignItems: 'flex-end', gap: 1 }}>
+              {chartData.length === 0 ? (
+                <span className="text-muted">Нет данных</span>
+              ) : (
+                chartData.map((p, i) => {
+                  const h = Math.max(2, Math.round((p.count / chartYMax) * 100))
+                  return (
+                    <div
+                      key={`${p.ts}-${i}`}
+                      title={`${formatTime(p.ts)}: ${p.count}`}
+                      style={{ width: 4, height: `${h}%`, background: '#7c8cf8', borderRadius: 2 }}
+                    />
+                  )
+                })
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <div className="content-panel">
         {loading ? (
