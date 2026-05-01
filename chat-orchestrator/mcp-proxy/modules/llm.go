@@ -193,10 +193,15 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 		{"role": "system", "content": systemContent},
 		{"role": "user", "content": userQuery},
 	}
-	payload, _ := json.Marshal(map[string]interface{}{
-		"model": s.LlmModel, "messages": messages, "max_tokens": maxOut,
-		"chat_template_kwargs": map[string]interface{}{"enable_thinking": false},
-	})
+	payloadMap := map[string]interface{}{
+		"model":      s.LlmModel,
+		"messages":   messages,
+		"max_tokens": maxOut,
+	}
+	if !s.LlmDisableChatTemplateKwargs {
+		payloadMap["chat_template_kwargs"] = map[string]interface{}{"enable_thinking": false}
+	}
+	payload, _ := json.Marshal(payloadMap)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.VllmBase+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return "", err

@@ -17,6 +17,9 @@
 ./stack-up.sh
 ```
 
+macOS без VM (LLM через локальный Ollama): см. `docs/run-on-one-machine.md`.
+Коротко: `VLLM_OPENAI_BASE=http://host.docker.internal:11434/v1`, `LLM_DISABLE_CHAT_TEMPLATE_KWARGS=1`, затем `./stack-up.sh` (без `MCP_WITH_VLLM=1`).
+
 С GPU для vLLM и реранкера в зоне `ai-zone`:
 
 ```bash

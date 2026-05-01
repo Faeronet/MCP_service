@@ -17,6 +17,7 @@ type Server struct {
 	VllmBase       string
 	LlmModel         string
 	LlmAPIKey        string
+	LlmDisableChatTemplateKwargs bool // для Ollama/llama.cpp (CPU/macOS): не слать vLLM-специфичный chat_template_kwargs
 	LlmMaxTokens     int
 	LlmContextLength int   // лимит контекста модели (например 40960); вход обрезается до context_length - max_tokens
 	LlmLimiter       *ratelimit.InFlight
@@ -46,6 +47,7 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 	// Совпадает с VLLM_MODEL_NAME / LLM_MODEL в docker-compose (vLLM отклонит запрос, если имя не совпало).
 	llmModel := config.LoadString("LLM_MODEL", "Qwen/Qwen3-14B-AWQ")
 	llmAPIKey := config.LoadString("LLM_BINDING_API_KEY", "")
+	llmDisableChatTemplateKwargs := strings.TrimSpace(config.LoadString("LLM_DISABLE_CHAT_TEMPLATE_KWARGS", "")) == "1"
 	llmMaxTokens := config.LoadInt("LLM_MAX_TOKENS", 1024)
 	if llmMaxTokens < 256 {
 		llmMaxTokens = 4096
@@ -96,6 +98,7 @@ func NewServer(pool *pgxpool.Pool, promptA, promptB, promptC string) *Server {
 		VllmBase:         llmBase, // Backward-compatible field name.
 		LlmModel:         llmModel,
 		LlmAPIKey:        llmAPIKey,
+		LlmDisableChatTemplateKwargs: llmDisableChatTemplateKwargs,
 		LlmMaxTokens:     llmMaxTokens,
 		LlmContextLength: llmContextLength,
 		LlmLimiter:       llmLimiter,
