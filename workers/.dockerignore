@@ -16,5 +16,4 @@ __pycache__
 **/venv
 **/.venv
 *.md
-promtail.yml
 docker-compose.yml

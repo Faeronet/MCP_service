@@ -15,5 +15,4 @@ out
 __pycache__
 **/__pycache__
 *.md
-promtail.yml
 docker-compose.yml
