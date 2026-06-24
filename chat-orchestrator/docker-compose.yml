@@ -4,6 +4,7 @@ networks:
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -18,7 +19,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29103:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29103:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -36,6 +37,7 @@ services:
 
   mcp-read:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-mcp-read:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: mcp-read/Dockerfile
@@ -43,7 +45,7 @@ services:
     networks:
       - mcp_stack
     ports:
-      - "0.0.0.0:8082:8082"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8082:8082"
     depends_on:
       wait-postgres:
         condition: service_completed_successfully
@@ -56,18 +58,15 @@ services:
 
   mcp-proxy:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-mcp-proxy:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: mcp-proxy/Dockerfile
     container_name: mcp_proxy
     networks:
       - mcp_stack
-    environment:
-      MCP_PROMPTS_DIR: /mcp-prompts
-    volumes:
-      - ./mcp-proxy/prompts:/mcp-prompts:ro
     ports:
-      - "0.0.0.0:8083:8083"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8083:8083"
     depends_on:
       mcp-read:
         condition: service_started
@@ -75,14 +74,16 @@ services:
 
   promtail:
     env_file: .env
-    image: grafana/promtail:3.0.0
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-promtail-chat-orchestrator:${MCP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.promtail
     networks:
       - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
     volumes:
-      - ./promtail.yml:/etc/promtail/config.tpl:ro
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

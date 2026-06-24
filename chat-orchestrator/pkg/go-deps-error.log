@@ -1,0 +1,5 @@
+template: main:1: unclosed action
+[2026-05-04T17:54:23+03:00] go list deps failed
+dir=/home/faeronet/Документы/MCP_service/chat-orchestrator/pkg
+cmd=go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./...
+

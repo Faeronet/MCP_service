@@ -16,7 +16,7 @@ func (s *Server) composeReminderLLM(ctx context.Context, requestID, angelName, c
 		body = body[:24000]
 	}
 	user := "Имя ангела: " + angelName + "\n\nКонтекст:\n" + body
-	outC, err := s.callLLMWithBudget(ctx, requestID+"-c", s.PromptC, user, 256)
+	outC, err := s.callLLMWithBudget(ctx, requestID+"-c", s.PromptC, user, nil, 256)
 	if err != nil {
 		return "", err
 	}

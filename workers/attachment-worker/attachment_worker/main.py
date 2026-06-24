@@ -23,10 +23,9 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 BUCKET = os.getenv("MINIO_ATTACHMENTS_BUCKET", "attachments")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "openai/whisper-large-v3")
-OCR_MODEL = os.getenv("OCR_MODEL", "PaddlePaddle/PaddleOCR-VL-1.5")
-OCR_SERVICE_URL = (os.getenv("OCR_SERVICE_URL") or "").strip()
-ASR_SERVICE_URL = (os.getenv("ASR_SERVICE_URL") or "").strip()
+EXTRACT_TOOL_URL = (os.getenv("EXTRACT_TOOL_URL") or os.getenv("OCR_SERVICE_URL") or os.getenv("ASR_SERVICE_URL") or "").strip()
+OCR_SERVICE_URL = (os.getenv("OCR_SERVICE_URL") or EXTRACT_TOOL_URL).strip()
+ASR_SERVICE_URL = (os.getenv("ASR_SERVICE_URL") or EXTRACT_TOOL_URL).strip()
 
 ALLOWED_EXTENSIONS = {".txt", ".pdf", ".jpg", ".jpeg", ".png", ".ogg", ".mp3"}
 
@@ -67,6 +66,8 @@ def main():
                         if r.status_code == 200:
                             out = r.json()
                             extracted = out.get("text", extracted)
+                        elif r.status_code == 503:
+                            log.info("OCR not configured on extract-tool (503)")
                     elif ext in (".ogg", ".mp3", ".wav", ".m4a") and ASR_SERVICE_URL:
                         r = requests.post(
                             ASR_SERVICE_URL.rstrip("/") + "/asr",
@@ -76,6 +77,8 @@ def main():
                         if r.status_code == 200:
                             out = r.json()
                             extracted = out.get("text", extracted)
+                        elif r.status_code == 503:
+                            log.info("ASR not configured on extract-tool (503)")
                     elif ext == ".txt":
                         extracted = data.decode(errors="replace")
                 else:
@@ -102,9 +105,9 @@ def main():
 
     ch.basic_consume("attachment_jobs", on_message_callback=on_message)
     log.info(
-        "attachment-worker consuming attachment_jobs (WHISPER_MODEL=%s, OCR_MODEL=%s)",
-        WHISPER_MODEL,
-        OCR_MODEL,
+        "attachment-worker consuming attachment_jobs (ocr_url=%s, asr_url=%s)",
+        OCR_SERVICE_URL or "(disabled)",
+        ASR_SERVICE_URL or "(disabled)",
     )
     ch.start_consuming()
 

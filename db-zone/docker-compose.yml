@@ -1,11 +1,12 @@
 # Общая сеть mcp_stack создаётся в ./stack-up.sh (docker network create).
-# Снаружи — 0.0.0.0:порт; между контейнерами — имена mcp_postgres, mcp_redis, mcp_qdrant.
+# Проброс на хост: MCP_INTERNAL_BIND (по умолчанию 127.0.0.1); между контейнерами — mcp_postgres, mcp_redis, mcp_qdrant.
 networks:
   mcp_stack:
     external: true
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -20,7 +21,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29100:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29100:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -38,7 +39,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "0.0.0.0:5433:5432"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-postgres}\""]
       interval: 5s
@@ -57,11 +58,6 @@ services:
       PGHOST: mcp_postgres
       PGUSER: ${POSTGRES_USER:-postgres}
       PGDATABASE: ${POSTGRES_DB:-assistant}
-    volumes:
-      - type: bind
-        source: ./migrations
-        target: /migrations
-        read_only: true
     command: >
       sh -c "for f in /migrations/*.up.sql; do [ -f \"$$f\" ] || continue; echo Applying $$f...; psql -f \"$$f\" || true; done"
     depends_on:
@@ -76,7 +72,7 @@ services:
     networks:
       - mcp_stack
     ports:
-      - "0.0.0.0:6379:6379"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -93,7 +89,7 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     ports:
-      - "0.0.0.0:6333:6333"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:6333:6333"
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
     restart: unless-stopped

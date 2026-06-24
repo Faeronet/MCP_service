@@ -20,30 +20,34 @@ func main() {
 	ctx := context.Background()
 	qdrantURL := strings.TrimSuffix(config.LoadString("QDRANT_URL", "http://qdrant:6333"), "/")
 	redisAddr := config.LoadString("REDIS_ADDR", "redis:6379")
-	embedAPIBase := config.LoadString("EMBEDDING_BINDING_HOST", "")
-	if embedAPIBase == "" {
-		embedAPIBase = config.LoadString("EMBED_API_URL", "")
-	}
-	if embedAPIBase == "" {
-		embedAPIBase = strings.TrimSuffix(config.LoadString("VLLM_OPENAI_BASE", "http://vllm:8000/v1"), "/")
+
+	embedAPIBase := config.OpenRouterBase()
+	embedAPIKey := config.OpenRouterAPIKey()
+	embedModel := config.OptionalModel("EMBEDDING_MODEL", "OPENROUTER_EMBED_MODEL")
+	if embedModel != "" {
+		log.Info(ctx, "embedding configured", logging.KV{"base", embedAPIBase}, logging.KV{"model", embedModel})
 	} else {
-		embedAPIBase = strings.TrimSuffix(embedAPIBase, "/")
+		log.Info(ctx, "embedding disabled (EMBEDDING_MODEL not set); retrieval uses full-text search only")
 	}
-	embedAPIKey := config.LoadString("EMBEDDING_BINDING_API_KEY", "")
-	embedModel := config.LoadString("EMBEDDING_MODEL", "BAAI/bge-m3")
-	rerankAPIURL := config.LoadString("RERANK_BINDING_HOST", "")
+
+	rerankAPIURL := strings.TrimSuffix(config.LoadString("RERANK_BINDING_HOST", ""), "/")
 	if rerankAPIURL == "" {
-		rerankAPIURL = config.LoadString("RERANK_API_URL", "")
+		rerankAPIURL = strings.TrimSuffix(config.LoadString("RERANK_API_URL", ""), "/")
 	}
-	rerankAPIURL = strings.TrimSuffix(rerankAPIURL, "/")
-	if rerankAPIURL == "" {
-		rerankAPIURL = "http://rerank:8787/api/v1"
-		log.Info(ctx, "rerank URL not set, using default", logging.KV{"url", rerankAPIURL})
+	rerankAPIKey := config.OpenRouterAPIKey()
+	if rerankAPIKey == "" {
+		rerankAPIKey = config.LoadString("RERANK_BINDING_API_KEY", "")
+	}
+	rerankModel := config.OptionalModel("RERANK_MODEL", "OPENROUTER_RERANK_MODEL")
+	if rerankModel != "" && rerankAPIURL == "" {
+		rerankAPIURL = config.OpenRouterBase()
+	}
+	if rerankModel != "" {
+		log.Info(ctx, "rerank configured", logging.KV{"url", rerankAPIURL}, logging.KV{"model", rerankModel})
 	} else {
-		log.Info(ctx, "rerank configured", logging.KV{"url", rerankAPIURL})
+		log.Info(ctx, "rerank disabled (RERANK_MODEL not set)")
 	}
-	rerankAPIKey := config.LoadString("RERANK_BINDING_API_KEY", "")
-	rerankModel := config.LoadString("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+
 	rerankMinScore := 0.8
 	if s := config.LoadString("RERANK_MIN_SCORE", "0.8"); s != "" {
 		if f, err := strconv.ParseFloat(strings.TrimSpace(s), 64); err == nil && f >= 0 && f <= 1 {
@@ -67,12 +71,15 @@ func main() {
 
 	useFullText := config.LoadString("USE_FULLTEXT_SEARCH", "true") == "true" || config.LoadString("USE_FULLTEXT_SEARCH", "true") == "1"
 	cfg := &modules.Handler{
-		QdrantURL:         qdrantURL,
-		UseFullTextSearch:  useFullText,
+		QdrantURL:          qdrantURL,
+		UseFullTextSearch:  true, // always allow FTS; vector search only when embed enabled
 		Redis:              rdb,
 		RerankMinScore:     rerankMinScore,
 		RerankLimiter:      rerankLimiter,
 		EmbedLimiter:       embedLimiter,
+	}
+	if !useFullText && embedModel == "" {
+		log.Warn(ctx, "USE_FULLTEXT_SEARCH=false but embedding disabled — enabling FTS fallback")
 	}
 	embedClient := modules.NewEmbedClient(embedAPIBase, embedAPIKey, embedModel)
 	rerankClient := modules.NewRerankClient(rerankAPIURL, rerankAPIKey, rerankModel)

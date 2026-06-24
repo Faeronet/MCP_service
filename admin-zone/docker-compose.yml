@@ -4,6 +4,7 @@ networks:
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -18,7 +19,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29110:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29110:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -35,9 +36,11 @@ services:
     restart: "no"
 
   admin-backend:
+    # API только внутри Docker-сети mcp_stack; снаружи — через admin-web-ui (nginx /api).
     # Образ на базе CUDA уже содержит nvidia-smi; без проброса GPU контейнер не видит карту — метрики GPU будут нули.
     # См. docker-compose.nvidia.yml (docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d).
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-admin-backend:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: admin-backend/Dockerfile
@@ -48,8 +51,6 @@ services:
       - mcp_stack
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    ports:
-      - "0.0.0.0:8080:8080"
     depends_on:
       wait-postgres:
         condition: service_completed_successfully
@@ -61,17 +62,21 @@ services:
     restart: unless-stopped
 
   admin-web-ui:
+    # Единственная публичная точка входа в админку; API проксируется на admin-backend внутри сети.
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-admin-web-ui:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: admin-web-ui/Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-}
         VITE_MONITOR_POLL_MS: ${VITE_MONITOR_POLL_MS:-30000}
+    environment:
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:-}
     networks:
       - mcp_stack
     ports:
-      - "0.0.0.0:5173:80"
+      - "${MCP_PUBLIC_BIND:-0.0.0.0}:5173:80"
     depends_on:
       - admin-backend
     restart: unless-stopped
@@ -88,19 +93,21 @@ services:
       wait-postgres:
         condition: service_completed_successfully
     ports:
-      - "0.0.0.0:8089:8080"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8089:8080"
     restart: unless-stopped
 
   promtail:
     env_file: .env
-    image: grafana/promtail:3.0.0
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-promtail-admin-zone:${MCP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.promtail
     networks:
       - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
     volumes:
-      - ./promtail.yml:/etc/promtail/config.tpl:ro
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

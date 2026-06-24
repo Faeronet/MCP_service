@@ -149,16 +149,18 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.Config.EmbedLimiter.Acquire(ctx); err != nil {
-		logHandler.Warn(ctx, "build_context: embed limiter full", logging.KV{"error", err})
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(BuildContextResponse{
-			Context: "",
-			Error:   "embed_limit",
-		})
-		return
+	if s.Embed != nil && s.Embed.Enabled() {
+		if err := s.Config.EmbedLimiter.Acquire(ctx); err != nil {
+			logHandler.Warn(ctx, "build_context: embed limiter full", logging.KV{"error", err})
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(BuildContextResponse{
+				Context: "",
+				Error:   "embed_limit",
+			})
+			return
+		}
+		defer s.Config.EmbedLimiter.Release()
 	}
-	defer s.Config.EmbedLimiter.Release()
 
 	dateStr, hasDate := extractDateFromQuery(req.QueryText)
 	queryForSearch := strings.TrimSpace(req.QueryText)
@@ -193,14 +195,17 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var vec []float32
-	if !hasDate {
-		if triggerColl != "" && triggerColl != CollectionChunks {
-			vec = s.Embed.EmbedQuery(ctx, strings.TrimSpace(req.QueryText))
+	embedEnabled := s.Embed != nil && s.Embed.Enabled()
+	if embedEnabled {
+		if !hasDate {
+			if triggerColl != "" && triggerColl != CollectionChunks {
+				vec = s.Embed.EmbedQuery(ctx, strings.TrimSpace(req.QueryText))
+			} else {
+				vec = s.Embed.EmbedQuery(ctx, queryForSearch)
+			}
 		} else {
 			vec = s.Embed.EmbedQuery(ctx, queryForSearch)
 		}
-	} else {
-		vec = s.Embed.EmbedQuery(ctx, queryForSearch)
 	}
 
 	var contextText string
@@ -226,7 +231,7 @@ func (s *Server) BuildContext(w http.ResponseWriter, r *http.Request) {
 			go func(c string) {
 				defer wg.Done()
 				logHandler.Info(ctx, "build_context: trying collection (parallel)", logging.KV{"collection", c})
-				ctxText, ids, ok := searchOneCollectionNoDate(ctx, s.Qdrant, s.Rerank, s.Config.RerankLimiter, c, vec, queryForSearch, req.TokenBudget, s.Config.RerankMinScore, s.Config.UseFullTextSearch)
+				ctxText, ids, ok := searchOneCollectionNoDate(ctx, s.Qdrant, s.Rerank, s.Config.RerankLimiter, c, vec, queryForSearch, req.TokenBudget, s.Config.RerankMinScore, s.Config.UseFullTextSearch || !embedEnabled, embedEnabled)
 				if ok {
 					mu.Lock()
 					results[c] = &collResult{contextText: ctxText, chunkIDs: ids}

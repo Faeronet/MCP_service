@@ -17,9 +17,6 @@
 ./stack-up.sh
 ```
 
-macOS без VM (LLM через локальный Ollama): см. `docs/run-on-one-machine.md`.
-Коротко: `VLLM_OPENAI_BASE=http://host.docker.internal:11434/v1`, `LLM_DISABLE_CHAT_TEMPLATE_KWARGS=1`, затем `./stack-up.sh` (без `MCP_WITH_VLLM=1`).
-
 С GPU для vLLM и реранкера в зоне `ai-zone`:
 
 ```bash
@@ -35,6 +32,19 @@ MCP_WITH_VLLM=1 ./stack-up.sh
 Разнесение по ВМ: в `.env` каждой зоны замените `host.docker.internal` на приватные IP/DNS других зон (`POSTGRES_HOST`, `LOKI_HOST`, `MCP_PROXY_HOST`, …).
 
 Миграции Postgres запускает контейнер **`migrate`** в `db-zone` (через `./stack-up.sh` или вручную из каталога `db-zone`: `docker compose run --rm migrate`). С хоста при доступной БД: `./scripts/migrate.sh` (SQL в `db-zone/migrations/`).
+
+### Образы с кодом для CI / прод без сборки на сервере
+
+У сервисов с вашим кодом в compose указаны **`image`** и **`build`**: приложение и связанные файлы попадают в образ при сборке (включая шаблоны **promtail**, **loki.yaml**, provisioning **Grafana**, каталог **migrations** в образе **`mcp-db-migrate`**). На билд-сервере соберите и отправьте в registry, на проде достаточно pull тех же тегов и `.env`/compose.
+
+- **`MCP_IMAGE_REGISTRY`** — префикс без завершающего `/` (например `ghcr.io/myorg`); если не задан, образы собираются локально с именами вида `mcp-tg-bot:latest`.
+- **`MCP_IMAGE_TAG`** — тег версии (например `v1.2.3`); по умолчанию `latest`.
+
+Пример после `docker login`: `cd tg-bot && docker compose build && docker compose push`.
+
+**mcp-proxy:** тексты промптов по умолчанию встроены в бинарник (`go:embed`). Отдельное монтирование `./mcp-proxy/prompts` из compose убрано; для отладки можно использовать свой compose override и переменную **`MCP_PROMPTS_DIR`**.
+
+**zone-agent** по-прежнему монтирует каталог зоны в `/zone` для работы с compose на хосте; при деплое «только образами» его часто отключают или заменяют внешним оркестратором.
 
 **Важно:** без эмбеддингов (**vllm-embed** в `ai-zone` с профилем `vllm` или внешний `EMBED_API_URL` в `mcp-files/.env` и др.) **mcp-write** не построит векторы. Без чат-модели не ответит LLM — см. `chat-orchestrator/.env`, `ai-zone/.env`; vLLM на хосте: `VLLM_OPENAI_BASE=http://<IP_хоста>:8000/v1` в **`chat-orchestrator/.env`**.
 

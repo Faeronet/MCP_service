@@ -19,6 +19,11 @@ def ingest_document_system_b(req: IngestDocumentRequest, raw: str) -> dict[str, 
     if state.qdrant is None or state.minio_client is None:
         log.warning("ingest_document error 503: service not ready")
         raise HTTPException(status_code=503, detail="service not ready")
+    if not config.embedding_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="EMBEDDING_MODEL not configured; set EMBEDDING_MODEL and OPENROUTER_API_KEY for indexing",
+        )
     keys = system_b_parse.parse_system_b_keys(raw)
     if not keys:
         log.info("ingest_document system_b: no keys extracted for doc_id=%s", req.doc_id)

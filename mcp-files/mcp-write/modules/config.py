@@ -7,15 +7,35 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
-EMBEDDING_BINDING_HOST = (os.getenv("EMBEDDING_BINDING_HOST") or "").strip().rstrip("/")
-EMBED_API_URL = (os.getenv("EMBED_API_URL") or "").strip().rstrip("/")
-_vllm_embed_fallback = (
-    os.getenv("LLM_BINDING_HOST") or os.getenv("VLLM_OPENAI_BASE") or "http://vllm:8000/v1"
+
+OPENROUTER_API_BASE = (
+    os.getenv("OPENROUTER_API_BASE")
+    or os.getenv("OPENROUTER_BASE_URL")
+    or os.getenv("EMBEDDING_BINDING_HOST")
+    or os.getenv("EMBED_API_URL")
+    or os.getenv("LLM_BINDING_HOST")
+    or os.getenv("VLLM_OPENAI_BASE")
+    or "https://openrouter.ai/api/v1"
 ).strip().rstrip("/")
-EMBED_BASE = EMBEDDING_BINDING_HOST or EMBED_API_URL or _vllm_embed_fallback
-EMBEDDING_BINDING_API_KEY = (os.getenv("EMBEDDING_BINDING_API_KEY") or "").strip()
-EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or "BAAI/bge-m3").strip()
+
+OPENROUTER_API_KEY = (
+    os.getenv("OPENROUTER_API_KEY")
+    or os.getenv("EMBEDDING_BINDING_API_KEY")
+    or os.getenv("LLM_BINDING_API_KEY")
+    or ""
+).strip()
+OPENROUTER_HTTP_REFERER = (os.getenv("OPENROUTER_HTTP_REFERER") or "").strip()
+OPENROUTER_APP_TITLE = (os.getenv("OPENROUTER_APP_TITLE") or "MCP Telegram Assistant").strip()
+
+EMBED_BASE = OPENROUTER_API_BASE
+EMBEDDING_BINDING_API_KEY = OPENROUTER_API_KEY
+EMBEDDING_MODEL = (os.getenv("EMBEDDING_MODEL") or os.getenv("OPENROUTER_EMBED_MODEL") or "").strip()
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIMENSION", os.getenv("EMBEDDING_DIM", "1024")))
+
+
+def embedding_enabled() -> bool:
+    return bool(EMBEDDING_MODEL)
+
 
 COLLECTION = "chunks"
 COLLECTION_OBITANIE = "obitanie"

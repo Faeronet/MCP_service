@@ -2,6 +2,9 @@
 # Поднимает зоны по очереди. В каждой зоне свой docker-compose.yml и свой .env (рабочая директория — каталог зоны).
 # GPU: MCP_WITH_VLLM=1 ./stack-up.sh
 # Остановка: ./stack-up.sh down
+# Привязка портов на VPS: внутренние — только localhost; публичные — сайт, админка, tg-bot.
+export MCP_INTERNAL_BIND="${MCP_INTERNAL_BIND:-127.0.0.1}"
+export MCP_PUBLIC_BIND="${MCP_PUBLIC_BIND:-0.0.0.0}"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -77,4 +80,6 @@ zone admin-zone up -d
 
 zone tg-bot up -d
 
-echo "Готово. У каждой зоны свой .env в своём каталоге."
+echo "Готово. Публично (${MCP_PUBLIC_BIND}): angels-web :3000, admin UI :5173 (ADMIN_ALLOWED_IPS)."
+echo "Admin API — только внутри Docker (через nginx на :5173). tg-bot — long polling, порт :8081 только ${MCP_INTERNAL_BIND}."
+echo "Остальные сервисы — ${MCP_INTERNAL_BIND} или без проброса на хост."

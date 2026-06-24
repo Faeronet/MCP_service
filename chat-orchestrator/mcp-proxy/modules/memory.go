@@ -11,8 +11,39 @@ import (
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
-const maxMessagesBeforeTrim = 30
-const keepMessagesAfterTrim = 20
+
+// GetSessionLLMHistory returns recent user/assistant turns for multi-turn LLM (oldest first).
+func (s *Server) GetSessionLLMHistory(ctx context.Context, sessionID uuid.UUID, maxMessages int) []LLMChatMessage {
+	if maxMessages <= 0 {
+		return nil
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT role, content FROM chat.messages
+		WHERE session_id = $1 AND role IN ('user', 'assistant')
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, sessionID, maxMessages)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var rev []LLMChatMessage
+	for rows.Next() {
+		var role, content string
+		if rows.Scan(&role, &content) != nil {
+			continue
+		}
+		content = strings.TrimSpace(content)
+		if content == "" {
+			continue
+		}
+		rev = append(rev, LLMChatMessage{Role: role, Content: content})
+	}
+	for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+		rev[i], rev[j] = rev[j], rev[i]
+	}
+	return rev
+}
 
 var logMemory = logging.New("mcp-proxy.memory")
 
@@ -175,17 +206,25 @@ func (s *Server) GetAttachmentsText(ctx context.Context, sessionID uuid.UUID) st
 	return strings.Join(parts, "\n\n")
 }
 
-// TrimSessionMessagesIfNeeded deletes oldest messages beyond keepMessagesAfterTrim.
+// TrimSessionMessagesIfNeeded deletes oldest messages beyond ChatHistoryMaxMessages (with small buffer).
 func (s *Server) TrimSessionMessagesIfNeeded(ctx context.Context, sessionID uuid.UUID) {
+	keep := s.ChatHistoryMaxMessages
+	if keep <= 0 {
+		return
+	}
+	maxBefore := keep + 10
+	if maxBefore < 30 {
+		maxBefore = 30
+	}
 	var count int64
-	if err := s.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM chat.messages WHERE session_id = $1`, sessionID).Scan(&count); err != nil || count < maxMessagesBeforeTrim {
+	if err := s.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM chat.messages WHERE session_id = $1`, sessionID).Scan(&count); err != nil || count < int64(maxBefore) {
 		return
 	}
 	res, err := s.Pool.Exec(ctx, `
 		DELETE FROM chat.messages WHERE session_id = $1 AND id NOT IN (
 			SELECT id FROM chat.messages WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2
 		)
-	`, sessionID, keepMessagesAfterTrim)
+	`, sessionID, keep)
 	if err != nil {
 		logMemory.Warn(ctx, "trim session messages", logging.KV{"error", err}, logging.KV{"session_id", sessionID})
 		return

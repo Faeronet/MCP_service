@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/telegram-ai-assistant/root/pkg/config"
 	"github.com/telegram-ai-assistant/root/pkg/logging"
 )
 
@@ -20,6 +21,9 @@ type RerankClient struct {
 }
 
 func NewRerankClient(apiURL, apiKey, model string) *RerankClient {
+	if strings.TrimSpace(model) == "" {
+		return nil
+	}
 	return &RerankClient{APIURL: apiURL, APIKey: apiKey, Model: model}
 }
 
@@ -54,6 +58,7 @@ func (c *RerankClient) RerankWithScoreAndOrder(ctx context.Context, query string
 	if c.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
+	config.SetOpenRouterHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logRerank.Warn(ctx, "rerank request failed", logging.KV{"error", err}, logging.KV{"url", rerankURL})

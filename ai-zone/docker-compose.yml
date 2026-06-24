@@ -4,6 +4,7 @@ networks:
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -19,7 +20,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29101:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29101:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -58,7 +59,7 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
-      - "0.0.0.0:8000:8000"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8000:8000"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5)\""]
       interval: 15s
@@ -92,11 +93,12 @@ services:
       HF_HOME: /models
       VLLM_ENABLE_CUDA_COMPATIBILITY: "0"
     ports:
-      - "0.0.0.0:8002:8000"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8002:8000"
     restart: unless-stopped
 
   rerank:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-rerank:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./reranker
       dockerfile: Dockerfile
@@ -120,19 +122,21 @@ services:
               device_ids: ['0']
               capabilities: [gpu]
     ports:
-      - "0.0.0.0:8787:8787"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8787:8787"
     restart: unless-stopped
 
   promtail:
     env_file: .env
-    image: grafana/promtail:3.0.0
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-promtail-ai-zone:${MCP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.promtail
     networks:
       - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
     volumes:
-      - ./promtail.yml:/etc/promtail/config.tpl:ro
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

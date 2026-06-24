@@ -76,7 +76,12 @@ func main() {
 	if promptC == "" {
 		promptC = "Кратко напомни пользователю об ангеле по контексту."
 	}
+	if err := modules.ValidateLLMConfig(); err != nil {
+		log.Error(ctx, "llm config", logging.KV{"error", err})
+		os.Exit(1)
+	}
 	srv := modules.NewServer(pool, promptA, promptB, promptC)
+	log.Info(ctx, "llm configured", logging.KV{"base", srv.VllmBase}, logging.KV{"model", srv.LlmModel}, logging.KV{"history_max", srv.ChatHistoryMaxMessages})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })

@@ -8,9 +8,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/telegram-ai-assistant/root/pkg/config"
 )
 
-// truncateUTF8 cuts s to at most maxBytes without breaking a UTF-8 code point.
+// LLMChatMessage — одно сообщение в истории диалога для multi-turn chat.
+type LLMChatMessage struct {
+	Role    string
+	Content string
+}
+
 func truncateUTF8(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
@@ -160,7 +167,7 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 		systemContent = truncateUTF8(systemContent, systemMax)
 	}
 
-	reply, err := s.callLLMWithBudget(ctx, requestID, systemContent, userQuestion, s.LlmExtractMaxTokens)
+	reply, err := s.callLLMWithBudget(ctx, requestID, systemContent, userQuestion, nil, s.LlmExtractMaxTokens)
 	if err != nil {
 		return "", err
 	}
@@ -168,18 +175,17 @@ func (s *Server) ExtractSearchQuery(ctx context.Context, requestID, userQuestion
 	return reply, nil
 }
 
-// CallLLM calls OpenAI-compatible /chat/completions (vLLM или другой OpenAI-совместимый сервер).
-// Обрезает systemContent по длине, чтобы input_tokens + max_tokens не превышали context_length.
-func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
-	return s.callLLMWithBudget(ctx, requestID, systemContent, userQuery, 0)
+// CallLLM calls OpenAI-compatible /chat/completions with optional session history.
+func (s *Server) CallLLM(ctx context.Context, requestID, systemContent, userQuery string, history []LLMChatMessage) (string, error) {
+	return s.callLLMWithBudget(ctx, requestID, systemContent, userQuery, history, 0)
 }
 
 // CallLLMWithBudget — финальный ответ (max_tokens = LlmMaxTokens).
 func (s *Server) CallLLMWithBudget(ctx context.Context, requestID, systemContent, userQuery string) (string, error) {
-	return s.callLLMWithBudget(ctx, requestID, systemContent, userQuery, 0)
+	return s.callLLMWithBudget(ctx, requestID, systemContent, userQuery, nil, 0)
 }
 
-func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent, userQuery string, maxOutCap int) (string, error) {
+func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent, userQuery string, history []LLMChatMessage, maxOutCap int) (string, error) {
 	maxOut, systemMax := s.llmCharBudget(len(userQuery), maxOutCap)
 	if len(systemContent) > systemMax {
 		suffix := "\n\n[... контекст обрезан из-за лимита модели ...]"
@@ -189,16 +195,30 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 		}
 		systemContent = truncateUTF8(systemContent, n) + suffix
 	}
-	messages := []map[string]interface{}{
-		{"role": "system", "content": systemContent},
-		{"role": "user", "content": userQuery},
+	history = trimHistoryForBudget(history, systemContent, userQuery, s.LlmContextLength, maxOut)
+	messages := make([]map[string]interface{}, 0, 2+len(history))
+	messages = append(messages, map[string]interface{}{"role": "system", "content": systemContent})
+	for _, m := range history {
+		role := strings.TrimSpace(m.Role)
+		content := strings.TrimSpace(m.Content)
+		if role == "" || content == "" {
+			continue
+		}
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		messages = append(messages, map[string]interface{}{"role": role, "content": content})
 	}
+	messages = append(messages, map[string]interface{}{"role": "user", "content": userQuery})
+
 	payloadMap := map[string]interface{}{
 		"model":      s.LlmModel,
 		"messages":   messages,
 		"max_tokens": maxOut,
 	}
-	if !s.LlmDisableChatTemplateKwargs {
+	if !strings.Contains(strings.ToLower(s.LlmModel), "qwen") {
+		// chat_template_kwargs — только для локального vLLM + Qwen
+	} else if !config.IsOpenRouter() {
 		payloadMap["chat_template_kwargs"] = map[string]interface{}{"enable_thinking": false}
 	}
 	payload, _ := json.Marshal(payloadMap)
@@ -211,6 +231,7 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 	if s.LlmAPIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+s.LlmAPIKey)
 	}
+	setOpenRouterHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
@@ -234,4 +255,31 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 		return "", fmt.Errorf("no choices")
 	}
 	return out.Choices[0].Message.Content, nil
+}
+
+// trimHistoryForBudget removes oldest turns so system + history + user fit context window.
+func trimHistoryForBudget(history []LLMChatMessage, systemContent, userQuery string, contextLen, maxOut int) []LLMChatMessage {
+	if len(history) == 0 {
+		return history
+	}
+	const approxCharsPerToken = 2
+	maxInputChars := (contextLen - maxOut - 128) * approxCharsPerToken
+	if maxInputChars < 512 {
+		maxInputChars = 512
+	}
+	used := len(systemContent) + len(userQuery)
+	out := make([]LLMChatMessage, 0, len(history))
+	for i := len(history) - 1; i >= 0; i-- {
+		m := history[i]
+		cost := len(m.Content) + 16
+		if used+cost > maxInputChars {
+			break
+		}
+		out = append(out, m)
+		used += cost
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }

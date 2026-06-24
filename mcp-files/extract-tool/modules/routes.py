@@ -17,26 +17,20 @@ log = logging.getLogger("extract-tool")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def _preload_models() -> None:
-    log.info("Preloading OCR model...")
-    try:
-        ocr.get_ocr()
-        log.info("OCR model preloaded")
-    except Exception as e:
-        log.warning("OCR preload failed: %s", e)
-    log.info("Preloading ASR model...")
-    try:
-        asr.get_asr()
-        log.info("ASR model preloaded")
-    except Exception as e:
-        log.warning("ASR preload failed: %s", e)
+def _log_startup_capabilities() -> None:
+    if config.ocr_enabled():
+        log.info("OCR enabled: model=%s", config.OCR_MODEL)
+    else:
+        log.info("OCR disabled (set OCR_MODEL + OPENROUTER_API_KEY to enable)")
+    if config.asr_enabled():
+        log.info("ASR enabled: model=%s", config.ASR_MODEL)
+    else:
+        log.info("ASR disabled (set ASR_MODEL + OPENROUTER_API_KEY to enable)")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Startup: preloading OCR and ASR models in background...")
-    await asyncio.to_thread(_preload_models)
-    log.info("Startup: models ready")
+    await asyncio.to_thread(_log_startup_capabilities)
     yield
     log.info("Shutdown: extract-tool")
 
@@ -58,8 +52,8 @@ def create_app() -> FastAPI:
         data = await file.read()
         if not data:
             return {"text": ""}
-        if ocr.get_ocr() is None:
-            raise HTTPException(status_code=503, detail="OCR not available")
+        if not ocr.ocr_available():
+            raise HTTPException(status_code=503, detail="OCR not configured (OCR_MODEL + OPENROUTER_API_KEY)")
         try:
             text = await asyncio.to_thread(ocr.run_ocr_on_image, data)
             return {"text": text or ""}
@@ -72,8 +66,8 @@ def create_app() -> FastAPI:
         data = await file.read()
         if not data:
             return {"text": ""}
-        if asr.get_asr() is None:
-            raise HTTPException(status_code=503, detail="ASR not available")
+        if not asr.asr_available():
+            raise HTTPException(status_code=503, detail="ASR not configured (ASR_MODEL + OPENROUTER_API_KEY)")
         filename = file.filename or ""
         try:
             suffix = archives.file_extension(filename) or ".wav"
@@ -85,6 +79,10 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     def health():
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "ocr": ocr.ocr_available(),
+            "asr": asr.asr_available(),
+        }
 
     return app

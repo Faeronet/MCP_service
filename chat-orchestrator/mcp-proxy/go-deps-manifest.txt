@@ -1,0 +1,6 @@
+module_path=github.com/telegram-ai-assistant/root/chat-orchestrator/mcp-proxy
+module_dir_abs=/home/faeronet/Документы/MCP_service/chat-orchestrator/mcp-proxy
+imports_file=/home/faeronet/Документы/MCP_service/chat-orchestrator/mcp-proxy/imports.txt
+imports_count=35
+generated_at=2026-05-04T17:54:49+03:00
+command=go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./...

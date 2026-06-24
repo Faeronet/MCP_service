@@ -1,16 +1,25 @@
-"""Эмбеддинги через vLLM / embedding API."""
+"""Эмбеддинги через OpenRouter (OpenAI-compatible /embeddings)."""
 import httpx
 
 from . import config
 
 
 def _embed_headers() -> dict:
+    headers: dict[str, str] = {}
     if config.EMBEDDING_BINDING_API_KEY:
-        return {"Authorization": f"Bearer {config.EMBEDDING_BINDING_API_KEY}"}
-    return {}
+        headers["Authorization"] = f"Bearer {config.EMBEDDING_BINDING_API_KEY}"
+    if "openrouter.ai" in config.EMBED_BASE.lower():
+        headers["X-Title"] = config.OPENROUTER_APP_TITLE
+        if config.OPENROUTER_HTTP_REFERER:
+            headers["HTTP-Referer"] = config.OPENROUTER_HTTP_REFERER
+    return headers
 
 
 def _get_embed_model_id() -> str:
+    if not config.EMBEDDING_MODEL:
+        return ""
+    if "openrouter.ai" in config.EMBED_BASE.lower():
+        return config.EMBEDDING_MODEL
     try:
         with httpx.Client(timeout=10.0) as client:
             r = client.get(f"{config.EMBED_BASE}/models", headers=_embed_headers())
@@ -25,8 +34,8 @@ def _get_embed_model_id() -> str:
     return config.EMBEDDING_MODEL
 
 
-def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
-    if not texts or not config.EMBEDDING_MODEL:
+def _embed_via_api(texts: list[str]) -> list[list[float]]:
+    if not texts or not config.embedding_enabled():
         return []
     url = f"{config.EMBED_BASE}/embeddings"
     model_id = _get_embed_model_id()
@@ -48,7 +57,9 @@ def _embed_via_vllm(texts: list[str]) -> list[list[float]]:
 
 
 def embed_text(text: str) -> list[float]:
-    vecs = _embed_via_vllm([text])
+    if not config.embedding_enabled():
+        return []
+    vecs = _embed_via_api([text])
     if vecs:
         return vecs[0]
-    return [0.0] * config.VECTOR_SIZE
+    return []

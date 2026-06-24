@@ -4,6 +4,7 @@ networks:
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -18,7 +19,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29104:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29104:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -37,8 +38,8 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "0.0.0.0:9000:9000"
-      - "0.0.0.0:9001:9001"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:9000:9000"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:9001:9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
@@ -57,8 +58,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
     ports:
-      - "0.0.0.0:5672:5672"
-      - "0.0.0.0:15672:15672"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:5672:5672"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s

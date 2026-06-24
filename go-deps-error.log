@@ -1,0 +1,12 @@
+go: downloading go1.23 (linux/amd64)
+go: download go1.23 for linux/amd64: toolchain not available
+[2026-05-04T17:54:23+03:00] go list -m failed
+dir=/home/faeronet/Документы/MCP_service
+cmd=go list -m
+
+go: downloading go1.23 (linux/amd64)
+go: download go1.23 for linux/amd64: toolchain not available
+[2026-05-04T17:54:51+03:00] go list -m failed
+dir=/home/faeronet/Документы/MCP_service
+cmd=go list -m
+

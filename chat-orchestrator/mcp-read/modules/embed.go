@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/telegram-ai-assistant/root/pkg/config"
@@ -14,18 +15,28 @@ import (
 var logEmbed = logging.New("mcp-read.embed")
 
 type EmbedClient struct {
-	APIBase   string
-	APIKey    string
-	Model     string
-	mu        sync.Mutex
-	modelID   string
+	APIBase string
+	APIKey  string
+	Model   string
+	mu      sync.Mutex
+	modelID string
+}
+
+func (c *EmbedClient) Enabled() bool {
+	return c != nil && strings.TrimSpace(c.Model) != ""
 }
 
 func NewEmbedClient(apiBase, apiKey, model string) *EmbedClient {
+	if strings.TrimSpace(model) == "" {
+		return nil
+	}
 	return &EmbedClient{APIBase: apiBase, APIKey: apiKey, Model: model}
 }
 
 func (c *EmbedClient) ModelID(ctx context.Context) string {
+	if config.IsOpenRouter() {
+		return c.Model
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.modelID != "" {
@@ -77,6 +88,7 @@ func (c *EmbedClient) EmbedQuery(ctx context.Context, query string) []float32 {
 	if c.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
+	config.SetOpenRouterHeaders(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logEmbed.Warn(ctx, "embed request", logging.KV{"error", err})

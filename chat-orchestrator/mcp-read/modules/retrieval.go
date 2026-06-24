@@ -23,6 +23,7 @@ func searchOneCollectionNoDate(
 	tokenBudget int,
 	rerankMinScore float64,
 	useFullTextSearch bool,
+	embedEnabled bool,
 ) (contextText string, chunkIDs []string, found bool) {
 	if tokenBudget <= 0 {
 		tokenBudget = 4000
@@ -120,6 +121,20 @@ func searchOneCollectionNoDate(
 			}
 		}
 		// FTS ничего не нашёл — пробуем векторный поиск и scroll по словам ниже
+	}
+
+	if !embedEnabled || len(vec) == 0 {
+		if queryTrim != "" {
+			scrollItems := qdrantClient.ScrollAllChunksContaining(ctx, collectionName, queryTrim)
+			if len(scrollItems) > 0 {
+				if limitItems > 0 && len(scrollItems) > limitItems {
+					scrollItems = scrollItems[:limitItems]
+				}
+				ctxText, ids := buildContextFromChunks(scrollItems, tokenBudget)
+				return ctxText, ids, true
+			}
+		}
+		return "", nil, false
 	}
 
 	for round := 1; round <= MaxSearchRounds; round++ {

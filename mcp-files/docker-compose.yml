@@ -4,6 +4,7 @@ networks:
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -18,7 +19,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29106:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29106:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -36,6 +37,7 @@ services:
 
   mcp-write:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-mcp-write:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: mcp-write/Dockerfile
@@ -43,7 +45,7 @@ services:
     networks:
       - mcp_stack
     ports:
-      - "0.0.0.0:8001:8001"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8001:8001"
     depends_on:
       wait-postgres:
         condition: service_completed_successfully
@@ -56,6 +58,7 @@ services:
 
   extract-tool:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-extract-tool:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./extract-tool
       dockerfile: Dockerfile
@@ -63,19 +66,21 @@ services:
     networks:
       - mcp_stack
     ports:
-      - "0.0.0.0:8004:8004"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:8004:8004"
     restart: unless-stopped
 
   promtail:
     env_file: .env
-    image: grafana/promtail:3.0.0
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-promtail-mcp-files:${MCP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.promtail
     networks:
       - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
     volumes:
-      - ./promtail.yml:/etc/promtail/config.tpl:ro
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

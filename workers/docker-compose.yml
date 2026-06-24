@@ -4,6 +4,7 @@ networks:
 
 services:
   zone-agent:
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-zone-agent:${MCP_IMAGE_TAG:-latest}
     build:
       context: ./zone-agent
       dockerfile: Dockerfile
@@ -18,7 +19,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/resolv.conf:/etc/resolv.conf:rw
     ports:
-      - "0.0.0.0:29109:19090"
+      - "${MCP_INTERNAL_BIND:-127.0.0.1}:29109:19090"
     networks:
       - mcp_stack
     restart: unless-stopped
@@ -36,6 +37,7 @@ services:
 
   ingestion-worker:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-ingestion-worker:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: ingestion-worker/Dockerfile
@@ -48,6 +50,7 @@ services:
 
   attachment-worker:
     env_file: .env
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-attachment-worker:${MCP_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: attachment-worker/Dockerfile
@@ -60,14 +63,16 @@ services:
 
   promtail:
     env_file: .env
-    image: grafana/promtail:3.0.0
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-promtail-workers:${MCP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.promtail
     networks:
       - mcp_stack
     entrypoint: ["/bin/sh", "-c"]
     command:
       - sed "s/__LOKI_HOST__/$${LOKI_HOST}/g" /etc/promtail/config.tpl > /tmp/promtail.yml && exec /usr/bin/promtail -config.file=/tmp/promtail.yml
     volumes:
-      - ./promtail.yml:/etc/promtail/config.tpl:ro
       - /var/log:/var/log:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

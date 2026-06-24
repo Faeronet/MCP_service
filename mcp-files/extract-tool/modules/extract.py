@@ -25,12 +25,18 @@ def extract_single_sync(data: bytes, filename: str) -> str | None:
     if ext == ".pdf" or (len(data) >= 4 and data[:4] == b"%PDF"):
         return document.extract_text_from_pdf(data)
     if ext in config.IMAGE_EXT:
+        if not config.ocr_enabled():
+            log.info("Image skipped (OCR not configured): %s", filename)
+            return ""
         try:
             return ocr.run_ocr_on_image(data)
         except Exception as e:
             log.warning("OCR in extract failed: %s", e)
             return ""
     if ext in config.AUDIO_EXT:
+        if not config.asr_enabled():
+            log.info("Audio skipped (ASR not configured): %s", filename)
+            return ""
         try:
             return asr.run_asr_on_audio(data, suffix=ext or ".wav")
         except Exception as e:

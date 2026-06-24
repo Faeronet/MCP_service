@@ -13,7 +13,7 @@ import (
 
 var logHandler = logging.New("mcp-proxy")
 
-// llmFailureUserHint — текст для пользователя при сбое OpenAI-compatible API (vLLM).
+// llmFailureUserHint — текст для пользователя при сбое OpenAI-compatible API (OpenRouter / vLLM).
 func llmFailureUserHint(s *Server, err error) string {
 	errStr := ""
 	if err != nil {
@@ -23,7 +23,7 @@ func llmFailureUserHint(s *Server, err error) string {
 	if len(detail) > 300 {
 		detail = detail[:300] + "…"
 	}
-	base := fmt.Sprintf("URL=%s, LLM_MODEL=%s. Поднимите vLLM: docker compose --profile vllm up -d. В .env: VLLM_OPENAI_BASE (или LLM_BINDING_HOST с подчёркиваниями), имя модели как в vLLM.",
+	base := fmt.Sprintf("URL=%s, LLM_MODEL=%s. Проверьте OPENROUTER_API_KEY и LLM_MODEL в chat-orchestrator/.env.",
 		s.VllmBase, s.LlmModel)
 	if detail == "" {
 		return "Модель недоступна. " + base
@@ -96,6 +96,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	var replyErr error
 	var nameAllHandled bool
 
+	history := s.GetSessionLLMHistory(ctx, req.SessionID, s.ChatHistoryMaxMessages)
 	_, _ = s.AppendMessageWithReply(ctx, req.SessionID, "user", req.MessageText, req.ReplyToTelegramMessageID)
 	s.TrimSessionMessagesIfNeeded(ctx, req.SessionID)
 
@@ -283,7 +284,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 
 	if !nameAllHandled {
 		systemContent := s.ComposeAnswerSystem(s.PromptB, replyToPrefix, contextText, len(req.MessageText))
-		reply, replyErr = s.CallLLM(ctx, requestID, systemContent, req.MessageText)
+		reply, replyErr = s.CallLLM(ctx, requestID, systemContent, req.MessageText, history)
 		if s.DebugMode == 0 {
 			reply = StripThink(reply)
 		}
