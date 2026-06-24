@@ -5,6 +5,8 @@
 # Привязка портов на VPS: внутренние — только localhost; публичные — сайт, админка, tg-bot.
 export MCP_INTERNAL_BIND="${MCP_INTERNAL_BIND:-127.0.0.1}"
 export MCP_PUBLIC_BIND="${MCP_PUBLIC_BIND:-0.0.0.0}"
+export MCP_IMAGE_REGISTRY="${MCP_IMAGE_REGISTRY:-}"
+export MCP_IMAGE_TAG="${MCP_IMAGE_TAG:-latest}"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"

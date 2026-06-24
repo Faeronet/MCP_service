@@ -12,4 +12,3 @@ __pycache__
 *.md
 promtail.yml
 docker-compose.yml
-config
