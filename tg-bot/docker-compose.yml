@@ -41,6 +41,8 @@ services:
     networks:
       - mcp_stack
     env_file: .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
     depends_on:
       wait-postgres:
         condition: service_completed_successfully
@@ -48,13 +50,19 @@ services:
       - /bin/sh
       - -c
       - |
+        if [ -n "$$POSTGRES_DSN" ]; then
+          PSQL="psql $$POSTGRES_DSN"
+        else
+          PSQL="psql -h mcp_postgres -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-assistant}"
+        fi
         for i in $$(seq 1 90); do
-          psql -h mcp_postgres -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB:-assistant}" -tAc \
-            "SELECT 1 FROM information_schema.tables WHERE table_schema='chat' AND table_name='sessions'" \
-            | grep -q 1 && exit 0
+          out=$$($$PSQL -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='chat' AND table_name='sessions'" 2>&1) || true
+          echo "$$out" | grep -q 1 && exit 0
           sleep 2
         done
-        echo "chat.sessions missing — run: cd db-zone && docker compose build migrate && docker compose run --rm migrate" >&2
+        echo "wait-migrate: chat.sessions not found after 3m" >&2
+        $$PSQL -c "\dt chat.*" 2>&1 || echo "wait-migrate: cannot connect to postgres — check POSTGRES_DSN / POSTGRES_PASSWORD in .env" >&2
+        echo "Fix: cd ~/MCP_service/db-zone && docker compose build migrate && docker compose run --rm migrate" >&2
         exit 1
     restart: "no"
 
