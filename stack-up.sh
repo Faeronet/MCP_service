@@ -29,9 +29,13 @@ zone() {
   ( cd "$ROOT/$1" && docker compose "${@:2}" )
 }
 
+admin_zone_compose() {
+  ( cd "$ROOT/admin-zone" && bash ./render-compose-bind.sh && docker compose -f docker-compose.yml -f docker-compose.bind.generated.yml "$@" )
+}
+
 if [[ "${1:-up}" == "down" ]]; then
   zone tg-bot down --remove-orphans
-  zone admin-zone down --remove-orphans
+  admin_zone_compose down --remove-orphans
   zone angels-web down --remove-orphans
   zone notification down --remove-orphans
   zone workers down --remove-orphans
@@ -78,10 +82,10 @@ wait_tcp 127.0.0.1 8090 scheduler
 
 zone angels-web up -d
 
-zone admin-zone up -d
+admin_zone_compose up -d
 
 zone tg-bot up -d
 
-echo "Готово. Публично (${MCP_PUBLIC_BIND}): angels-web :3000, admin UI :5173 (ADMIN_ALLOWED_IPS)."
-echo "Admin API — только внутри Docker (через nginx на :5173). tg-bot — long polling, порт :8081 только ${MCP_INTERNAL_BIND}."
-echo "Остальные сервисы — ${MCP_INTERNAL_BIND} или без проброса на хост."
+echo "Готово. Публично (${MCP_PUBLIC_BIND}): angels-web :3000."
+echo "Admin UI :5173 — только на IP из ADMIN_BIND_HOSTS (admin-zone/.env). API — внутри Docker."
+echo "tg-bot — long polling, :8081 только ${MCP_INTERNAL_BIND}. Остальное — ${MCP_INTERNAL_BIND} или без проброса."

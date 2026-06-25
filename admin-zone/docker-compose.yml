@@ -62,7 +62,7 @@ services:
     restart: unless-stopped
 
   admin-web-ui:
-    # Единственная публичная точка входа в админку; API проксируется на admin-backend внутри сети.
+    # Проброс порта :5173 — в docker-compose.bind.generated.yml (ADMIN_BIND_HOSTS)
     env_file: .env
     image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-admin-web-ui:${MCP_IMAGE_TAG:-latest}
     build:
@@ -71,12 +71,8 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
         VITE_MONITOR_POLL_MS: ${VITE_MONITOR_POLL_MS:-30000}
-    environment:
-      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:-}
     networks:
       - mcp_stack
-    ports:
-      - "${MCP_PUBLIC_BIND:-0.0.0.0}:5173:80"
     depends_on:
       - admin-backend
     restart: unless-stopped

@@ -115,13 +115,6 @@ func main() {
 	})
 	handler.StartChatLogStatsSampler()
 
-	ipAllow := loadIPAllowlist()
-	if ipAllow.enabled {
-		log.Info(ctx, "admin IP allowlist enabled", logging.KV{"rules", config.LoadString("ADMIN_ALLOWED_IPS", "")})
-	} else {
-		log.Warn(ctx, "ADMIN_ALLOWED_IPS not set — admin API accepts any client IP")
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/api/login", handler.Login)
@@ -160,7 +153,7 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	srv := &http.Server{Addr: ":8080", Handler: ipAllowMiddleware(ipAllow, corsMiddleware(requestIDMiddleware(mux))), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":8080", Handler: corsMiddleware(requestIDMiddleware(mux)), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error(ctx, "http serve", logging.KV{"error", err})
