@@ -36,6 +36,28 @@ services:
       - 'until pg_isready -h mcp_postgres -U "$${POSTGRES_USER:-postgres}"; do sleep 1; done'
     restart: "no"
 
+  wait-migrate:
+    image: postgres:16-alpine
+    networks:
+      - mcp_stack
+    env_file: .env
+    depends_on:
+      wait-postgres:
+        condition: service_completed_successfully
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for i in $$(seq 1 90); do
+          psql -h mcp_postgres -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB:-assistant}" -tAc \
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='chat' AND table_name='sessions'" \
+            | grep -q 1 && exit 0
+          sleep 2
+        done
+        echo "chat.sessions missing — run: cd db-zone && docker compose build migrate && docker compose run --rm migrate" >&2
+        exit 1
+    restart: "no"
+
   tg-bot:
     env_file: .env
     image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-tg-bot:${MCP_IMAGE_TAG:-latest}
@@ -45,11 +67,14 @@ services:
     container_name: mcp_tg_bot
     networks:
       - mcp_stack
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     # Long polling — входящих подключений из интернета не нужно; :8081 только healthcheck (localhost на хосте).
     ports:
       - "${MCP_INTERNAL_BIND:-127.0.0.1}:8081:8081"
     depends_on:
-      wait-postgres:
+      wait-migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8081/healthz"]
