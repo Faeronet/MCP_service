@@ -29,13 +29,9 @@ zone() {
   ( cd "$ROOT/$1" && docker compose "${@:2}" )
 }
 
-admin_zone_compose() {
-  ( cd "$ROOT/admin-zone" && bash ./render-compose-bind.sh && docker compose -f docker-compose.yml -f docker-compose.bind.generated.yml "$@" )
-}
-
 if [[ "${1:-up}" == "down" ]]; then
   zone tg-bot down --remove-orphans
-  admin_zone_compose down --remove-orphans
+  zone admin-zone down --remove-orphans
   zone angels-web down --remove-orphans
   zone notification down --remove-orphans
   zone workers down --remove-orphans
@@ -54,7 +50,7 @@ docker network create mcp_stack 2>/dev/null || true
 
 zone db-zone up -d postgres redis qdrant
 wait_tcp 127.0.0.1 5433 postgres
-zone db-zone up migrate
+( cd "$ROOT/db-zone" && docker compose build migrate && docker compose run --rm migrate )
 
 zone file-orchestrator up -d
 wait_tcp 127.0.0.1 9000 minio
@@ -82,10 +78,10 @@ wait_tcp 127.0.0.1 8090 scheduler
 
 zone angels-web up -d
 
-admin_zone_compose up -d
+zone admin-zone up -d
 
 zone tg-bot up -d
 
-echo "Готово. Публично (${MCP_PUBLIC_BIND}): angels-web :3000."
-echo "Admin UI :5173 — только на IP из ADMIN_BIND_HOSTS (admin-zone/.env). API — внутри Docker."
-echo "tg-bot — long polling, :8081 только ${MCP_INTERNAL_BIND}. Остальное — ${MCP_INTERNAL_BIND} или без проброса."
+echo "Готово. Публично (${MCP_PUBLIC_BIND}): angels-web :3000, admin UI :5173 (ADMIN_ALLOWED_IPS)."
+echo "Admin API — только внутри Docker. tg-bot — long polling, :8081 только ${MCP_INTERNAL_BIND}."
+echo "Остальные сервисы — ${MCP_INTERNAL_BIND} или без проброса на хост."

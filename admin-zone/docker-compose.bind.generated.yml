@@ -1,5 +1,0 @@
-# Сгенерировано render-compose-bind.sh — не редактировать вручную
-services:
-  admin-web-ui:
-    ports:
-      - "127.0.0.1:5173:80"

@@ -49,7 +49,10 @@ services:
 
   migrate:
     env_file: .env
-    image: postgres:16-alpine
+    image: ${MCP_IMAGE_REGISTRY}${MCP_IMAGE_REGISTRY:+/}mcp-migrate:${MCP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.migrate
     container_name: mcp_migrate
     networks:
       - mcp_stack
@@ -59,7 +62,10 @@ services:
       PGUSER: ${POSTGRES_USER:-postgres}
       PGDATABASE: ${POSTGRES_DB:-assistant}
     command: >
-      sh -c "for f in /migrations/*.up.sql; do [ -f \"$$f\" ] || continue; echo Applying $$f...; psql -f \"$$f\" || true; done"
+      sh -c "for f in /migrations/*.up.sql; do [ -f \"$$f\" ] || continue; echo Applying $$f...; psql -f \"$$f\" || true; done;
+      psql -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='chat' AND table_name='sessions'\" | grep -q 1
+      || { echo 'ERROR: chat.sessions not created — check migration logs'; exit 1; };
+      echo Migrations OK"
     depends_on:
       postgres:
         condition: service_healthy
