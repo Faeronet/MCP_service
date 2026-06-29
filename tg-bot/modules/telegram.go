@@ -15,28 +15,14 @@ var logTG = logging.New("tg-bot.telegram")
 // Лимит Telegram Bot API на одно текстовое сообщение (символы = Unicode code points).
 const maxTelegramMessageRunes = 4096
 
-// SendReply sends a text message to chat (Markdown, fallback to plain).
+// SendReply sends a text message to chat (Markdown → Telegram HTML, fallback to plain).
 func (b *Bot) SendReply(ctx context.Context, chatID int64, text string) {
 	b.SendReplyWithID(ctx, chatID, text)
 }
 
 // SendReplyWithID sends message and returns Telegram MessageID (0 on error).
 func (b *Bot) SendReplyWithID(ctx context.Context, chatID int64, text string) int {
-	if b.Bot == nil {
-		return 0
-	}
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ParseMode = "Markdown"
-	sent, err := b.Bot.Send(msg)
-	if err != nil {
-		msg.ParseMode = ""
-		sent, err = b.Bot.Send(msg)
-	}
-	if err != nil {
-		logTG.Warn(ctx, "send reply", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
-		return 0
-	}
-	return sent.MessageID
+	return b.sendFormattedMessageWithID(ctx, chatID, text)
 }
 
 // SendReplyToWithID sends a message as reply to another message.
@@ -44,11 +30,13 @@ func (b *Bot) SendReplyToWithID(ctx context.Context, chatID int64, replyToMessag
 	if b.Bot == nil {
 		return 0
 	}
-	msg := tgbotapi.NewMessage(chatID, text)
+	html := MarkdownToTelegramHTML(text)
+	msg := tgbotapi.NewMessage(chatID, html)
 	msg.ReplyToMessageID = replyToMessageID
-	msg.ParseMode = "Markdown"
+	msg.ParseMode = telegramHTMLParseMode
 	sent, err := b.Bot.Send(msg)
 	if err != nil {
+		msg.Text = text
 		msg.ParseMode = ""
 		sent, err = b.Bot.Send(msg)
 	}
@@ -74,8 +62,7 @@ func (b *Bot) DeleteChatMessage(ctx context.Context, chatID int64, messageID int
 	}
 }
 
-// SendLongReply шлёт ответ серией сообщений (лимит Telegram 4096 символов на сообщение), разбивая по границам слов.
-// Без Markdown (иначе _, *, ` ломают разбор сущностей). Слова длиннее лимита (URL и т.п.) режутся по символам.
+// SendLongReply шлёт ответ серией сообщений (лимит Telegram 4096 символов), с Markdown-форматированием.
 func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, text string) int {
 	if b.Bot == nil {
 		return 0
@@ -84,20 +71,20 @@ func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, 
 	if text == "" {
 		text = "Пустой ответ от сервиса. Повторите запрос."
 	}
-	chunks := splitTelegramMessageChunks(text, maxTelegramMessageRunes)
+	chunks := splitMarkdownAwareChunks(text, telegramFormattedChunkRunes)
 	if len(chunks) == 0 {
 		return 0
 	}
 	var firstMsgID int
 	for i, ch := range chunks {
 		if i == 0 && typingMsgID > 0 {
-			if b.editMessageTextPlain(ctx, chatID, typingMsgID, ch) {
+			if b.editMessageFormatted(ctx, chatID, typingMsgID, ch) {
 				firstMsgID = typingMsgID
 			} else {
-				firstMsgID = b.sendPlainMessageWithID(ctx, chatID, ch)
+				firstMsgID = b.sendFormattedMessageWithID(ctx, chatID, ch)
 			}
 		} else {
-			id := b.sendPlainMessageWithID(ctx, chatID, ch)
+			id := b.sendFormattedMessageWithID(ctx, chatID, ch)
 			if firstMsgID == 0 {
 				firstMsgID = id
 			}
@@ -106,27 +93,41 @@ func (b *Bot) SendLongReply(ctx context.Context, chatID int64, typingMsgID int, 
 	return firstMsgID
 }
 
-func (b *Bot) sendPlainMessageWithID(ctx context.Context, chatID int64, text string) int {
+func (b *Bot) sendFormattedMessageWithID(ctx context.Context, chatID int64, text string) int {
 	if b.Bot == nil {
 		return 0
 	}
-	msg := tgbotapi.NewMessage(chatID, text)
+	html := MarkdownToTelegramHTML(text)
+	msg := tgbotapi.NewMessage(chatID, html)
+	msg.ParseMode = telegramHTMLParseMode
 	sent, err := b.Bot.Send(msg)
 	if err != nil {
-		logTG.Warn(ctx, "send plain chunk", logging.KV{"error", err}, logging.KV{"chat_id", chatID}, logging.KV{"len", utf8.RuneCountInString(text)})
+		msg.Text = text
+		msg.ParseMode = ""
+		sent, err = b.Bot.Send(msg)
+	}
+	if err != nil {
+		logTG.Warn(ctx, "send formatted chunk", logging.KV{"error", err}, logging.KV{"chat_id", chatID}, logging.KV{"len", utf8.RuneCountInString(text)})
 		return 0
 	}
 	return sent.MessageID
 }
 
-func (b *Bot) editMessageTextPlain(ctx context.Context, chatID int64, messageID int, text string) bool {
+func (b *Bot) editMessageFormatted(ctx context.Context, chatID int64, messageID int, text string) bool {
 	if b.Bot == nil || messageID <= 0 {
 		return false
 	}
-	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	html := MarkdownToTelegramHTML(text)
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, html)
+	edit.ParseMode = telegramHTMLParseMode
 	_, err := b.Bot.Send(edit)
 	if err != nil {
-		logTG.Warn(ctx, "edit message plain", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
+		edit.Text = text
+		edit.ParseMode = ""
+		_, err = b.Bot.Send(edit)
+	}
+	if err != nil {
+		logTG.Warn(ctx, "edit formatted message", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
 		return false
 	}
 	return true
@@ -236,23 +237,9 @@ func splitTelegramMessageChunks(text string, maxRunes int) []string {
 	return chunks
 }
 
-// EditMessageText edits an existing message (Markdown, fallback plain). Для коротких системных сообщений.
+// EditMessageText edits an existing message (Markdown → Telegram HTML, fallback plain).
 func (b *Bot) EditMessageText(ctx context.Context, chatID int64, messageID int, text string) bool {
-	if b.Bot == nil || messageID <= 0 {
-		return false
-	}
-	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
-	edit.ParseMode = "Markdown"
-	_, err := b.Bot.Send(edit)
-	if err != nil {
-		edit.ParseMode = ""
-		_, err = b.Bot.Send(edit)
-	}
-	if err != nil {
-		logTG.Warn(ctx, "edit message", logging.KV{"error", err}, logging.KV{"chat_id", chatID})
-		return false
-	}
-	return true
+	return b.editMessageFormatted(ctx, chatID, messageID, text)
 }
 
 // GetChatID returns chat ID from an update.

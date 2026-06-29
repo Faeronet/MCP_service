@@ -15,4 +15,10 @@
   background-position: center;         /* Center the image */
   background-repeat: no-repeat;        /* No repeat */
   background-attachment: fixed;        /* Parallax effect */
+  color: #F7F1E6;
+
+  :global(p),
+  :global(h2) {
+    color: #F7F1E6;
+  }
 }
