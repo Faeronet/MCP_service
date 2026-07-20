@@ -15,20 +15,7 @@ var logHandler = logging.New("mcp-proxy")
 
 // llmFailureUserHint — текст для пользователя при сбое OpenAI-compatible API (OpenRouter / vLLM).
 func llmFailureUserHint(s *Server, err error) string {
-	errStr := ""
-	if err != nil {
-		errStr = err.Error()
-	}
-	detail := errStr
-	if len(detail) > 300 {
-		detail = detail[:300] + "…"
-	}
-	base := fmt.Sprintf("URL=%s, LLM_MODEL=%s. Проверьте OPENROUTER_API_KEY и LLM_MODEL в chat-orchestrator/.env.",
-		s.VllmBase, s.LlmModel)
-	if detail == "" {
-		return "Модель недоступна. " + base
-	}
-	return "Ошибка LLM: " + detail + " | " + base
+	return userFacingChatError(s, err)
 }
 
 // HandleChat processes POST /chat: appends user message, builds context, calls LLM, saves assistant message, returns reply.
@@ -75,13 +62,13 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 	if !s.PerChatLimiter.Allow(key) {
 		logHandler.Warn(ctx, "per-user rate limit", logging.KV{"user_id", req.UserID})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: ""})
+		_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: userFriendlyErrorRU})
 		return
 	}
 	if err := s.LlmLimiter.Acquire(ctx); err != nil {
 		logHandler.Warn(ctx, "llm queue full", logging.KV{"error", err})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: "Сервер занят, попробуйте позже."})
+		_ = json.NewEncoder(w).Encode(ChatResponse{ReplyText: userFriendlyErrorRU})
 		return
 	}
 	defer s.LlmLimiter.Release()
@@ -284,15 +271,7 @@ func (s *Server) HandleChat(w http.ResponseWriter, r *http.Request) {
 
 	if !nameAllHandled {
 		systemContent := s.ComposeAnswerSystem(s.PromptB, replyToPrefix, contextText, len(req.MessageText))
-		reply, replyErr = s.CallLLM(ctx, requestID, systemContent, req.MessageText, history)
-		if s.DebugMode == 0 {
-			reply = StripThink(reply)
-		}
-		// Иначе в Telegram остаётся «...» без текста: StripThink вырезал весь ответ, а отладочное сообщение ушло отдельным письмом.
-		if strings.TrimSpace(reply) == "" {
-			logHandler.Warn(ctx, "llm reply empty after strip", logging.KV{"request_id", requestID}, logging.KV{"debug_mode", s.DebugMode})
-			reply = "Ответ модели пустой (часто весь текст был во внутреннем блоке рассуждения). Повторите вопрос. Чтобы видеть полный сырой вывод, выставьте BOT_DEBUG=1 у mcp-proxy (как у tg-bot)."
-		}
+		reply, replyErr = s.finalizeLLMReply(ctx, requestID, systemContent, req.MessageText, history)
 	}
 	if replyErr != nil {
 		logHandler.Error(ctx, "llm call", logging.KV{"error", replyErr}, logging.KV{"vllm_base", s.VllmBase}, logging.KV{"llm_model", s.LlmModel})

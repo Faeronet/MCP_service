@@ -1,4 +1,6 @@
-const BOT_URL = 'https://t.me/tet_mcp_bot#';
+import { TELEGRAM_BOT_URL } from '@/lib/telegramBot';
+
+const BOT_URL = TELEGRAM_BOT_URL;
 
 function schedulerBase() {
   return (process.env.SCHEDULER_INTERNAL_URL || 'http://127.0.0.1:8090').replace(/\/$/, '');

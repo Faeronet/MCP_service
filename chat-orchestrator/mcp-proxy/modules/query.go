@@ -6,7 +6,14 @@ import (
 	"strings"
 )
 
-var reThinkBlock = regexp.MustCompile(`(?is)<think[^>]*>.*?` + "</think>")
+var reThinkBlock = regexp.MustCompile(`(?is)<think[^>]*>.*?</think>`)
+
+var thinkStripPatterns = []*regexp.Regexp{
+	reThinkBlock,
+	regexp.MustCompile("(?is)`think`[\\s\\S]*?`/think`"),
+	regexp.MustCompile(`(?is)<think>.*?</think>`),
+	regexp.MustCompile(`(?is)<thinking>.*?</thinking>`),
+}
 
 var angelSynonymsForDetection = []string{
 	"ангелы-хранители", "ангелов-хранителей", "ангел-хранитель", "ангела-хранителя",
@@ -75,7 +82,10 @@ var enMonthToRuLower = func() map[string]string {
 }()
 
 func StripThink(s string) string {
-	return strings.TrimSpace(reThinkBlock.ReplaceAllString(s, ""))
+	for _, re := range thinkStripPatterns {
+		s = re.ReplaceAllString(s, "")
+	}
+	return strings.TrimSpace(s)
 }
 
 func HasAngelWord(s string) bool {

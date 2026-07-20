@@ -6,8 +6,8 @@ import cx from 'classnames';
 import Image from 'next/image'
 
 import styles from '../../app/case.module.css'
+import { TELEGRAM_BOT_QR_SRC, TELEGRAM_BOT_URL, TELEGRAM_BOT_USERNAME } from '@/lib/telegramBot';
 
-const BOT_URL = 'https://t.me/tet_mcp_bot#'
 const StoryContent = ({
   useResponsiveOffset = true
 }) => {
@@ -41,10 +41,10 @@ const StoryContent = ({
        >
       <div style={{ width: '100%', maxWidth: 'min(100%, 420px)' }}>
       <Image
-        src="/telegram-qr-tet-mcp-bot.png"
-        alt="QR-код Telegram-бота @tet_mcp_bot"
-        width={948}
-        height={1134}
+        src={TELEGRAM_BOT_QR_SRC}
+        alt={`QR-код Telegram-бота ${TELEGRAM_BOT_USERNAME}`}
+        width={874}
+        height={1024}
         className={styles.responsiveImage}
         priority
       />
@@ -52,7 +52,7 @@ const StoryContent = ({
 
 <div style={{ width: '100%', textAlign: 'center' }}>
      <p style={{ marginTop: '16px' }}>
-            <a href={BOT_URL}>Telegram ссылка</a>.
+            <a href={TELEGRAM_BOT_URL}>Telegram — {TELEGRAM_BOT_USERNAME}</a>.
     </p>
 </div>
 </div>

@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/telegram-ai-assistant/root/pkg/config"
 )
@@ -16,6 +18,22 @@ import (
 type LLMChatMessage struct {
 	Role    string
 	Content string
+}
+
+var (
+	llmClientOnce sync.Once
+	llmClient     *http.Client
+)
+
+func llmHTTPClient() *http.Client {
+	llmClientOnce.Do(func() {
+		sec := config.LoadInt("LLM_HTTP_TIMEOUT_SEC", 240)
+		if sec < 60 {
+			sec = 240
+		}
+		llmClient = &http.Client{Timeout: time.Duration(sec) * time.Second}
+	})
+	return llmClient
 }
 
 func truncateUTF8(s string, maxBytes int) string {
@@ -221,6 +239,12 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 	} else if !config.IsOpenRouter() {
 		payloadMap["chat_template_kwargs"] = map[string]interface{}{"enable_thinking": false}
 	}
+	if config.IsOpenRouter() {
+		payloadMap["reasoning"] = map[string]interface{}{
+			"effort":  "none",
+			"exclude": true,
+		}
+	}
 	payload, _ := json.Marshal(payloadMap)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.VllmBase+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
@@ -232,7 +256,7 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 		req.Header.Set("Authorization", "Bearer "+s.LlmAPIKey)
 	}
 	setOpenRouterHeaders(req)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := llmHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -244,7 +268,8 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 	var out struct {
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string `json:"content"`
+				Reasoning string `json:"reasoning"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
@@ -254,7 +279,12 @@ func (s *Server) callLLMWithBudget(ctx context.Context, requestID, systemContent
 	if len(out.Choices) == 0 {
 		return "", fmt.Errorf("no choices")
 	}
-	return out.Choices[0].Message.Content, nil
+	msg := out.Choices[0].Message
+	content := strings.TrimSpace(msg.Content)
+	if content == "" {
+		content = strings.TrimSpace(msg.Reasoning)
+	}
+	return content, nil
 }
 
 // trimHistoryForBudget removes oldest turns so system + history + user fit context window.

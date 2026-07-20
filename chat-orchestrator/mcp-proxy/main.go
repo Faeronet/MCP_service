@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/telegram-ai-assistant/root/chat-orchestrator/mcp-proxy/modules"
@@ -90,9 +91,18 @@ func main() {
 	mux.HandleFunc("/scheduler/compose", srv.HandleSchedulerCompose)
 	mux.HandleFunc("/scheduler/deliver", srv.HandleSchedulerDeliver)
 
+	httpSrv := &http.Server{
+		Addr:              ":8083",
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      6 * time.Minute,
+	}
 	go func() {
 		log.Info(ctx, "mcp-proxy listening on :8083")
-		_ = http.ListenAndServe(":8083", mux)
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error(ctx, "http server", logging.KV{"error", err})
+		}
 	}()
 
 	quit := make(chan os.Signal, 1)

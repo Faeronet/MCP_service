@@ -117,12 +117,7 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 	replyText, debugMessage, messageIDStr, reminderExtra, angelChunkID, err := b.CallChat(ctx, sessionID, chatID, userID, msg.Chat.UserName, msg.Text, replyToTgID, requestID)
 	if err != nil {
 		logHandler.Error(ctx, "proxy call", logging.KV{"error", err})
-		hint := "Сервис временно недоступен. Запустите mcp-proxy (docker compose up -d mcp-proxy). В контейнерах MCP_PROXY_URL=http://mcp-proxy:8083; с хоста/Cursor — http://127.0.0.1:8083. Не используйте host.docker.internal на Linux к проброшенному порту — часто connection refused."
-		if errStr := err.Error(); errStr != "" && len(errStr) < 120 {
-			hint += " (" + errStr + ")"
-		} else if len(errStr) >= 120 {
-			hint += " (" + errStr[:117] + "...)"
-		}
+		hint := userFacingProxyError(b.DebugMode, err)
 		if typingMsgID > 0 {
 			b.EditMessageText(ctx, chatID, typingMsgID, hint)
 		} else {
@@ -130,6 +125,8 @@ func (b *Bot) processMessage(ctx context.Context, u tgbotapi.Update, chatID int6
 		}
 		return
 	}
+
+	replyText = sanitizeProxyReplyText(b.DebugMode, replyText)
 
 	if debugMessage != "" {
 		b.SendReply(ctx, chatID, debugMessage)
@@ -286,9 +283,10 @@ func (b *Bot) handleAttachment(ctx context.Context, u tgbotapi.Update, chatID in
 	replyText, debugMessage, messageIDStr, reminderExtra, angelChunkID, err := b.CallChat(ctx, sessionID, chatID, userID, username, userMsg, 0, requestID)
 	if err != nil {
 		logHandler.Warn(ctx, "proxy call for attachment", logging.KV{"error", err})
-		b.EditMessageText(ctx, chatID, typingMsgID, "Не удалось получить ответ модели. Извлечённый текст сохранён в контексте чата.")
+		b.EditMessageText(ctx, chatID, typingMsgID, userFacingProxyError(b.DebugMode, err))
 		return
 	}
+	replyText = sanitizeProxyReplyText(b.DebugMode, replyText)
 	if debugMessage != "" {
 		b.SendReply(ctx, chatID, debugMessage)
 	}

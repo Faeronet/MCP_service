@@ -11,9 +11,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/telegram-ai-assistant/root/pkg/config"
 )
 
-const proxyRequestTimeout = 120 * time.Second
+func proxyRequestTimeout() time.Duration {
+	sec := config.LoadInt("PROXY_REQUEST_TIMEOUT_SEC", 300)
+	if sec < 120 {
+		sec = 300
+	}
+	return time.Duration(sec) * time.Second
+}
 
 // ChatResponse from mcp-proxy POST /chat.
 type ChatResponse struct {
@@ -44,7 +51,7 @@ func (b *Bot) CallChat(ctx context.Context, sessionID uuid.UUID, chatID, userID 
 		return "", "", "", "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: proxyRequestTimeout}
+	client := &http.Client{Timeout: proxyRequestTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", "", "", "", err
@@ -81,7 +88,7 @@ func (b *Bot) ProxySchedulerDeliver(ctx context.Context, chatID, telegramUserID 
 	if strings.TrimSpace(b.SchedulerSecret) != "" {
 		req.Header.Set("X-Scheduler-Secret", b.SchedulerSecret)
 	}
-	client := &http.Client{Timeout: proxyRequestTimeout}
+	client := &http.Client{Timeout: proxyRequestTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

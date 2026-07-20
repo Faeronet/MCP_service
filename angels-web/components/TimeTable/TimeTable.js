@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
+import { TELEGRAM_BOT_QR_SRC, TELEGRAM_BOT_URL } from '@/lib/telegramBot';
 import {
   DataTable,
   TableContainer,
@@ -24,7 +25,6 @@ import { angelNameToRu, timeDataWithRussianNames } from './angelNamesMap';
 const TG_USERNAME_STORAGE_KEY = 'schedulerTelegramUsername';
 const TG_DAILY_STORAGE_KEY = 'schedulerDailyNotify';
 const NOTE_SCHEDULE_BRIDGE_KEY = '__mcp_schedule_from_note__';
-const SCHEDULE_BOT_URL = 'https://t.me/tet_mcp_bot#';
 
 /** Split text on http(s) URLs and render anchors (Carbon InlineNotification forbids links inside subtitle). */
 function linkifyErrorText(text) {
@@ -389,14 +389,14 @@ const TimeTable = () => {
                 <div>{linkifyErrorText(scheduleModalError)}</div>
               </div>
               <a
-                href={SCHEDULE_BOT_URL}
+                href={TELEGRAM_BOT_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ flexShrink: 0, lineHeight: 0, alignSelf: 'center' }}
                 aria-label="Открыть бота в Telegram (QR)"
               >
                 <Image
-                  src="/telegram-qr-tet-mcp-bot.png"
+                  src={TELEGRAM_BOT_QR_SRC}
                   alt=""
                   width={104}
                   height={124}
